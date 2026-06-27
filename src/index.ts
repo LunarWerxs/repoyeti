@@ -144,6 +144,9 @@ async function start(rest: string[]): Promise<void> {
   console.log(
     `  auth:   ${authEnforced(liveCfg) ? "Sign in with Connections (enforced)" : "local only (no auth)"}`,
   );
+  if (authEnforced(liveCfg) && !liveCfg.oauth?.ownerSub && !liveCfg.oauth?.ownerEmail) {
+    console.log("  owner:  unclaimed — the first Connections sign-in becomes the owner");
+  }
 
   // 5) optional zero-config tunnel (auth already verified above)
   let tunnel: TunnelHandle | null = null;

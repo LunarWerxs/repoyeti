@@ -21,7 +21,14 @@ import { join } from "node:path";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import type { Context } from "hono";
-import { CONFIG_DIR, ensureConfigDir, authEnforced, type GitmobConfig, type OAuthConfig } from "./config.ts";
+import {
+  CONFIG_DIR,
+  ensureConfigDir,
+  authEnforced,
+  saveConfig,
+  type GitmobConfig,
+  type OAuthConfig,
+} from "./config.ts";
 
 const COOKIE = "gm_session";
 const SESSION_TTL_MS = 90 * 24 * 3600 * 1000;
@@ -218,6 +225,16 @@ export async function handleComplete(c: Context, cfg: GitmobConfig): Promise<Res
     });
     const sub = String(payload.sub ?? "");
     const email = String((payload as { email?: string }).email ?? "");
+
+    // First-use ownership (TOFU): if no owner is configured yet, the first verified
+    // sign-in claims this daemon and is persisted. After that it's locked to that
+    // identity. Lets the owner bootstrap without hunting down their Cognito `sub`.
+    if (!o.ownerSub && !o.ownerEmail && sub) {
+      o.ownerSub = sub;
+      saveConfig(cfg);
+      console.log(`[gitmob] ownership claimed by ${email || sub}`);
+    }
+
     if (!ownerMatches(o, sub, email)) {
       return c.html(errPage("This Connections account isn't the owner of this GitMob."), 403);
     }

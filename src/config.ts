@@ -83,7 +83,9 @@ export function loadConfig(): GitmobConfig {
 
 export function saveConfig(cfg: GitmobConfig): void {
   ensureConfigDir();
-  writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+  // 0600 — config may hold a confidential OAuth client_secret. (Never committed:
+  // it lives in ~/.gitmob, which is gitignored.)
+  writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), { mode: 0o600 });
 }
 
 /** Add an absolute root to the config (idempotent). Returns the updated config. */
