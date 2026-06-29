@@ -17,5 +17,12 @@ export function removeListener(l: BusListener): void {
 
 export function broadcast(event: string, payload: unknown): void {
   const data = JSON.stringify(payload);
-  for (const l of listeners) l(event, data);
+  for (const l of listeners) {
+    // Isolate subscribers: one throwing listener must not drop the event for the others.
+    try {
+      l(event, data);
+    } catch {
+      /* a bad subscriber is its own problem; keep delivering to the rest */
+    }
+  }
 }
