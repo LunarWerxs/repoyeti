@@ -12,22 +12,12 @@ import { gitFor, identityConfigArgs, safeGitEnv } from "./git.ts";
 import { readStatus, readChanges } from "./status.ts";
 import { netGate } from "./gitgate.ts";
 import type { Identity } from "./db.ts";
-import type { ApiCode } from "./contract.ts";
 import type { CommitPlanInput, PlanInputFile } from "./ai.ts";
-
-/**
- * A git-action result code. This is the shared API code union (see contract.ts) so the
- * status mapping is centralized: classify() only ever produces the git subset, but
- * orchestration (service.ts runAction) can also return repo-level codes like NOT_FOUND /
- * SUBMODULE_NOT_ACTIONABLE through the same envelope.
- */
-export type ActionCode = ApiCode;
-
-export interface ActionResult {
-  ok: boolean;
-  code: ActionCode;
-  message: string;
-}
+// The result envelope + code now live in contract.ts (the contract layer) so the VCS
+// abstraction can depend on them without importing this git module. Re-exported here for
+// back-compat — service.ts and the vcs backends still import them from git-actions.ts.
+import type { ActionResult, ActionCode } from "./contract.ts";
+export type { ActionResult, ActionCode };
 
 const ok = (message: string): ActionResult => ({ ok: true, code: "OK", message });
 const fail = (code: ActionCode, message: string): ActionResult => ({ ok: false, code, message });

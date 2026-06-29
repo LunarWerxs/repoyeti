@@ -68,6 +68,17 @@ export type ApiErrorCode =
 /** A code plus the success sentinel — what `ActionResult.code` and friends carry. */
 export type ApiCode = "OK" | ApiErrorCode;
 
+/** A git-action result code — the shared API code union, so status mapping stays centralized. */
+export type ActionCode = ApiCode;
+
+/** The standard result envelope every git action + service op returns. Lives here (the contract
+ *  layer) so the VCS abstraction can depend on it WITHOUT importing the git implementation. */
+export interface ActionResult {
+  ok: boolean;
+  code: ActionCode;
+  message: string;
+}
+
 /** Canonical HTTP status for a code. Routes can still override per call site. */
 export function statusForCode(code: ApiCode): ContentfulStatusCode {
   switch (code) {

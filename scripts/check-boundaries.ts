@@ -5,10 +5,9 @@
  *   - daemon.ts (HTTP routes) must go through service.ts — never import git-actions/status/inspect.
  *   - read-only layers (status.ts, inspect.ts) must not import the orchestration layer (service.ts).
  *   - VCS backends (src/vcs/*) must not depend on service.ts (would invert the dependency / cycle).
+ *   - vcs/types.ts (the VcsBackend CONTRACT) must not import the git implementation (git-actions.ts);
+ *     shared result types live in contract.ts. (vcs/git.ts, the git ADAPTER, may import it.)
  * Run: `bun run check:boundaries` (wired into CI via `bun run check`).
- *
- * NOT yet enforced (tracked in docs/PRE_RELEASE_PLAN.md, item C3): vcs/types.ts still imports
- * ActionResult from git-actions.ts — add that rule once the type is moved to contract.ts.
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -34,6 +33,11 @@ const rules: Array<{ file: string; forbid: RegExp; why: string }> = [
     file: "src/inspect.ts",
     forbid: /from\s+"\.\/service(\.ts)?"/g,
     why: "inspect.ts (read-only) must not import the orchestration layer",
+  },
+  {
+    file: "src/vcs/types.ts",
+    forbid: /from\s+"(\.\.\/)+git-actions(\.ts)?"/g,
+    why: "the VcsBackend contract must not depend on the git implementation — use contract.ts",
   },
 ];
 

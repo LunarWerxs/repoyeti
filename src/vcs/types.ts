@@ -14,7 +14,7 @@
  */
 import type { Identity, RepoStatus } from "../db.ts";
 import type { ChangedFile } from "../status.ts";
-import type { ActionResult } from "../git-actions.ts";
+import type { ActionResult } from "../contract.ts";
 import type { BranchList, LogResult, StashList } from "../inspect.ts";
 
 export type VcsKind = "git" | "lore";
