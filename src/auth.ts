@@ -329,6 +329,30 @@ export function handleLogout(c: Context): Response {
   return c.json({ ok: true });
 }
 
+/**
+ * Rotate the HMAC signing key — the "sign out everywhere" primitive. Sessions are stateless
+ * signed cookies (no server-side session store to revoke), so regenerating the key instantly
+ * invalidates EVERY existing `gm_session` (and `gm_local` bypass) cookie on every device: the
+ * next request fails `unsign` and is treated as unauthenticated. The new key is persisted so
+ * it survives a restart. A login in flight when this fires just fails state verification and
+ * the user retries. Returns the new key (for symmetry/testing).
+ */
+export function rotateKey(): Buffer {
+  ensureConfigDir();
+  const fresh = randomBytes(32);
+  writeFileSync(join(CONFIG_DIR, "session.key"), fresh.toString("hex"), { mode: 0o600 });
+  KEY = fresh;
+  return fresh;
+}
+
+/** POST /api/auth/logout-all — invalidate sessions on ALL devices, then clear this one. */
+export function handleLogoutAll(c: Context): Response {
+  rotateKey();
+  deleteCookie(c, COOKIE, { path: "/" });
+  deleteCookie(c, LOCAL_COOKIE, { path: "/" });
+  return c.json({ ok: true });
+}
+
 /** Middleware gating /api/*. The invariants:
  *  - No OIDC client at all (bare test configs) → fully open.
  *  - A request over the tunnel ALWAYS requires a signed-in owner, in any mode.

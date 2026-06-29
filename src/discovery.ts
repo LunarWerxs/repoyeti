@@ -10,6 +10,8 @@
 import { readdirSync, existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join, basename } from "node:path";
+import { isLoreEnabled } from "./vcs/index.ts";
+import type { VcsKind } from "./vcs/types.ts";
 
 const SKIP_DIRS = new Set([
   "node_modules",
@@ -32,11 +34,14 @@ export interface FoundRepo {
   absPath: string;
   name: string;
   isSubmodule: boolean;
+  /** Which VCS this working copy belongs to (".git" → git, ".lore" → lore). */
+  vcs: VcsKind;
 }
 
 export function discover(roots: string[], maxDepth: number, maxRepos: number): FoundRepo[] {
   const found: FoundRepo[] = [];
   const seen = new Set<string>();
+  const lore = isLoreEnabled();
 
   const visit = (dir: string, depth: number): void => {
     if (found.length >= maxRepos) return;
@@ -49,10 +54,16 @@ export function discover(roots: string[], maxDepth: number, maxRepos: number): F
     }
 
     const gitEntry = entries.find((e) => e.name === ".git");
-    if (gitEntry) {
+    const loreEntry = lore ? entries.find((e) => e.name === ".lore" && e.isDirectory()) : undefined;
+    if (gitEntry || loreEntry) {
       if (!seen.has(dir)) {
         seen.add(dir);
-        found.push({ absPath: dir, name: basename(dir) || dir, isSubmodule: gitEntry.isFile() });
+        found.push({
+          absPath: dir,
+          name: basename(dir) || dir,
+          isSubmodule: gitEntry ? gitEntry.isFile() : false,
+          vcs: gitEntry ? "git" : "lore",
+        });
       }
       // A repo is a leaf for discovery purposes — don't recurse into its tree.
       return;
@@ -89,6 +100,7 @@ export async function discoverStream(
 ): Promise<number> {
   let count = 0;
   const seen = new Set<string>();
+  const lore = isLoreEnabled();
 
   const visit = async (dir: string, depth: number): Promise<void> => {
     if (count >= maxRepos) return;
@@ -100,11 +112,17 @@ export async function discoverStream(
     }
 
     const gitEntry = entries.find((e) => e.name === ".git");
-    if (gitEntry) {
+    const loreEntry = lore ? entries.find((e) => e.name === ".lore" && e.isDirectory()) : undefined;
+    if (gitEntry || loreEntry) {
       if (!seen.has(dir)) {
         seen.add(dir);
         count++;
-        onFound({ absPath: dir, name: basename(dir) || dir, isSubmodule: gitEntry.isFile() });
+        onFound({
+          absPath: dir,
+          name: basename(dir) || dir,
+          isSubmodule: gitEntry ? gitEntry.isFile() : false,
+          vcs: gitEntry ? "git" : "lore",
+        });
       }
       return; // a repo is a discovery leaf — don't recurse into its tree
     }

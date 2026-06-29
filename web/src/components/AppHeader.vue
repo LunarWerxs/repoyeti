@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { RefreshCw, Plus, Settings, Cloud, CloudOff } from "@lucide/vue";
+import { RefreshCw, Plus, Settings, Cloud, CloudOff, DownloadCloud, Loader2 } from "@lucide/vue";
+import { useI18n } from "vue-i18n";
+import { toast } from "vue-sonner";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { useStore } from "../store";
@@ -8,6 +10,20 @@ defineProps<{ connected: boolean; repoCount: number }>();
 defineEmits<{ reload: []; add: []; settings: []; remote: [] }>();
 
 const store = useStore();
+const { t } = useI18n();
+
+// Fetch every repo that has a remote, then toast a one-line summary.
+async function fetchAll(): Promise<void> {
+  if (store.fetchingAll) return;
+  try {
+    const r = await store.fetchAll();
+    if (r.total === 0) toast.message(t("header.fetchAllNone"));
+    else if (r.failed.length === 0) toast.success(t("header.fetchAllDone", { count: r.ok }, r.ok));
+    else toast.warning(t("header.fetchAllPartial", { ok: r.ok, failed: r.failed.length }));
+  } catch {
+    toast.error(t("header.fetchAllFailed"));
+  }
+}
 </script>
 
 <template>
@@ -60,6 +76,22 @@ const store = useStore();
             />
           </span>
         </div>
+
+        <Tooltip>
+          <TooltipTrigger as-child>
+            <Button
+              variant="ghost"
+              size="icon"
+              :disabled="store.fetchingAll"
+              :aria-label="$t('header.fetchAll')"
+              @click="fetchAll"
+            >
+              <Loader2 v-if="store.fetchingAll" class="animate-spin" />
+              <DownloadCloud v-else />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{{ $t("header.fetchAll") }}</TooltipContent>
+        </Tooltip>
 
         <Tooltip>
           <TooltipTrigger as-child>

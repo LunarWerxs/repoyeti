@@ -14,6 +14,10 @@ import {
   Cloud,
   Keyboard,
   Settings as SettingsIcon,
+  FolderSearch,
+  Plus,
+  LogOut,
+  Loader2,
 } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { useStore } from "../store";
@@ -75,12 +79,75 @@ async function setAccessMode(toRemote: boolean): Promise<void> {
   }
 }
 
+// ── sign out everywhere (rotates the daemon signing key) ──────────────────────
+const confirmSignOutAll = ref(false);
+async function signOutAll(): Promise<void> {
+  if (!confirmSignOutAll.value) {
+    confirmSignOutAll.value = true; // inline two-step confirm
+    return;
+  }
+  confirmSignOutAll.value = false;
+  try {
+    await store.logoutAll();
+    toast.success(t("settings.signOutAllDone"));
+    // The current device's cookie is now void too — reload so the auth gate re-evaluates.
+    window.location.reload();
+  } catch {
+    toast.error(t("settings.signOutAllFailed"));
+  }
+}
+
+// ── scan roots (discovery folders) ─────────────────────────────────────────────
+const newRoot = ref("");
+const addingRoot = ref(false);
+const confirmRemoveRoot = ref<string | null>(null);
+// Load the current roots whenever the sheet opens.
+watch(open, (isOpen) => {
+  if (isOpen) void store.loadRoots();
+});
+async function addRoot(): Promise<void> {
+  const path = newRoot.value.trim();
+  if (!path || addingRoot.value) return;
+  addingRoot.value = true;
+  try {
+    await store.addScanRoot(path);
+    toast.success(t("settings.rootsAdded", { path }));
+    newRoot.value = "";
+  } catch {
+    toast.error(t("settings.rootsAddFailed"));
+  } finally {
+    addingRoot.value = false;
+  }
+}
+async function removeRoot(path: string): Promise<void> {
+  if (confirmRemoveRoot.value !== path) {
+    confirmRemoveRoot.value = path; // first click arms the confirm
+    return;
+  }
+  confirmRemoveRoot.value = null;
+  try {
+    const removed = await store.removeScanRoot(path);
+    toast.success(t("settings.rootsRemoved", { count: removed }, removed));
+  } catch {
+    toast.error(t("settings.rootsRemoveFailed"));
+  }
+}
+
 // Toggle the per-file/per-repo diff statistics (server setting; rolls back + toasts on fail).
 async function onDiffStats(enabled: boolean): Promise<void> {
   try {
     await store.setDiffStats(enabled);
   } catch {
     toast.error(t("settings.diffStatsFailed"));
+  }
+}
+
+// Toggle smart-commit YOLO mode (commit the AI plan without the review editor).
+async function onYolo(enabled: boolean): Promise<void> {
+  try {
+    await store.setYolo(enabled);
+  } catch {
+    toast.error(t("settings.aiYoloFailed"));
   }
 }
 
@@ -254,7 +321,7 @@ async function remove(id: AiProviderId): Promise<void> {
               <Cloud :size="15" class="text-muted-foreground" /> {{ $t("settings.cardAccess") }}
             </CardTitle>
           </CardHeader>
-          <CardContent class="px-4">
+          <CardContent class="flex flex-col gap-4 px-4">
             <label class="flex cursor-pointer items-center justify-between gap-3">
               <span class="flex flex-col gap-0.5">
                 <span class="text-[12.5px] font-medium text-foreground">{{ $t("settings.accessMode") }}</span>
@@ -269,6 +336,69 @@ async function remove(id: AiProviderId): Promise<void> {
                 @update:model-value="(v: boolean) => setAccessMode(v)"
               />
             </label>
+            <!-- sign out everywhere (rotates the signing key → invalidates all devices) -->
+            <div v-if="store.authEnforced" class="flex items-center justify-between gap-3">
+              <span class="flex flex-col gap-0.5">
+                <span class="text-[12.5px] font-medium text-foreground">{{ $t("settings.signOutAll") }}</span>
+                <span class="text-[12px] text-muted-foreground">{{ $t("settings.signOutAllHint") }}</span>
+              </span>
+              <Button
+                :variant="confirmSignOutAll ? 'destructive' : 'outline'"
+                size="sm"
+                class="shrink-0"
+                @click="signOutAll"
+                @blur="confirmSignOutAll = false"
+              >
+                <LogOut />
+                {{ confirmSignOutAll ? $t("settings.signOutAllConfirm") : $t("settings.signOutAll") }}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <!-- Scan folders (discovery roots) ───────────────────────────────── -->
+        <Card class="gap-3 border-border bg-secondary/20 py-4 shadow-none">
+          <CardHeader class="gap-1 px-4">
+            <CardTitle class="flex items-center gap-2 text-[13px]">
+              <FolderSearch :size="15" class="text-muted-foreground" /> {{ $t("settings.cardRoots") }}
+            </CardTitle>
+            <CardDescription class="text-[12px]">{{ $t("settings.rootsHint") }}</CardDescription>
+          </CardHeader>
+          <CardContent class="flex flex-col gap-2.5 px-4">
+            <p v-if="!store.roots.length" class="text-[12.5px] text-muted-foreground">
+              {{ $t("settings.rootsEmpty") }}
+            </p>
+            <div
+              v-for="r in store.roots"
+              :key="r"
+              class="flex items-center gap-2 rounded-md border border-border bg-secondary/30 px-2.5 py-1.5"
+            >
+              <code class="mono min-w-0 flex-1 truncate text-[12px]" :title="r">{{ r }}</code>
+              <Button
+                :variant="confirmRemoveRoot === r ? 'destructive' : 'ghost'"
+                size="sm"
+                class="shrink-0"
+                :aria-label="$t('settings.rootsRemove')"
+                @click="removeRoot(r)"
+                @blur="confirmRemoveRoot = null"
+              >
+                <Trash2 />
+                <span v-if="confirmRemoveRoot === r">{{ $t("settings.rootsRemove") }}</span>
+              </Button>
+            </div>
+            <form class="flex items-center gap-2 pt-0.5" @submit.prevent="addRoot">
+              <Input
+                v-model="newRoot"
+                class="mono min-w-0 flex-1 text-[12.5px]"
+                :placeholder="$t('settings.rootsPlaceholder')"
+                :aria-label="$t('settings.rootsAdd')"
+              />
+              <Button type="submit" size="sm" class="shrink-0" :disabled="!newRoot.trim() || addingRoot">
+                <Loader2 v-if="addingRoot" class="animate-spin" />
+                <Plus v-else />
+                {{ $t("settings.rootsAdd") }}
+              </Button>
+            </form>
           </CardContent>
         </Card>
 
@@ -607,6 +737,19 @@ async function remove(id: AiProviderId): Promise<void> {
                 </Collapsible>
               </div>
             </div>
+
+            <!-- Smart-commit YOLO mode -->
+            <label class="flex cursor-pointer items-center justify-between gap-3">
+              <span class="flex flex-col gap-0.5">
+                <span class="text-[12.5px] font-medium text-foreground">{{ $t("settings.aiYolo") }}</span>
+                <span class="text-[12px] text-muted-foreground">{{ $t("settings.aiYoloHint") }}</span>
+              </span>
+              <Switch
+                :model-value="settings.yolo"
+                :aria-label="$t('settings.aiYolo')"
+                @update:model-value="(v: boolean) => onYolo(v)"
+              />
+            </label>
           </CardContent>
         </Card>
       </div>

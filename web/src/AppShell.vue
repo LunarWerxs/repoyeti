@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, computed } from "vue";
-import { Plus, FolderGit2, Loader2 } from "@lucide/vue";
+import { Plus, FolderGit2, FolderSearch, Loader2 } from "@lucide/vue";
 import { useStore } from "./store";
 import { Button } from "@/components/ui/button";
 import AppHeader from "./components/AppHeader.vue";
@@ -80,15 +80,16 @@ onMounted(async () => {
         <p class="mt-1 mb-4 text-[13px] text-muted-foreground">
           {{ $t("shell.noReposBody") }}
         </p>
-        <Button @click="showAdd = true">
-          <Plus />
-          {{ $t("shell.addRepository") }}
-        </Button>
-        <p class="mt-4 text-[12px] text-muted-foreground">
-          {{ $t("shell.scanHintBefore") }}
-          <code class="mono rounded bg-secondary px-1 py-0.5 text-[11px]">gitmob add-root &lt;path&gt;</code>
-          {{ $t("shell.scanHintAfter") }}
-        </p>
+        <div class="flex flex-wrap items-center justify-center gap-2">
+          <Button @click="showAdd = true">
+            <Plus />
+            {{ $t("shell.addRepository") }}
+          </Button>
+          <Button variant="secondary" @click="showSettings = true">
+            <FolderSearch />
+            {{ $t("shell.addScanFolder") }}
+          </Button>
+        </div>
       </div>
 
       <template v-else>

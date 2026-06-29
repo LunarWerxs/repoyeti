@@ -12,19 +12,31 @@ import { enqueue } from "./opqueue.ts";
 import { readStatus, readChanges, type ChangedFile } from "./status.ts";
 import { diffStatsEnabled } from "./diffstat.ts";
 import { broadcast } from "./bus.ts";
-import { getRepo, getWatchableRepos, setRepoStatus, upsertRepo, setRepoOrder } from "./db.ts";
+import { getRepo, getRepos, getWatchableRepos, getIdentity, setRepoStatus, upsertRepo, setRepoOrder, deleteRepos } from "./db.ts";
+import { discoverStream } from "./discovery.ts";
 import { resolveRepoIdentity } from "./identity.ts";
 import { gitFor } from "./git.ts";
+import { backendFor } from "./vcs/index.ts";
+import type { VcsBackend } from "./vcs/types.ts";
 import {
-  gitFetch,
   gitPullFfOnly,
   gitPush,
-  gitCommitAll,
+  gitClone,
+  gitRemoteSet,
+  gitRemoteRemove,
   collectCommitDiff,
+  collectPathsDiff,
+  collectCommitPlanInput,
+  gitCommitGroups,
   fileDiffPatch,
   grepChangedContent,
   type ActionResult,
+  type ActionCode,
+  type CommitGroupSpec,
+  type CommitGroupResult,
 } from "./git-actions.ts";
+import type { CommitPlanInput } from "./ai.ts";
+import { readTags, type BranchList, type LogResult, type StashList, type TagList } from "./inspect.ts";
 import { watchRepo, type WatchHandle } from "./watcher.ts";
 import type { Identity, RepoView } from "./db.ts";
 
@@ -81,9 +93,28 @@ function startPollFallback(repoId: string, absPath: string): void {
 
 export function watchOne(repoId: string, absPath: string): void {
   if (watchHandles.has(repoId)) return;
-  const handle = watchRepo(absPath, () => coalescedRefresh(repoId, absPath));
+  // Watch the VCS's marker dir (.git / .lore) so a Lore repo's metadata changes still tick.
+  const marker = backendFor(getRepo(repoId)?.vcs ?? "git").marker;
+  const handle = watchRepo(absPath, () => coalescedRefresh(repoId, absPath), marker);
   watchHandles.set(repoId, handle);
   if (!handle.watching) startPollFallback(repoId, absPath);
+}
+/** Tear down a single repo's watcher/poll/registries (used when a scan root is removed). */
+export function unwatchOne(repoId: string): void {
+  const h = watchHandles.get(repoId);
+  if (h) {
+    h.close();
+    watchHandles.delete(repoId);
+  }
+  const t = pollHandles.get(repoId);
+  if (t) {
+    clearTimeout(t);
+    pollHandles.delete(repoId);
+  }
+  unhealthyWatch.delete(repoId);
+  refreshBusy.delete(repoId);
+  refreshAgain.delete(repoId);
+  lastStatusSig.delete(repoId);
 }
 export function startWatching(repos: Array<{ id: string; absPath: string }>): void {
   for (const r of repos) watchOne(r.id, r.absPath);
@@ -107,7 +138,8 @@ export function watcherHealth(): { watched: number; polling: number; unhealthy: 
 /** Read a repo's status behind its op-queue; persist + push over SSE only on change. */
 export async function refreshRepo(id: string, absPath: string, markFetched = false): Promise<void> {
   const previous = getRepo(id)?.status;
-  const status = await enqueue(id, () => readStatus(absPath, diffStatsEnabled()));
+  const backend = backendFor(getRepo(id)?.vcs ?? "git");
+  const status = await enqueue(id, () => backend.readStatus(absPath, diffStatsEnabled()));
   if (markFetched) status.fetchedAt = Date.now();
   else status.fetchedAt = previous?.fetchedAt ?? null;
   const { updatedAt: _omit, ...sig } = status;
@@ -131,30 +163,158 @@ export interface ActionOutcome extends ActionResult {
   repoId: string;
 }
 
-type GitAction = (absPath: string, identity: Identity | null) => Promise<ActionResult>;
+type VcsAction = (backend: VcsBackend, absPath: string, identity: Identity | null) => Promise<ActionResult>;
 
-async function runAction(repoId: string, action: GitAction, markFetched = false): Promise<ActionOutcome> {
+async function runAction(repoId: string, action: VcsAction, markFetched = false): Promise<ActionOutcome> {
   const repo = getRepo(repoId);
   if (!repo) return { ok: false, code: "NOT_FOUND", message: "repo not found", repoId };
   if (repo.isSubmodule) {
     return { ok: false, code: "SUBMODULE_NOT_ACTIONABLE", message: "submodule worktree is not actionable", repoId };
   }
   const identity = resolveRepoIdentity(repo);
-  const result = await enqueue(repoId, () => action(repo.absPath, identity));
+  const backend = backendFor(repo.vcs);
+  const result = await enqueue(repoId, () => action(backend, repo.absPath, identity));
   // Reflect the new reality (ahead/behind/dirty) to all clients.
   await refreshRepo(repoId, repo.absPath, markFetched && result.ok);
   return { ...result, repoId };
 }
 
-export const fetchRepo = (id: string): Promise<ActionOutcome> => runAction(id, gitFetch, true);
-export const pullRepo = (id: string): Promise<ActionOutcome> => runAction(id, gitPullFfOnly, true);
-export const pushRepo = (id: string): Promise<ActionOutcome> => runAction(id, gitPush);
+export const fetchRepo = (id: string): Promise<ActionOutcome> => runAction(id, (b, p, idn) => b.fetch(p, idn), true);
+export const pullRepo = (id: string): Promise<ActionOutcome> => runAction(id, (b, p, idn) => b.pull(p, idn), true);
+export const pushRepo = (id: string): Promise<ActionOutcome> => runAction(id, (b, p, idn) => b.push(p, idn));
 export const commitRepo = (
   id: string,
   message: string,
   amend = false,
 ): Promise<ActionOutcome> =>
-  runAction(id, (absPath, identity) => gitCommitAll(absPath, identity, message, amend));
+  runAction(id, (b, p, idn) => b.commitAll(p, idn, message, amend));
+
+// ── branch actions (switch / create / delete) ─────────────────────────────────────
+export const checkoutRepo = (id: string, branch: string): Promise<ActionOutcome> =>
+  runAction(id, (b, p) => b.checkout(p, branch));
+export const createBranchRepo = (id: string, name: string, switchTo = true): Promise<ActionOutcome> =>
+  runAction(id, (b, p) => b.createBranch(p, name, switchTo));
+export const deleteBranchRepo = (id: string, name: string): Promise<ActionOutcome> =>
+  runAction(id, (b, p) => b.deleteBranch(p, name));
+
+// ── stash actions (save / pop / drop) ─────────────────────────────────────────────
+export const stashSaveRepo = (id: string, message?: string): Promise<ActionOutcome> =>
+  runAction(id, (b, p, idn) => b.stashSave(p, idn, message));
+export const stashPopRepo = (id: string, index = 0): Promise<ActionOutcome> =>
+  runAction(id, (b, p) => b.stashPop(p, index));
+export const stashDropRepo = (id: string, index = 0): Promise<ActionOutcome> =>
+  runAction(id, (b, p) => b.stashDrop(p, index));
+
+// ── remote actions (set-url / remove origin) ──────────────────────────────────────
+// Local `.git/config` edits (no network). runAction refreshes status after, so the card's
+// remote URL + the cloud icon update over SSE immediately.
+export const setRemoteRepo = (id: string, name: string, url: string): Promise<ActionOutcome> =>
+  runAction(id, (_b, p) => gitRemoteSet(p, name, url));
+export const removeRemoteRepo = (id: string, name: string): Promise<ActionOutcome> =>
+  runAction(id, (_b, p) => gitRemoteRemove(p, name));
+
+// ── read-only inspection (branches / log / stashes) ───────────────────────────────
+// Deliberately NOT behind the per-repo op-queue (reads stay snappy during a fetch/pull).
+const NOT_FOUND_BRANCHES: BranchList = { ok: false, code: "ERROR", message: "repo not found", current: null, detached: false, branches: [] };
+
+export function getBranches(repoId: string): Promise<BranchList> {
+  const repo = getRepo(repoId);
+  if (!repo) return Promise.resolve(NOT_FOUND_BRANCHES);
+  return backendFor(repo.vcs).listBranches(repo.absPath);
+}
+
+export function getLog(repoId: string, limit?: number, skip?: number): Promise<LogResult> {
+  const repo = getRepo(repoId);
+  if (!repo) return Promise.resolve({ ok: false, code: "ERROR", message: "repo not found", commits: [], hasMore: false });
+  return backendFor(repo.vcs).readLog(repo.absPath, limit, skip);
+}
+
+export function getStashes(repoId: string): Promise<StashList> {
+  const repo = getRepo(repoId);
+  if (!repo) return Promise.resolve({ ok: false, code: "ERROR", message: "repo not found", stashes: [] });
+  return backendFor(repo.vcs).readStashes(repo.absPath);
+}
+
+export function getTags(repoId: string): Promise<TagList> {
+  const repo = getRepo(repoId);
+  if (!repo) return Promise.resolve({ ok: false, code: "ERROR", message: "repo not found", tags: [] });
+  // Tags are a git concept; non-git backends (Lore) have none → empty list, not a git error.
+  if (repo.vcs !== "git") return Promise.resolve({ ok: true, code: "OK", tags: [] });
+  return readTags(repo.absPath);
+}
+
+// ── bulk fetch-all ────────────────────────────────────────────────────────────────
+export interface FetchAllResult {
+  /** Repos that had a remote and were attempted. */
+  total: number;
+  /** How many fetched cleanly. */
+  ok: number;
+  /** Per-repo failures (so the UI can name them). */
+  failed: Array<{ id: string; name: string; code: string }>;
+}
+
+/**
+ * Fetch every repo that has a remote. Each goes through `fetchRepo` → the per-repo op-queue
+ * and the network gate (`netGate`, default 4 concurrent), so firing them all at once stays
+ * bounded — no new concurrency logic needed. Repos with no remote are skipped (not failures).
+ */
+export async function fetchAllRepos(): Promise<FetchAllResult> {
+  const repos = getWatchableRepos().filter((r) => r.status?.remote);
+  const results = await Promise.allSettled(repos.map((r) => fetchRepo(r.id)));
+  const failed: FetchAllResult["failed"] = [];
+  let ok = 0;
+  results.forEach((res, i) => {
+    if (res.status === "fulfilled" && res.value.ok) ok++;
+    else {
+      const code = res.status === "fulfilled" ? res.value.code : "ERROR";
+      failed.push({ id: repos[i]!.id, name: repos[i]!.name, code });
+    }
+  });
+  return { total: repos.length, ok, failed };
+}
+
+// ── scan-root discovery / removal ─────────────────────────────────────────────────
+/** True when `p` is the root itself or sits inside it. */
+function isPathUnder(root: string, p: string): boolean {
+  const rel = relative(root, p);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+/**
+ * Discover one newly-added scan root in the background, mirroring boot discovery:
+ * index → watch → status-read each repo as it's found and broadcast `repo_added` so the
+ * dashboard fills in live over SSE. Fire-and-forget from the route (a big root can take a
+ * while); errors are swallowed so a bad path can't crash the daemon.
+ */
+export async function discoverRoot(absPath: string, maxDepth: number, maxRepos: number): Promise<number> {
+  let count = 0;
+  await discoverStream([absPath], maxDepth, maxRepos, (f) => {
+    const id = upsertRepo(f.absPath, f.name, "auto", f.isSubmodule, f.vcs);
+    watchOne(id, f.absPath);
+    void refreshRepo(id, f.absPath).catch(() => {});
+    const repo = getRepo(id);
+    if (repo) {
+      count++;
+      broadcast("repo_added", { repo });
+    }
+  });
+  return count;
+}
+
+/**
+ * Forget every AUTO-discovered repo under a removed scan root: unwatch it, drop its DB row,
+ * and broadcast `repo_removed` so the dashboard drops the card live. Repos the owner pinned
+ * explicitly (`source` 'pinned'/'created') are LEFT alone — removing a scan root shouldn't
+ * delete a repo they deliberately added by path. Returns how many were forgotten.
+ */
+export function forgetReposUnder(rootAbs: string): number {
+  const root = resolve(rootAbs);
+  const victims = getRepos().filter((r) => r.source === "auto" && isPathUnder(root, r.absPath));
+  for (const r of victims) unwatchOne(r.id);
+  deleteRepos(victims.map((r) => r.id));
+  for (const r of victims) broadcast("repo_removed", { id: r.id });
+  return victims.length;
+}
 
 // ── manual targeting: register an existing repo, or create a new one ──────────────
 export interface RepoMutation {
@@ -176,6 +336,30 @@ export async function registerRepo(inputPath: string): Promise<RepoMutation> {
   watchOne(id, p);
   await refreshRepo(id, p);
   return { ok: true, code: "OK", message: "registered", repo: getRepo(id) ?? undefined };
+}
+
+/**
+ * "Clone" — clone `url` into `<parentAbs>/<name>` with the chosen identity's SSH key, then
+ * index/watch/refresh it and announce it over SSE. The caller (route) has already validated the
+ * URL scheme, the name, that `parentAbs` is under a scan root, and that the target doesn't
+ * exist. The cloned repo is recorded as source 'created' (the owner deliberately added it).
+ */
+export async function cloneRepo(
+  parentAbs: string,
+  name: string,
+  url: string,
+  identityId: string | null,
+): Promise<RepoMutation> {
+  const identity = identityId ? getIdentity(identityId) : null;
+  const res = await gitClone(parentAbs, url, name, identity);
+  if (!res.ok) return { ok: false, code: res.code, message: res.message };
+  const dest = join(parentAbs, name);
+  const id = upsertRepo(dest, name, "created", false);
+  watchOne(id, dest);
+  await refreshRepo(id, dest);
+  const repo = getRepo(id);
+  if (repo) broadcast("repo_added", { repo });
+  return { ok: true, code: "OK", message: "cloned", repo: repo ?? undefined };
 }
 
 /** "Create New" — make a directory and `git init` it. */
@@ -234,7 +418,7 @@ export async function getChanges(repoId: string): Promise<ChangesResult> {
   const repo = getRepo(repoId);
   if (!repo) return { ok: false, code: "NOT_FOUND", message: "repo not found" };
   try {
-    const all = await enqueue(repoId, () => readChanges(repo.absPath, diffStatsEnabled()));
+    const all = await enqueue(repoId, () => backendFor(repo.vcs).readChanges(repo.absPath, diffStatsEnabled()));
     if (all.length > MAX_CHANGED_FILES) {
       return { ok: true, code: "OK", files: all.slice(0, MAX_CHANGED_FILES), total: all.length, truncated: true };
     }
@@ -271,6 +455,8 @@ export async function searchChangedContent(repoId: string, query: string): Promi
   if (!repo) return { ok: false, code: "NOT_FOUND", message: "repo not found" };
   const needle = query.trim();
   if (needle.length < MIN_CONTENT_SEARCH) return { ok: true, code: "OK", paths: [] };
+  // Content search uses `git grep`; not wired for non-git backends (Lore) yet → no matches.
+  if (repo.vcs !== "git") return { ok: true, code: "OK", paths: [] };
   try {
     const changed = await readChanges(repo.absPath, false);
     if (changed.length === 0) return { ok: true, code: "OK", paths: [] };
@@ -622,6 +808,68 @@ export async function readFileDiff(repoId: string, relPath: string): Promise<Fil
   }
 }
 
+/** Result of discarding one file's working-tree changes (the changes-tree "Discard" action). */
+export interface DiscardResult {
+  ok: boolean;
+  code: "OK" | "NOT_FOUND" | "ERROR" | "DISCARD_FAILED" | "SUBMODULE_NOT_ACTIONABLE";
+  message?: string;
+  /** Repo-relative path that was discarded (normalised to forward slashes). */
+  path?: string;
+}
+
+/**
+ * Discard one changed file's working-tree changes — the inverse of the file editor.
+ * Untrusted-path safe (confined to the repo exactly like readFileContent), behind the
+ * per-repo op-queue, and DESTRUCTIVE — the UI gates it behind an explicit confirm.
+ *
+ * Three cases, all "restore this file to its committed/absent state":
+ *  - tracked in HEAD (modified or deleted) → `git checkout HEAD -- <path>` restores it.
+ *  - added/untracked (not in HEAD)         → remove the working file + unstage any add.
+ * HEAD is never touched and no merge state is possible, so the safety invariant holds.
+ */
+export async function discardFile(repoId: string, relPath: string): Promise<DiscardResult> {
+  const repo = getRepo(repoId);
+  if (!repo) return { ok: false, code: "NOT_FOUND", message: "repo not found" };
+  if (repo.isSubmodule) return { ok: false, code: "SUBMODULE_NOT_ACTIONABLE", message: "submodule worktree is not actionable" };
+  const r = resolveRepoPath(repo.absPath, relPath);
+  if ("error" in r) return { ok: false, code: "ERROR", message: r.error };
+  // Never reach into a .git dir (restoring .git/* would be nonsense / unsafe).
+  if (r.clean.split("/").includes(".git")) {
+    return { ok: false, code: "ERROR", message: "refusing to touch a .git directory" };
+  }
+
+  const result = await enqueue(repoId, async (): Promise<DiscardResult> => {
+    try {
+      const git = gitFor(repo.absPath);
+      let inHead = false;
+      try {
+        await git.raw(["cat-file", "-e", `HEAD:${r.clean}`]);
+        inHead = true;
+      } catch {
+        /* not in HEAD → newly added or untracked */
+      }
+      if (inHead) {
+        // Restores both the index and the working tree to the committed content.
+        await git.raw(["checkout", "HEAD", "--", r.clean]);
+      } else {
+        if (existsSync(r.abs) && lstatSync(r.abs).isFile()) unlinkSync(r.abs);
+        // Drop any staged "add" for this path. No-op (and harmless throw) on an unborn HEAD.
+        try {
+          await git.raw(["reset", "-q", "--", r.clean]);
+        } catch {
+          /* unborn HEAD or nothing staged */
+        }
+      }
+      return { ok: true, code: "OK" as const, path: r.clean };
+    } catch (e) {
+      return { ok: false, code: "DISCARD_FAILED" as const, message: e instanceof Error ? e.message : String(e) };
+    }
+  });
+  // Refresh AFTER the queue slot releases (refreshRepo enqueues again → would deadlock if nested).
+  if (result.ok) await refreshRepo(repo.id, repo.absPath);
+  return result;
+}
+
 export interface DiffResult {
   ok: boolean;
   code: "OK" | "NOT_FOUND" | "NOTHING_TO_COMMIT" | "ERROR";
@@ -645,4 +893,135 @@ export async function collectRepoDiff(repoId: string): Promise<DiffResult> {
     const diff = await collectCommitDiff(repo.absPath);
     return { ok: true, code: "OK" as const, diff };
   });
+}
+
+/**
+ * Collect a repo's diff SCOPED to a subset of paths, for regenerating one proposed commit's
+ * message from just its files. Behind the per-repo op-queue, read-only. Refuses a submodule
+ * or an empty path set; an empty scoped diff still returns OK (the model gets the file list).
+ */
+export async function collectRepoPathsDiff(repoId: string, paths: string[]): Promise<DiffResult> {
+  const repo = getRepo(repoId);
+  if (!repo) return { ok: false, code: "NOT_FOUND", message: "repo not found" };
+  if (repo.isSubmodule) return { ok: false, code: "ERROR", message: "submodule worktree is not actionable" };
+  if (paths.length === 0) return { ok: false, code: "NOTHING_TO_COMMIT", message: "no files selected" };
+  return enqueue(repoId, async () => {
+    const diff = await collectPathsDiff(repo.absPath, paths);
+    return { ok: true, code: "OK" as const, diff };
+  });
+}
+
+// ── smart commit (AI multi-commit splitter) ─────────────────────────────────────────
+
+export interface PlanInputResult {
+  ok: boolean;
+  code: "OK" | "NOT_FOUND" | "NOTHING_TO_COMMIT" | "ERROR";
+  message?: string;
+  input?: CommitPlanInput;
+}
+
+/**
+ * Collect the read-only input for the AI commit planner, behind the per-repo op-queue (so
+ * it can't race a fetch/pull/push/commit). Refuses a clean tree and submodules. Read-only;
+ * never mutates the index. The route turns this into a plan via ai.generateCommitPlan.
+ */
+export async function planCommitInput(repoId: string): Promise<PlanInputResult> {
+  const repo = getRepo(repoId);
+  if (!repo) return { ok: false, code: "NOT_FOUND", message: "repo not found" };
+  if (repo.isSubmodule) return { ok: false, code: "ERROR", message: "submodule worktree is not actionable" };
+  return enqueue(repoId, async () => {
+    const st = await readStatus(repo.absPath);
+    if (st.error) return { ok: false, code: "ERROR" as const, message: st.error };
+    if (st.dirty === 0) return { ok: false, code: "NOTHING_TO_COMMIT" as const, message: "nothing to commit" };
+    const input = await collectCommitPlanInput(repo.absPath);
+    return { ok: true, code: "OK" as const, input };
+  });
+}
+
+export interface SmartCommitOutcome {
+  ok: boolean;
+  code: ActionCode;
+  message: string;
+  repoId: string;
+  /** Per-group outcome, in order (present once execution started). */
+  committed?: CommitGroupResult[];
+  /** Groups not attempted because an earlier one failed. */
+  remaining?: number;
+  /** True when a requested post-commit push succeeded. */
+  synced?: boolean;
+  /** The sync (pull/push) code/message when sync was requested and didn't fully succeed. */
+  syncCode?: ActionCode;
+  syncMessage?: string;
+}
+
+/**
+ * Execute an owner-edited commit plan: validate the submitted groups against the LIVE working
+ * tree, then run the whole stage+commit sequence inside ONE op-queue slot (so nothing can
+ * interleave), optionally syncing afterward, and refresh once the slot releases.
+ *
+ * Validation (against fresh `readChanges`):
+ *  - every submitted path must currently be changed (a vanished/stale path → PLAN_STALE);
+ *  - no path may appear in two groups (→ PLAN_PATHS_INVALID).
+ * A rename's old path is auto-added to its group so the deletion lands with the addition.
+ * Leaving some changed files unassigned is allowed — they simply stay in the working tree.
+ */
+export async function smartCommitRepo(
+  repoId: string,
+  commits: Array<{ message: string; paths: string[] }>,
+  sync = false,
+): Promise<SmartCommitOutcome> {
+  const repo = getRepo(repoId);
+  if (!repo) return { ok: false, code: "NOT_FOUND", message: "repo not found", repoId };
+  if (repo.isSubmodule)
+    return { ok: false, code: "SUBMODULE_NOT_ACTIONABLE", message: "submodule worktree is not actionable", repoId };
+  if (commits.length === 0) return { ok: false, code: "EMPTY_PLAN", message: "no commits in the plan", repoId };
+  const identity = resolveRepoIdentity(repo);
+
+  const outcome = await enqueue(repoId, async (): Promise<Omit<SmartCommitOutcome, "repoId">> => {
+    // Validate against the CURRENT tree (the plan may have been built minutes ago).
+    const fresh = await readChanges(repo.absPath, false);
+    const changedSet = new Set(fresh.map((f) => f.path));
+    const renameFrom = new Map<string, string>();
+    for (const f of fresh) if (f.from) renameFrom.set(f.path, f.from);
+
+    const seen = new Set<string>();
+    const specs: CommitGroupSpec[] = [];
+    for (const c of commits) {
+      const expanded: string[] = [];
+      for (const raw of c.paths) {
+        const p = raw.replace(/\\/g, "/").trim();
+        if (!changedSet.has(p)) {
+          return { ok: false, code: "PLAN_STALE", message: `"${p}" is no longer a pending change — re-plan` };
+        }
+        if (seen.has(p)) {
+          return { ok: false, code: "PLAN_PATHS_INVALID", message: `"${p}" is assigned to more than one commit` };
+        }
+        seen.add(p);
+        expanded.push(p);
+        const from = renameFrom.get(p);
+        if (from) expanded.push(from); // stage the rename's old path with the new one
+      }
+      specs.push({ message: c.message, paths: expanded });
+    }
+
+    const res = await gitCommitGroups(repo.absPath, identity, specs);
+    const base: Omit<SmartCommitOutcome, "repoId"> = {
+      ok: res.ok,
+      code: res.code,
+      message: res.message,
+      committed: res.committed,
+      remaining: res.remaining,
+    };
+    if (!res.ok || !sync) return base;
+
+    // Post-commit sync (mirrors the UI's "commit & sync"): pull --ff-only, then push.
+    const pull = await gitPullFfOnly(repo.absPath, identity);
+    const push = await gitPush(repo.absPath, identity);
+    if (push.ok) return { ...base, synced: true };
+    return { ...base, synced: false, syncCode: push.code, syncMessage: push.message || pull.message };
+  });
+
+  // Refresh AFTER the slot releases (refreshRepo enqueues again → nesting would deadlock).
+  await refreshRepo(repo.id, repo.absPath, outcome.ok && outcome.synced === true);
+  return { ...outcome, repoId };
 }

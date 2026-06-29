@@ -32,6 +32,20 @@ export type ApiErrorCode =
   | "NOT_A_REPO"
   | "EXISTS"
   | "SUBMODULE_NOT_ACTIONABLE"
+  // ── branches / stash / discard (mirror inspect.ts + git-actions.ts) ──
+  | "INVALID_REF_NAME"
+  | "BRANCH_EXISTS"
+  | "UNMERGED_BRANCH"
+  | "CANNOT_DELETE_CURRENT"
+  | "PROTECTED_BRANCH"
+  | "NOTHING_TO_STASH"
+  | "STASH_CONFLICT"
+  | "STASH_EMPTY"
+  | "DISCARD_FAILED"
+  // ── smart commit (multi-commit splitter) ──
+  | "EMPTY_PLAN"
+  | "PLAN_PATHS_INVALID"
+  | "PLAN_STALE"
   // ── request / validation ──
   | "BAD_REQUEST"
   | "VALIDATION"
@@ -70,6 +84,9 @@ export function statusForCode(code: ApiCode): ContentfulStatusCode {
     case "NO_AI_PROVIDER":
     case "NO_MODEL":
     case "NOT_CONFIGURED":
+    case "INVALID_REF_NAME":
+    case "EMPTY_PLAN":
+    case "PLAN_PATHS_INVALID":
       return 400;
     // 401 — a credential was supplied but rejected.
     case "AI_AUTH_FAILED":
@@ -88,6 +105,14 @@ export function statusForCode(code: ApiCode): ContentfulStatusCode {
     case "EXISTS":
     case "SUBMODULE_NOT_ACTIONABLE":
     case "NEEDS_OWNER":
+    case "BRANCH_EXISTS":
+    case "UNMERGED_BRANCH":
+    case "CANNOT_DELETE_CURRENT":
+    case "PROTECTED_BRANCH":
+    case "NOTHING_TO_STASH":
+    case "STASH_CONFLICT":
+    case "STASH_EMPTY":
+    case "PLAN_STALE":
       return 409;
     // 502 — an upstream (git remote / AI provider) failed.
     case "SSH_AUTH_FAILED":
@@ -97,6 +122,7 @@ export function statusForCode(code: ApiCode): ContentfulStatusCode {
     case "SSH_PASSPHRASE_REQUIRED":
     case "AI_UNREACHABLE":
       return 504;
+    case "DISCARD_FAILED":
     case "ERROR":
     default:
       return 500;

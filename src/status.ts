@@ -57,6 +57,9 @@ export interface ChangedFile {
   /** M(odified) · A(dded) · D(eleted) · R(enamed) · U(ntracked) · C(onflicted) */
   status: string;
   staged: boolean;
+  /** Rename SOURCE path (present only for status "R"). The smart-commit executor stages a
+   *  rename's old + new path together so the old-path deletion lands in the same commit. */
+  from?: string;
   /** Per-file line/char delta — present only when the diff-stats setting is on. */
   stat?: DiffStat;
 }
@@ -71,6 +74,12 @@ export async function readChanges(absPath: string, withStats = false): Promise<C
   // bound still holds and computeDiffStats never nests another gate.
   return readGate.run(async () => {
     const status = await gitFor(absPath).status();
+    // simple-git surfaces renames in a separate `renamed: [{from,to}]` list; map by the
+    // new path so we can attach the source path to the corresponding file entry.
+    const renameFrom = new Map<string, string>();
+    for (const r of status.renamed ?? []) {
+      if (r?.to) renameFrom.set(r.to, r.from);
+    }
     const files: ChangedFile[] = status.files.map((f) => {
       const x = f.index ?? " ";
       const y = f.working_dir ?? " ";
@@ -79,8 +88,10 @@ export async function readChanges(absPath: string, withStats = false): Promise<C
       let letter: string;
       if (untracked) letter = "U";
       else if (conflicted) letter = "C";
+      else if (renameFrom.has(f.path)) letter = "R";
       else letter = (y !== " " ? y : x) || "M";
-      return { path: f.path, status: letter, staged: !untracked && x !== " " };
+      const from = renameFrom.get(f.path);
+      return { path: f.path, status: letter, staged: !untracked && x !== " ", ...(from ? { from } : {}) };
     });
     if (withStats && files.length > 0) {
       const untracked = files.filter((f) => f.status === "U").map((f) => f.path);

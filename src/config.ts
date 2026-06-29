@@ -112,6 +112,12 @@ export interface AiConfig {
   /** Commit-message style for the prompt (default "conventional"). Owners can override
    *  here in config.json; the UI no longer exposes a picker (conventional is the norm). */
   style?: CommitStyle;
+  /**
+   * Smart-commit "YOLO" mode (default off): when on, the Smart Commit button skips the
+   * review editor — it generates the plan and commits it immediately (no review, no
+   * auto-push). For an owner who trusts the AI and never edits the plan.
+   */
+  yolo?: boolean;
 }
 
 /**
@@ -172,6 +178,8 @@ export interface RedactedAiConfig {
   >;
   defaultProvider: AiProviderId | null;
   style: CommitStyle;
+  /** Smart-commit YOLO mode (commit the AI plan without review). Default false. */
+  yolo: boolean;
 }
 
 /**
@@ -235,7 +243,12 @@ export function effectiveDefaultProvider(cfg: GitmobConfig): AiProviderId | null
 
 /** Map the AI config to a key-free shape for the API. NEVER include `apiKey`. */
 export function redactAi(cfg: GitmobConfig): RedactedAiConfig {
-  const out: RedactedAiConfig = { providers: {}, defaultProvider: null, style: cfg.ai?.style ?? "conventional" };
+  const out: RedactedAiConfig = {
+    providers: {},
+    defaultProvider: null,
+    style: cfg.ai?.style ?? "conventional",
+    yolo: cfg.ai?.yolo ?? false,
+  };
   for (const id of AI_PROVIDERS) {
     // "configured" = the owner set a key OR the built-in key covers it (Groq).
     if (resolveApiKey(cfg, id)) {

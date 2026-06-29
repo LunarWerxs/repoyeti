@@ -9,10 +9,11 @@
  * via git.ts — global/repo config is never mutated.
  */
 import { gitFor, identityConfigArgs, safeGitEnv } from "./git.ts";
-import { readStatus } from "./status.ts";
+import { readStatus, readChanges } from "./status.ts";
 import { netGate } from "./gitgate.ts";
 import type { Identity } from "./db.ts";
 import type { ApiCode } from "./contract.ts";
+import type { CommitPlanInput, PlanInputFile } from "./ai.ts";
 
 /**
  * A git-action result code. This is the shared API code union (see contract.ts) so the
@@ -142,6 +143,105 @@ export async function gitCommitAll(
   }
 }
 
+// ── smart commit: split the working tree into several scoped commits ─────────────────
+
+/** One proposed commit to execute: a message + the exact paths to stage for it. Paths are
+ *  already expanded by the caller to include a rename's old path (see service.smartCommitRepo). */
+export interface CommitGroupSpec {
+  message: string;
+  paths: string[];
+}
+
+/** Per-group outcome, in plan order. */
+export interface CommitGroupResult {
+  ok: boolean;
+  code: ActionCode;
+  /** First line of the message (a label for the UI). */
+  subject: string;
+  message?: string;
+}
+
+export interface CommitGroupsResult {
+  ok: boolean;
+  code: ActionCode;
+  message: string;
+  /** Outcome of each group we attempted, in order. */
+  committed: CommitGroupResult[];
+  /** Groups never attempted because an earlier one failed (their changes stay in the tree). */
+  remaining: number;
+}
+
+const subjectOf = (message: string): string => (message.split("\n")[0] ?? "").slice(0, 120);
+
+/**
+ * Execute a multi-commit plan: stage each group's files in isolation and commit it,
+ * attributed to the repo's identity. FILE-LEVEL only — `git add -A -- <paths>` stages the
+ * whole-file change (modify / add / delete / rename) for exactly those paths, then a commit
+ * captures just the staged set. Between groups the index returns to clean, so the next add
+ * stages only the next group (the caller guarantees the groups are disjoint + complete).
+ *
+ * Safety: starts with a MIXED `git reset` (index → HEAD, working tree UNTOUCHED — never
+ * `--hard`) so each commit contains exactly its group regardless of any pre-staged state.
+ * If a commit fails mid-sequence we STOP and report a partial result: the changes for the
+ * remaining groups simply stay in the working tree (a normal, safe, recoverable state — never
+ * a half-merge). The whole sequence must run inside ONE op-queue slot (the service wrapper
+ * enqueues once and refreshes after).
+ */
+export async function gitCommitGroups(
+  absPath: string,
+  identity: Identity | null,
+  groups: CommitGroupSpec[],
+): Promise<CommitGroupsResult> {
+  const pre = await readStatus(absPath);
+  if (pre.error) return { ok: false, code: "ERROR", message: pre.error, committed: [], remaining: groups.length };
+  if (pre.detached || !pre.branch)
+    return { ok: false, code: "DETACHED_HEAD", message: "detached HEAD — resolve at your desk", committed: [], remaining: groups.length };
+  if (pre.dirty === 0)
+    return { ok: false, code: "NOTHING_TO_COMMIT", message: "nothing to commit", committed: [], remaining: groups.length };
+
+  const git = gitFor(absPath);
+  const committed: CommitGroupResult[] = [];
+  try {
+    // Normalise the index to HEAD so each group's commit contains exactly its own files.
+    // Mixed reset (the default) never touches the working tree — categorically not `--hard`.
+    await git.raw(["reset", "-q"]);
+  } catch {
+    // `git reset` fails on an UNBORN HEAD (a fresh repo with no commit yet) — there's nothing
+    // to reset to. That's fine: the index is the only state and the per-group add/commit below
+    // creates the first commit(s). Swallow and proceed (any real corruption surfaces per group).
+  }
+
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i]!;
+    const subject = subjectOf(g.message);
+    try {
+      // Stage in path-list chunks so a huge group can't overflow the OS command-line limit.
+      for (const chunk of chunkByBytes(g.paths)) {
+        await git.raw(["add", "-A", "--", ...chunk]);
+      }
+      // Skip a group that staged nothing (defensive — disjoint/complete validation should
+      // prevent it) rather than aborting the whole plan on a "nothing to commit". Use
+      // `--name-only` (non-empty = something staged) instead of `--quiet`: under
+      // GIT_OPTIONAL_LOCKS=0 the `--quiet`/`--exit-code` fast path can wrongly report "no
+      // diff" for a staged deletion (it skips the index refresh), which `--name-only` doesn't.
+      const stagedNames = (await git.raw(["diff", "--cached", "--name-only"])).trim();
+      if (!stagedNames) {
+        committed.push({ ok: true, code: "OK", subject, message: "skipped (no changes)" });
+        continue;
+      }
+      await git.raw([...identityConfigArgs(identity), "commit", "-m", g.message]);
+      committed.push({ ok: true, code: "OK", subject });
+    } catch (err) {
+      const r = classify(err);
+      committed.push({ ok: false, code: r.code, subject, message: r.message });
+      // Stop on the first failure; the remaining groups' changes stay safely in the tree.
+      return { ok: false, code: r.code, message: r.message, committed, remaining: groups.length - i - 1 };
+    }
+  }
+  const made = committed.filter((c) => c.message !== "skipped (no changes)").length;
+  return { ok: true, code: "OK", message: `committed ${made} change set${made === 1 ? "" : "s"}`, committed, remaining: 0 };
+}
+
 /**
  * Collect a compact, read-only snapshot of the working tree for an AI prompt:
  * the porcelain file list (so untracked names — which `add -A` will commit — show up)
@@ -207,6 +307,76 @@ export async function collectCommitDiff(absPath: string): Promise<string> {
     `# git status --porcelain\n${status || "(clean)"}\n\n# git diff\n${diff || "(no textual diff — new/untracked files only)"}`;
   if (combined.length > DIFF_CAP) combined = combined.slice(0, DIFF_CAP) + "\n…[truncated]";
   return combined;
+}
+
+/**
+ * Like collectCommitDiff but SCOPED to a subset of paths — the input for regenerating ONE
+ * proposed commit's message from just its files (`git status`/`git diff HEAD -- <paths>`).
+ * Bounded + read-only; chunks the pathspec so a big group can't overflow the OS arg limit.
+ */
+export async function collectPathsDiff(absPath: string, paths: string[]): Promise<string> {
+  if (paths.length === 0) return "";
+  const chunks = chunkByBytes(paths);
+  let status = "";
+  for (const chunk of chunks) {
+    if (status.length >= STATUS_CAP) break;
+    status += await boundedGit(absPath, ["status", "--porcelain=v1", "--", ...chunk], STATUS_CAP);
+  }
+  status = status.trim();
+  let diff = "";
+  for (const chunk of chunks) {
+    if (diff.length >= DIFF_CAP) break;
+    diff += await boundedGit(absPath, ["diff", "HEAD", "--", ...chunk], DIFF_CAP);
+  }
+  diff = diff.trim();
+  if (!diff) {
+    // Unborn HEAD → `git diff HEAD` errors/empties; fall back to the worktree diff.
+    for (const chunk of chunks) {
+      if (diff.length >= DIFF_CAP) break;
+      diff += await boundedGit(absPath, ["diff", "--", ...chunk], DIFF_CAP);
+    }
+    diff = diff.trim();
+  }
+  let combined =
+    `# git status --porcelain\n${status || "(clean)"}\n\n# git diff\n${diff || "(no textual diff — new/untracked files only)"}`;
+  if (combined.length > DIFF_CAP) combined = combined.slice(0, DIFF_CAP) + "\n…[truncated]";
+  return combined;
+}
+
+/** The smart-commit planner gets a larger diff budget than the message path — grouping needs
+ *  more of the picture than a one-line summary does. Still bounded so a giant change-set can't
+ *  balloon the provider payload; the per-file list (always complete) carries the rest. */
+const PLAN_DIFF_CAP = 40_000;
+
+/**
+ * Build the read-only input for the AI commit planner: the complete changed-file list (with
+ * per-file +/- stats and rename sources) plus a bounded unified `git diff HEAD -M`. Never
+ * mutates the index. The file list is authoritative (it drives validation); the diff is best-
+ * effort context for grouping and may be truncated on a large change-set.
+ */
+export async function collectCommitPlanInput(absPath: string): Promise<CommitPlanInput> {
+  const changed = await readChanges(absPath, true); // withStats → per-file add/remove counts
+  let diff = (await boundedGit(absPath, ["diff", "HEAD", "-M", "--no-color"], PLAN_DIFF_CAP + 1)).trim();
+  if (!diff) diff = (await boundedGit(absPath, ["diff", "-M", "--no-color"], PLAN_DIFF_CAP + 1)).trim();
+  const truncated = diff.length > PLAN_DIFF_CAP;
+  if (truncated) diff = diff.slice(0, PLAN_DIFF_CAP) + "\n…[truncated]";
+
+  // Best-effort binary flag: git prints "Binary files <a> and b/<p> differ". Match the b-side
+  // path so both modified ("a/x and b/x") and newly-added ("/dev/null and b/x") binaries flag.
+  const binaryPaths = new Set<string>();
+  for (const m of diff.matchAll(/^Binary files .+? and b\/(.+?) differ$/gm)) {
+    if (m[1]) binaryPaths.add(m[1]);
+  }
+
+  const files: PlanInputFile[] = changed.map((f) => ({
+    path: f.path,
+    status: f.status,
+    ...(f.from ? { from: f.from } : {}),
+    additions: f.stat?.addedLines ?? 0,
+    removals: f.stat?.removedLines ?? 0,
+    binary: binaryPaths.has(f.path),
+  }));
+  return { files, diff, truncated };
 }
 
 /** ~1 MB of unified diff is plenty for the viewer; bound the pathological "huge change in a
@@ -296,6 +466,239 @@ export async function gitPush(absPath: string, identity: Identity | null): Promi
     await netGate.run(() => git.raw([...identityConfigArgs(identity), "push"]));
     return ok("pushed");
   } catch (err) {
+    return classify(err);
+  }
+}
+
+// ── clone ───────────────────────────────────────────────────────────────────────────
+
+/** A clone can pull a large history — give it far more headroom than a normal op (which is
+ *  capped at 30s). Still bounded so a hung transport can't wedge a net slot forever. */
+const CLONE_TIMEOUT_MS = 300_000;
+
+/**
+ * Clone `url` into `<parentDir>/<name>` with per-operation identity injection (the SSH key is
+ * selected via `-c core.sshCommand`, same seam as fetch/pull/push). The caller validates the
+ * URL scheme, the name, and that `parentDir` sits under a scan root; `--` separates the args so
+ * a URL/name can't be read as a flag. Runs behind `netGate` (it's a network op) with the long
+ * clone timeout. git cleans up its own partial target directory on failure.
+ */
+export async function gitClone(
+  parentDir: string,
+  url: string,
+  name: string,
+  identity: Identity | null,
+): Promise<ActionResult> {
+  try {
+    await netGate.run(() =>
+      gitFor(parentDir, CLONE_TIMEOUT_MS).raw([...identityConfigArgs(identity), "clone", "--", url, name]),
+    );
+    return ok("cloned");
+  } catch (err) {
+    return classify(err);
+  }
+}
+
+// ── remotes (add / set-url / remove — local config only, no network) ────────────────
+
+/**
+ * Point a remote (default `origin`) at `url`: add it if absent, else update its URL. This is a
+ * pure `.git/config` edit — no network — so it's the missing piece that lets a `git init`-from-
+ * the-phone repo gain a remote and become pushable. The caller validates the URL scheme; `--`
+ * isn't used (remote subcommands take fixed positional args), but the URL is passed as one arg
+ * (parameterized, never a shell string) so it can't inject.
+ */
+export async function gitRemoteSet(absPath: string, name: string, url: string): Promise<ActionResult> {
+  try {
+    const git = gitFor(absPath);
+    const remotes = await git.getRemotes();
+    if (remotes.some((r) => r.name === name)) await git.raw(["remote", "set-url", name, url]);
+    else await git.raw(["remote", "add", name, url]);
+    return ok("remote saved");
+  } catch (err) {
+    return classify(err);
+  }
+}
+
+/** Remove a remote (default `origin`). Local config only. */
+export async function gitRemoteRemove(absPath: string, name: string): Promise<ActionResult> {
+  try {
+    await gitFor(absPath).raw(["remote", "remove", name]);
+    return ok("remote removed");
+  } catch (err) {
+    const low = err instanceof Error ? err.message.toLowerCase() : String(err);
+    if (low.includes("no such remote")) return fail("NO_REMOTE", `no remote named ${name}`);
+    return classify(err);
+  }
+}
+
+// ── branches ──────────────────────────────────────────────────────────────────────
+
+/** Branch names we refuse to delete from the phone (a slip is too costly). */
+const PROTECTED_BRANCHES = new Set(["main", "master", "develop", "trunk"]);
+
+/**
+ * A conservative branch-name check (a subset of `git check-ref-format`) so a crafted name
+ * can never inject a flag or a path. Rejects whitespace, the git-special characters
+ * (`~^:?*[\`), control bytes, `..`, `@{`, leading/trailing dot or slash, `//`, and `.lock`.
+ */
+export function isValidBranchName(name: string): boolean {
+  if (!name || name.length > 255) return false;
+  // eslint-disable-next-line no-control-regex
+  if (/[\s~^:?*[\\\x00-\x1f\x7f]/.test(name)) return false;
+  if (name.includes("..") || name.includes("@{")) return false;
+  if (name.startsWith("/") || name.endsWith("/") || name.includes("//")) return false;
+  if (name.startsWith(".") || name.endsWith(".") || name.endsWith(".lock")) return false;
+  if (name.startsWith("-")) return false; // git refuses a leading dash (also avoids flag injection)
+  if (name === "@") return false;
+  return true;
+}
+
+/**
+ * Switch to an existing branch. Guarded exactly like pull: refused on a dirty working
+ * tree ("resolve at your desk") so a checkout can never carry changes into a conflict.
+ * Uses `git switch`, which refuses to silently detach onto a remote-tracking ref (it will
+ * dwim-create a local tracking branch for an unambiguous `origin/<name>`, which is safe).
+ */
+export async function gitCheckout(absPath: string, branch: string): Promise<ActionResult> {
+  if (!isValidBranchName(branch)) return fail("INVALID_REF_NAME", "invalid branch name");
+  const pre = await readStatus(absPath);
+  if (pre.error) return fail("ERROR", pre.error);
+  if (pre.dirty > 0) {
+    return fail("DIRTY_WORKING_TREE", "working tree has uncommitted changes — stash or resolve at your desk");
+  }
+  if (pre.branch === branch) return ok("already on branch");
+  try {
+    await gitFor(absPath).raw(["switch", branch]);
+    return ok(`switched to ${branch}`);
+  } catch (err) {
+    const low = err instanceof Error ? err.message.toLowerCase() : String(err);
+    if (low.includes("did not match") || low.includes("invalid reference") || low.includes("not a commit") || low.includes("could not find") || low.includes("unknown")) {
+      return fail("NOT_FOUND", `branch not found: ${branch}`);
+    }
+    return classify(err);
+  }
+}
+
+/**
+ * Create a new branch from the current HEAD. Creating a branch never touches the working
+ * tree, so it is safe even on a dirty tree — and creating-and-switching to a brand-new
+ * branch at the same commit can't conflict either, so `switchTo` is allowed regardless of
+ * dirtiness (the uncommitted changes simply carry over).
+ */
+export async function gitCreateBranch(
+  absPath: string,
+  name: string,
+  switchTo = true,
+): Promise<ActionResult> {
+  if (!isValidBranchName(name)) return fail("INVALID_REF_NAME", "invalid branch name");
+  const pre = await readStatus(absPath);
+  if (pre.error) return fail("ERROR", pre.error);
+  if (pre.detached || !pre.branch) return fail("DETACHED_HEAD", "detached HEAD — resolve at your desk");
+  try {
+    // `switch -c` creates + checks out; `branch` creates without switching. Both fail if the
+    // name already exists (git: "already exists").
+    await gitFor(absPath).raw(switchTo ? ["switch", "-c", name] : ["branch", name]);
+    return ok(switchTo ? `created and switched to ${name}` : `created ${name}`);
+  } catch (err) {
+    const low = err instanceof Error ? err.message.toLowerCase() : String(err);
+    if (low.includes("already exists")) return fail("BRANCH_EXISTS", `branch already exists: ${name}`);
+    return classify(err);
+  }
+}
+
+/**
+ * Delete a LOCAL branch — safe-delete only (`-d`, which git refuses for an unmerged branch),
+ * never the force `-D`. Refuses the currently checked-out branch and the protected set
+ * (main/master/develop/trunk). An unmerged branch surfaces UNMERGED_BRANCH so the UI can
+ * say "not fully merged — delete at your desk" rather than silently force-deleting.
+ */
+export async function gitDeleteBranch(absPath: string, name: string): Promise<ActionResult> {
+  if (!isValidBranchName(name)) return fail("INVALID_REF_NAME", "invalid branch name");
+  if (PROTECTED_BRANCHES.has(name)) return fail("PROTECTED_BRANCH", `refusing to delete protected branch: ${name}`);
+  const pre = await readStatus(absPath);
+  if (pre.error) return fail("ERROR", pre.error);
+  if (pre.branch === name) return fail("CANNOT_DELETE_CURRENT", "cannot delete the current branch");
+  try {
+    await gitFor(absPath).raw(["branch", "-d", name]);
+    return ok(`deleted ${name}`);
+  } catch (err) {
+    const low = err instanceof Error ? err.message.toLowerCase() : String(err);
+    if (low.includes("not fully merged")) {
+      return fail("UNMERGED_BRANCH", `'${name}' is not fully merged — delete at your desk`);
+    }
+    if (low.includes("not found")) return fail("NOT_FOUND", `branch not found: ${name}`);
+    return classify(err);
+  }
+}
+
+// ── stash ───────────────────────────────────────────────────────────────────────────
+
+const stashRef = (index: number): string => `stash@{${Math.max(0, Math.floor(index))}}`;
+
+/**
+ * Stash the working tree (including untracked files) — the phone-side escape from the
+ * "dirty tree blocks pull" dead-end: stash → pull → pop. Always safe (a save can never
+ * conflict). Refuses a clean tree (nothing to stash). Attributed to the repo's identity so
+ * the stash commit objects carry the right author.
+ */
+export async function gitStashSave(
+  absPath: string,
+  identity: Identity | null,
+  message?: string,
+): Promise<ActionResult> {
+  const pre = await readStatus(absPath);
+  if (pre.error) return fail("ERROR", pre.error);
+  if (pre.dirty === 0) return fail("NOTHING_TO_STASH", "nothing to stash — working tree is clean");
+  try {
+    const args = [...identityConfigArgs(identity), "stash", "push", "--include-untracked"];
+    const msg = (message ?? "").trim();
+    if (msg) args.push("-m", msg);
+    await gitFor(absPath).raw(args);
+    return ok("stashed");
+  } catch (err) {
+    return classify(err);
+  }
+}
+
+/**
+ * Pop a stash entry (default the newest) back onto a CLEAN working tree. Refused on a dirty
+ * tree so the apply starts from a known-good state. If the apply conflicts, git leaves the
+ * stash entry intact (it only drops on a clean apply) — so nothing is ever lost; we report
+ * STASH_CONFLICT ("applied with conflicts — resolve at your desk") and the post-action
+ * refresh shows the now-dirty tree. HEAD is never touched, so there is no half-merged commit.
+ */
+export async function gitStashPop(absPath: string, index = 0): Promise<ActionResult> {
+  const pre = await readStatus(absPath);
+  if (pre.error) return fail("ERROR", pre.error);
+  if (pre.dirty > 0) {
+    return fail("DIRTY_WORKING_TREE", "working tree has uncommitted changes — commit or stash them first");
+  }
+  try {
+    await gitFor(absPath).raw(["stash", "pop", stashRef(index)]);
+    return ok("stash popped");
+  } catch (err) {
+    const low = err instanceof Error ? err.message.toLowerCase() : String(err);
+    if (low.includes("no stash entries") || low.includes("is not a valid reference") || low.includes("does not exist")) {
+      return fail("STASH_EMPTY", "no such stash entry");
+    }
+    if (low.includes("conflict")) {
+      return fail("STASH_CONFLICT", "stash applied with conflicts — resolve at your desk (the stash was kept)");
+    }
+    return classify(err);
+  }
+}
+
+/** Drop a stash entry (default the newest). Irreversible — the UI confirms first. */
+export async function gitStashDrop(absPath: string, index = 0): Promise<ActionResult> {
+  try {
+    await gitFor(absPath).raw(["stash", "drop", stashRef(index)]);
+    return ok("stash dropped");
+  } catch (err) {
+    const low = err instanceof Error ? err.message.toLowerCase() : String(err);
+    if (low.includes("no stash entries") || low.includes("is not a valid reference") || low.includes("does not exist")) {
+      return fail("STASH_EMPTY", "no such stash entry");
+    }
     return classify(err);
   }
 }

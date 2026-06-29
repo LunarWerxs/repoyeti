@@ -30,6 +30,11 @@ export async function parseBody<T>(
 
 const nonEmpty = z.string().trim().min(1);
 
+/** Bounds for a submitted smart-commit plan (defensive — the changed-file set is the real
+ *  cap, but keep the request body from being pathological). */
+const MAX_PLAN_GROUPS = 200;
+const MAX_PLAN_PATHS = 5000;
+
 // ── identities ──────────────────────────────────────────────────────────────────
 export const IdentityCreateSchema = z.object({
   displayName: nonEmpty,
@@ -51,6 +56,17 @@ export const AssignIdentitySchema = z.object({ identityId: z.string().trim().nul
 // ── repos ───────────────────────────────────────────────────────────────────────
 export const RepoPathSchema = z.object({ path: nonEmpty });
 
+// ── scan roots (add / remove a discovery root) ────────────────────────────────────
+export const RootPathSchema = z.object({ path: nonEmpty });
+
+// ── clone (url + destination parent under a scan root) ─────────────────────────────
+export const CloneSchema = z.object({
+  url: nonEmpty,
+  parentPath: nonEmpty,
+  name: z.string().trim().optional(),
+  identityId: z.string().trim().nullish(),
+});
+
 export const ReorderSchema = z.object({ order: z.array(z.string()).max(10_000) });
 
 export const CommitSchema = z.object({
@@ -58,12 +74,29 @@ export const CommitSchema = z.object({
   amend: z.boolean().optional(),
 });
 
+// ── branches ──────────────────────────────────────────────────────────────────────
+export const CheckoutSchema = z.object({ branch: nonEmpty });
+export const CreateBranchSchema = z.object({ name: nonEmpty, switch: z.boolean().optional() });
+export const DeleteBranchSchema = z.object({ name: nonEmpty });
+
+// ── stash ───────────────────────────────────────────────────────────────────────────
+export const StashSaveSchema = z.object({ message: z.string().optional() });
+export const StashRefSchema = z.object({ index: z.number().int().min(0).optional() });
+
+// ── discard one file's working-tree changes ──────────────────────────────────────────
+export const DiscardSchema = z.object({ path: nonEmpty });
+
+// ── remotes (set-url / remove; name defaults to "origin" in the handler) ──────────────
+export const RemoteSetSchema = z.object({ url: nonEmpty, name: z.string().trim().optional() });
+export const RemoteDeleteSchema = z.object({ name: z.string().trim().optional() });
+
 // ── AI ──────────────────────────────────────────────────────────────────────────
 export const ConnectSchema = z.object({ apiKey: z.string().optional() }); // NO_KEY stays in handler
 
 export const AiSettingsSchema = z.object({
   style: z.enum(["conventional", "concise", "detailed"]).optional(),
   defaultProvider: z.string().nullish(), // provider validity → NOT_CONFIGURED in the handler
+  yolo: z.boolean().optional(), // smart-commit: skip the review editor and commit the AI plan
 });
 
 export const ProviderUpdateSchema = z.object({
@@ -71,4 +104,28 @@ export const ProviderUpdateSchema = z.object({
   makeDefault: z.boolean().optional(),
 });
 
-export const CommitMessageSchema = z.object({ provider: z.string().optional() });
+export const CommitMessageSchema = z.object({
+  provider: z.string().optional(),
+  // When present, draft the message from ONLY these paths (smart-commit per-group regenerate).
+  paths: z.array(nonEmpty).max(MAX_PLAN_PATHS).optional(),
+});
+
+// ── smart commit (AI multi-commit splitter) ──────────────────────────────────────
+// Plan generation reuses the message-route shape (optional provider override).
+export const CommitPlanSchema = z.object({ provider: z.string().optional() });
+
+// Execute an (owner-edited) plan: each entry is a final message + the paths to stage for it.
+// Domain checks (paths in the live changed set, disjoint, complete) stay in the service layer
+// so they can return their specific codes (PLAN_STALE / PLAN_PATHS_INVALID) against fresh state.
+export const SmartCommitSchema = z.object({
+  commits: z
+    .array(
+      z.object({
+        message: nonEmpty,
+        paths: z.array(nonEmpty).min(1).max(MAX_PLAN_PATHS),
+      }),
+    )
+    .min(1)
+    .max(MAX_PLAN_GROUPS),
+  sync: z.boolean().optional(),
+});

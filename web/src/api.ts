@@ -6,11 +6,18 @@ import type {
   AiModel,
   AiProviderId,
   AiSettings,
+  BranchList,
   ChangedFile,
+  CommitPlanResponse,
+  FetchAllResult,
   FileContent,
   FileDiff,
   Identity,
+  LogResult,
   Repo,
+  SmartCommitResult,
+  StashList,
+  TagList,
 } from "./types";
 
 export class ApiError extends Error {
@@ -83,8 +90,18 @@ export interface ModeResult {
 export const api = {
   authStatus: () => req<AuthStatus>("GET", "/api/auth/status"),
   logout: () => req<{ ok: boolean }>("POST", "/api/auth/logout"),
+  /** Sign out on every device — rotates the daemon's signing key so all session cookies die. */
+  logoutAll: () => req<{ ok: boolean }>("POST", "/api/auth/logout-all"),
   /** Grant the localhost-only "Continue local for now" bypass (rejected over the tunnel). */
   continueLocal: () => req<{ ok: boolean }>("POST", "/api/auth/continue-local"),
+
+  // ── scan roots (discovery directories) ──────────────────────────────────────
+  roots: () => req<{ roots: string[] }>("GET", "/api/roots").then((r) => r.roots),
+  addRoot: (path: string) => req<{ ok: boolean; roots: string[] }>("POST", "/api/roots", { path }),
+  removeRoot: (path: string) =>
+    req<{ ok: boolean; roots: string[]; removed: number }>("DELETE", "/api/roots", { path }),
+  /** Fetch every repo that has a remote; returns a per-repo summary. */
+  fetchAll: () => req<FetchAllResult>("POST", "/api/repos/fetch-all"),
 
   /** Runtime status: access mode + the remote-access tunnel URL, if any. */
   status: () => req<RuntimeStatus>("GET", "/api/status"),
@@ -116,6 +133,9 @@ export const api = {
     req<{ repo: Repo }>("POST", "/api/repos/register", { path }).then((r) => r.repo),
   createRepo: (path: string) =>
     req<{ repo: Repo }>("POST", "/api/repos/create", { path }).then((r) => r.repo),
+  /** Clone a remote into `<parentPath>/<name>` (name defaults from the URL). */
+  cloneRepo: (input: { url: string; parentPath: string; name?: string; identityId?: string | null }) =>
+    req<{ ok: boolean; repo: Repo }>("POST", "/api/repos/clone", input).then((r) => r.repo),
 
   reorderRepos: (order: string[]) => req<{ ok: boolean }>("POST", "/api/repos/reorder", { order }),
 
@@ -138,7 +158,48 @@ export const api = {
   push: (id: string) => req<ActionResult>("POST", `/api/repos/${id}/push`),
   commit: (id: string, message: string, amend = false) =>
     req<ActionResult>("POST", `/api/repos/${id}/commit`, { message, amend }),
+  /** Execute an (owner-edited) multi-commit plan. Each entry = a final message + its paths.
+   *  `sync` runs pull --ff-only then push after all commits land. */
+  smartCommit: (id: string, commits: Array<{ message: string; paths: string[] }>, sync = false) =>
+    req<SmartCommitResult>("POST", `/api/repos/${id}/smart-commit`, { commits, sync }),
   refresh: (id: string) => req<{ repo: Repo }>("POST", `/api/repos/${id}/refresh`).then((r) => r.repo),
+
+  // ── branches / history / stash ──────────────────────────────────────────────
+  branches: (id: string) => req<BranchList>("GET", `/api/repos/${id}/branches`),
+  /** Switch to an existing branch. Throws ApiError "DIRTY_WORKING_TREE" on a dirty tree. */
+  checkout: (id: string, branch: string) =>
+    req<ActionResult>("POST", `/api/repos/${id}/checkout`, { branch }),
+  /** Create a branch from HEAD (optionally switch to it; default true). */
+  createBranch: (id: string, name: string, switchTo = true) =>
+    req<ActionResult>("POST", `/api/repos/${id}/branch`, { name, switch: switchTo }),
+  /** Safe-delete a local branch (`-d`; never force). */
+  deleteBranch: (id: string, name: string) =>
+    req<ActionResult>("DELETE", `/api/repos/${id}/branch`, { name }),
+  /** Commit history of the current branch, newest first. Paginate with `skip`. */
+  log: (id: string, limit = 50, skip = 0) =>
+    req<LogResult>("GET", `/api/repos/${id}/log?limit=${limit}&skip=${skip}`),
+  stashes: (id: string) => req<StashList>("GET", `/api/repos/${id}/stashes`),
+  stashSave: (id: string, message?: string) =>
+    req<ActionResult>("POST", `/api/repos/${id}/stash`, message ? { message } : {}),
+  stashPop: (id: string, index = 0) =>
+    req<ActionResult>("POST", `/api/repos/${id}/stash/pop`, { index }),
+  stashDrop: (id: string, index = 0) =>
+    req<ActionResult>("POST", `/api/repos/${id}/stash/drop`, { index }),
+  /** Read-only tag list (newest first). */
+  tags: (id: string) => req<TagList>("GET", `/api/repos/${id}/tags`),
+  /** Add or update a remote (default origin). Throws ApiError on a bad URL. */
+  setRemote: (id: string, url: string, name?: string) =>
+    req<ActionResult>("POST", `/api/repos/${id}/remote`, name ? { url, name } : { url }),
+  /** Remove a remote (default origin). */
+  removeRemote: (id: string, name?: string) =>
+    req<ActionResult>("DELETE", `/api/repos/${id}/remote`, name ? { name } : {}),
+  /** Discard one changed file's working-tree changes (destructive — confirm in the UI). */
+  discard: (id: string, path: string) =>
+    req<{ ok: boolean; code: string; message?: string; path?: string }>(
+      "POST",
+      `/api/repos/${id}/discard`,
+      { path },
+    ),
   /** Changed-file list. `total`/`truncated` are set when the server capped an oversized
    *  list (MAX_CHANGED_FILES) so the UI can show a "showing N of M" notice. */
   changes: (id: string) =>
@@ -179,6 +240,8 @@ export const api = {
     catalog: () =>
       req<{ catalog: AiCatalogEntry[] }>("GET", "/api/ai/catalog").then((r) => r.catalog),
     settings: () => req<AiSettings>("GET", "/api/ai/settings"),
+    /** Toggle smart-commit YOLO mode (commit the AI plan without the review editor). */
+    setYolo: (yolo: boolean) => req<AiSettings>("PUT", "/api/ai/settings", { yolo }),
     connect: (provider: AiProviderId, apiKey: string) =>
       req<{ ok: boolean; models: AiModel[]; settings: AiSettings }>(
         "POST",
@@ -191,10 +254,19 @@ export const api = {
       req<AiSettings>("PUT", `/api/ai/providers/${provider}`, patch),
     removeProvider: (provider: AiProviderId) =>
       req<AiSettings>("DELETE", `/api/ai/providers/${provider}`),
-    commitMessage: (repoId: string, provider?: AiProviderId) =>
+    /** Draft a commit message from the repo's diff. With `paths`, scope it to just those
+     *  files (smart-commit per-group regenerate); omit for the whole working tree. */
+    commitMessage: (repoId: string, provider?: AiProviderId, paths?: string[]) =>
       req<{ ok: boolean; message: string; provider: AiProviderId; model: string }>(
         "POST",
         `/api/repos/${repoId}/commit-message`,
+        { ...(provider ? { provider } : {}), ...(paths && paths.length ? { paths } : {}) },
+      ),
+    /** Propose a multi-commit plan from the repo's working tree (commits nothing). */
+    commitPlan: (repoId: string, provider?: AiProviderId) =>
+      req<CommitPlanResponse>(
+        "POST",
+        `/api/repos/${repoId}/commit-plan`,
         provider ? { provider } : {},
       ),
   },

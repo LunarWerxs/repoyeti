@@ -32,6 +32,11 @@ import {
   StarOff,
   Search,
   X,
+  Plus,
+  Trash2,
+  History,
+  Archive,
+  CornerDownLeft,
 } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { useStore } from "../store";
@@ -50,10 +55,20 @@ import {
 import { identityInitials, identityTint } from "@/lib/identity-display";
 import { shortcutsActive } from "@/lib/hotkeys";
 import ChangesTree from "./ChangesTree.vue";
+import RepoManage from "./RepoManage.vue";
+import SmartCommitPlan from "./SmartCommitPlan.vue";
 import DiffStat from "./DiffStat.vue";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -243,12 +258,22 @@ const filteredTree = computed(() => {
 
 function toggle(): void {
   expanded.value = !expanded.value;
-  if (expanded.value && (st.value?.dirty ?? 0) > 0) void store.loadChanges(props.repo.id);
+  if (expanded.value) {
+    if ((st.value?.dirty ?? 0) > 0) {
+      void store.loadChanges(props.repo.id);
+      void loadRecentMsgs();
+    }
+    void store.loadBranches(props.repo.id);
+    void store.loadStashes(props.repo.id);
+  }
 }
 watch(
   () => st.value?.dirty,
   () => {
-    if (expanded.value && (st.value?.dirty ?? 0) > 0) void store.loadChanges(props.repo.id);
+    if (expanded.value && (st.value?.dirty ?? 0) > 0) {
+      void store.loadChanges(props.repo.id);
+      if (!recentMsgs.value.length) void loadRecentMsgs();
+    }
   },
 );
 
@@ -311,6 +336,15 @@ function friendly(code: string): string {
     NOTHING_TO_COMMIT: t("repo.err.nothingToCommit"),
     SSH_AUTH_FAILED: t("repo.err.sshAuthFailed"),
     SSH_PASSPHRASE_REQUIRED: t("repo.err.sshPassphraseRequired"),
+    BRANCH_EXISTS: t("repo.err.branchExists"),
+    INVALID_REF_NAME: t("repo.err.invalidRefName"),
+    UNMERGED_BRANCH: t("repo.err.unmergedBranch"),
+    CANNOT_DELETE_CURRENT: t("repo.err.cannotDeleteCurrent"),
+    PROTECTED_BRANCH: t("repo.err.protectedBranch"),
+    NOTHING_TO_STASH: t("repo.err.nothingToStash"),
+    STASH_CONFLICT: t("repo.err.stashConflict"),
+    STASH_EMPTY: t("repo.err.stashEmpty"),
+    DISCARD_FAILED: t("repo.err.discardFailed"),
   };
   return map[code] ?? "";
 }
@@ -332,6 +366,61 @@ type CommitMode = "commit" | "amend" | "push" | "sync";
 const commitMsg = ref("");
 const generating = ref(false);
 const committing = ref(false);
+// Smart-commit (AI multi-commit splitter) — opt-in plan editor in a modal, or YOLO mode
+// (Settings) which generates the plan and commits it immediately with no review.
+const smartOpen = ref(false);
+const smartBusy = ref(false);
+function onSmartCommitted(): void {
+  void loadRecentMsgs(); // the last few subjects changed
+}
+/** The Smart Commit button: open the review editor, or run YOLO if the owner enabled it. */
+function runSmart(): void {
+  if (store.aiSettings.yolo) void runYolo();
+  else smartOpen.value = true;
+}
+/** Compose a group's final commit message ("type(scope): subject" + optional body). */
+function planLine(g: { type: string; scope?: string; subject: string; body?: string }): string {
+  const subject = `${g.type}${g.scope ? `(${g.scope})` : ""}: ${g.subject}`;
+  return g.body && g.body.trim() ? `${subject}\n\n${g.body.trim()}` : subject;
+}
+/** YOLO: plan + commit in one shot, no review. Leftovers (if any) become a final chore commit
+ *  so nothing is left behind. Never auto-pushes — committing locally is safe/undoable. */
+async function runYolo(): Promise<void> {
+  if (smartBusy.value) return;
+  smartBusy.value = true;
+  try {
+    const res = await store.genCommitPlan(props.repo.id);
+    const commits = res.plan.groups.map((g) => ({ message: planLine(g), paths: [...g.files] }));
+    if (res.plan.leftovers.length) commits.push({ message: "chore: miscellaneous changes", paths: [...res.plan.leftovers] });
+    if (!commits.length) {
+      toast.error(t("repo.smartCommit.failed"));
+      return;
+    }
+    const r = await store.smartCommit(props.repo.id, commits, false);
+    if (!r.ok) {
+      toast.error(t("repo.smartCommit.execFailed", { message: r.message }));
+      return;
+    }
+    void loadRecentMsgs();
+    toast.success(t("repo.smartCommit.done"));
+  } catch (e) {
+    toast.error(e instanceof ApiError ? friendly(e.code) || e.message : t("repo.smartCommit.failed"));
+  } finally {
+    smartBusy.value = false;
+  }
+}
+
+// Recent commit subjects as one-tap fill suggestions (typing on a phone is the bottleneck).
+// Loaded lazily and kept separate from the History log so the two never clobber each other.
+const recentMsgs = ref<string[]>([]);
+async function loadRecentMsgs(): Promise<void> {
+  try {
+    const r = await api.log(props.repo.id, 5, 0);
+    recentMsgs.value = r.commits.map((cm) => cm.subject).filter((s) => s.length > 0);
+  } catch {
+    /* non-critical — chips just won't show */
+  }
+}
 
 async function generate(): Promise<void> {
   generating.value = true;
@@ -429,6 +518,111 @@ async function toggleStarred(): Promise<void> {
   } catch {
     toast.error(t("repo.toastFavFailed"));
   }
+}
+
+// ── branches (switch / create / delete) ───────────────────────────────────────
+const branchList = computed(() => store.branchesByRepo[props.repo.id]);
+const otherBranches = computed(() =>
+  (branchList.value?.branches ?? []).filter((b) => !b.current),
+);
+const gitBusy = computed(() => store.gitOpBusy[props.repo.id]);
+const currentBranch = computed(() => branchList.value?.current ?? st.value?.branch ?? null);
+const newBranch = ref("");
+const creatingBranch = ref(false);
+
+// Takes the already-resolved success message (not a key) so the i18n checker sees each
+// t("…") referenced statically at the call site.
+function toastResult(r: { ok: boolean; code: string; message?: string }, successMsg: string): void {
+  if (r.ok) toast.success(r.message || successMsg);
+  else toast.error(friendly(r.code) || r.message || t("repo.actions.failed", { action: "git" }));
+}
+
+async function switchTo(branch: string): Promise<void> {
+  if (gitBusy.value) return;
+  toastResult(await store.switchBranch(props.repo.id, branch), t("repo.branches.switched"));
+}
+async function createBranch(): Promise<void> {
+  const name = newBranch.value.trim();
+  if (!name || gitBusy.value) return;
+  const r = await store.createBranch(props.repo.id, name, true);
+  toastResult(r, t("repo.branches.created"));
+  if (r.ok) {
+    newBranch.value = "";
+    creatingBranch.value = false;
+  }
+}
+async function removeBranch(name: string): Promise<void> {
+  if (gitBusy.value) return;
+  toastResult(await store.deleteBranch(props.repo.id, name), t("repo.branches.deleted"));
+}
+
+// ── commit history (lazy, paginated) ──────────────────────────────────────────
+const showHistory = ref(false);
+const logResult = computed(() => store.logByRepo[props.repo.id]);
+const loadingLog = ref(false);
+async function toggleHistory(): Promise<void> {
+  showHistory.value = !showHistory.value;
+  if (showHistory.value && !logResult.value) {
+    loadingLog.value = true;
+    try {
+      await store.loadLog(props.repo.id);
+    } finally {
+      loadingLog.value = false;
+    }
+  }
+}
+async function loadMoreLog(): Promise<void> {
+  if (loadingLog.value) return;
+  loadingLog.value = true;
+  try {
+    await store.loadLog(props.repo.id, 50, logResult.value?.commits.length ?? 0);
+  } finally {
+    loadingLog.value = false;
+  }
+}
+async function copyHash(hash: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(hash);
+    toast.success(t("repo.history.copied"));
+  } catch {
+    /* clipboard blocked — non-critical */
+  }
+}
+
+// ── stash (save / pop / drop) ─────────────────────────────────────────────────
+const stashes = computed(() => store.stashesByRepo[props.repo.id]?.stashes ?? []);
+async function stashSave(): Promise<void> {
+  if (gitBusy.value) return;
+  toastResult(await store.stashSave(props.repo.id), t("repo.stash.saved"));
+}
+async function stashPop(index: number): Promise<void> {
+  if (gitBusy.value) return;
+  toastResult(await store.stashPop(props.repo.id, index), t("repo.stash.popped"));
+}
+async function stashDrop(index: number): Promise<void> {
+  if (gitBusy.value) return;
+  toastResult(await store.stashDrop(props.repo.id, index), t("repo.stash.dropped"));
+}
+
+// ── remote & tags management (self-contained dialog) ─────────────────────────
+const manageOpen = ref(false);
+
+// ── discard one file's working-tree changes (confirm-gated) ───────────────────
+const discardTarget = ref<string | null>(null);
+const discardOpen = computed({
+  get: () => discardTarget.value !== null,
+  set: (v: boolean) => {
+    if (!v) discardTarget.value = null;
+  },
+});
+function askDiscard(path: string): void {
+  discardTarget.value = path;
+}
+async function confirmDiscard(): Promise<void> {
+  const path = discardTarget.value;
+  discardTarget.value = null;
+  if (!path) return;
+  toastResult(await store.discardFile(props.repo.id, path), t("repo.discard.discarded"));
 }
 </script>
 
@@ -630,6 +824,86 @@ async function toggleStarred(): Promise<void> {
           </Tooltip>
         </div>
 
+        <!-- branch switcher: current branch + dropdown to switch / delete, ＋ to create -->
+        <div v-if="!st?.error" class="flex items-center gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              class="mono flex min-w-0 max-w-full items-center gap-1.5 rounded-md bg-secondary px-2 py-1 text-[12px] text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-60"
+              :title="$t('repo.branches.manageTooltip')"
+              :aria-label="$t('repo.branches.manageTooltip')"
+              :disabled="gitBusy === 'checkout' || gitBusy === 'branch'"
+            >
+              <Loader2
+                v-if="gitBusy === 'checkout' || gitBusy === 'branch'"
+                :size="13"
+                class="shrink-0 animate-spin"
+              />
+              <GitBranch v-else :size="13" :class="cn('shrink-0', st?.detached && 'text-warning')" />
+              <span class="truncate">{{ st?.detached ? "detached" : (currentBranch ?? "—") }}</span>
+              <ChevronDown :size="13" class="shrink-0 opacity-60" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" class="w-64">
+              <DropdownMenuLabel>{{ $t("repo.branches.switchLabel") }}</DropdownMenuLabel>
+              <div v-if="!branchList" class="flex items-center gap-2 px-2 py-1.5 text-[12px] text-muted-foreground">
+                <Loader2 :size="13" class="animate-spin" />{{ $t("repo.branches.loading") }}
+              </div>
+              <div v-else-if="!otherBranches.length" class="px-2 py-1.5 text-[12px] text-muted-foreground">
+                {{ $t("repo.branches.none") }}
+              </div>
+              <div
+                v-for="b in otherBranches"
+                :key="b.name"
+                class="group/br flex items-center gap-1.5 rounded-sm px-1.5 py-1 hover:bg-accent/60"
+              >
+                <button
+                  type="button"
+                  class="mono flex min-w-0 flex-1 items-center gap-1.5 text-left text-[12.5px] outline-none"
+                  @click="switchTo(b.name)"
+                >
+                  <GitBranch :size="13" class="shrink-0 opacity-70" />
+                  <span class="truncate">{{ b.name }}</span>
+                  <span v-if="b.ahead || b.behind" class="mono shrink-0 text-[10.5px] text-muted-foreground">
+                    <span v-if="b.ahead">↑{{ b.ahead }}</span><span v-if="b.behind"> ↓{{ b.behind }}</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  class="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 outline-none transition group-hover/br:opacity-100 hover:bg-destructive/15 hover:text-destructive focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/40"
+                  :title="$t('repo.branches.deleteTooltip')"
+                  :aria-label="$t('repo.branches.deleteTooltip')"
+                  @click="removeBranch(b.name)"
+                >
+                  <Trash2 :size="13" />
+                </button>
+              </div>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <button
+            type="button"
+            class="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+            :title="$t('repo.branches.createTooltip')"
+            :aria-label="$t('repo.branches.create')"
+            @click="creatingBranch = !creatingBranch"
+          >
+            <Plus :size="15" />
+          </button>
+        </div>
+        <!-- inline create-branch form (toggled by ＋) -->
+        <form v-if="creatingBranch && !st?.error" class="flex items-center gap-2" @submit.prevent="createBranch">
+          <input
+            v-model="newBranch"
+            type="text"
+            :placeholder="$t('repo.branches.newPlaceholder')"
+            :aria-label="$t('repo.branches.create')"
+            class="mono h-8 min-w-0 flex-1 rounded-md border border-border bg-background/60 px-2.5 text-[12.5px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+          />
+          <Button type="submit" size="sm" :disabled="!newBranch.trim() || !!gitBusy">
+            <Loader2 v-if="gitBusy === 'branch'" class="animate-spin" />
+            <Plus v-else />
+            {{ $t("repo.branches.create") }}
+          </Button>
+        </form>
+
         <!-- error line -->
         <div
           v-if="st?.error"
@@ -715,7 +989,13 @@ async function toggleStarred(): Promise<void> {
             >
               {{ $t("repo.changes.searchNoMatch") }}
             </div>
-            <ChangesTree v-else :nodes="filteredTree" :repo-id="repo.id" :force-expand="searching" />
+            <ChangesTree
+              v-else
+              :nodes="filteredTree"
+              :repo-id="repo.id"
+              :force-expand="searching"
+              @discard="askDiscard"
+            />
             <!-- Server capped an oversized changed-file list (MAX_CHANGED_FILES) — say so. -->
             <div
               v-if="store.changesMeta[repo.id]?.truncated"
@@ -751,6 +1031,21 @@ async function toggleStarred(): Promise<void> {
                 )
               "
             />
+          </button>
+        </div>
+
+        <!-- recent commit subjects → one-tap fill (phone typing is slow) -->
+        <div v-if="st && st.dirty > 0 && recentMsgs.length" class="flex flex-wrap items-center gap-1.5">
+          <span class="text-[11px] text-muted-foreground">{{ $t("repo.commit.recent") }}</span>
+          <button
+            v-for="(m, i) in recentMsgs"
+            :key="i"
+            type="button"
+            class="max-w-[14rem] truncate rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-[11.5px] text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+            :title="$t('repo.commit.useRecentTitle')"
+            @click="commitMsg = m"
+          >
+            {{ m }}
           </button>
         </div>
 
@@ -826,6 +1121,25 @@ async function toggleStarred(): Promise<void> {
           </div>
         </div>
 
+        <!-- smart commit: AI splits the working tree into separate scoped commits (opt-in;
+             shown only with >1 changed file, since one file can't be split) -->
+        <button
+          v-if="store.aiEnabled && st && st.dirty > 1"
+          type="button"
+          :disabled="smartBusy || committing"
+          class="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-violet-300/40 bg-violet-300/5 px-3 py-1.5 text-[12.5px] text-violet-300 outline-none transition-colors hover:bg-violet-300/10 disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-ring/40"
+          :title="store.aiSettings.yolo ? $t('repo.smartCommit.buttonTitleYolo') : $t('repo.smartCommit.buttonTitle')"
+          @click="runSmart"
+        >
+          <Loader2 v-if="smartBusy" :size="14" class="animate-spin" />
+          <Sparkles v-else :size="14" />
+          <span>{{ $t("repo.smartCommit.button") }}</span>
+          <span
+            v-if="store.aiSettings.yolo"
+            class="text-[10px] font-semibold tracking-wide uppercase opacity-70"
+          >{{ $t("repo.smartCommit.yoloTag") }}</span>
+        </button>
+
         <!-- git actions -->
         <div class="flex flex-wrap items-center gap-2">
           <Button
@@ -858,6 +1172,60 @@ async function toggleStarred(): Promise<void> {
             <ArrowUpFromLine v-else />
             {{ $t("repo.actions.push") }}
           </Button>
+          <Button
+            v-if="st && st.dirty > 0"
+            variant="outline"
+            size="sm"
+            :disabled="!!gitBusy"
+            :title="$t('repo.stash.stashTooltip')"
+            @click="stashSave"
+          >
+            <Loader2 v-if="gitBusy === 'stash'" class="animate-spin" />
+            <Archive v-else />
+            {{ $t("repo.stash.stash") }}
+          </Button>
+          <!-- existing stashes: pop / drop -->
+          <DropdownMenu v-if="stashes.length">
+            <DropdownMenuTrigger
+              class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-transparent px-2.5 text-[13px] font-medium text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/40"
+              :title="$t('repo.stash.menuLabel')"
+              :aria-label="$t('repo.stash.menuLabel')"
+            >
+              <Archive :size="15" />
+              <span>{{ stashes.length }}</span>
+              <ChevronDown :size="14" class="opacity-60" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" class="w-72">
+              <DropdownMenuLabel>{{ $t("repo.stash.menuLabel") }}</DropdownMenuLabel>
+              <div
+                v-for="s in stashes"
+                :key="s.index"
+                class="flex items-center gap-1.5 rounded-sm px-1.5 py-1 hover:bg-accent/50"
+              >
+                <span class="min-w-0 flex-1 truncate text-[12px]" :title="s.message">{{ s.message }}</span>
+                <button
+                  type="button"
+                  class="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground outline-none transition hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50"
+                  :disabled="!!gitBusy"
+                  :title="$t('repo.stash.popTooltip')"
+                  :aria-label="$t('repo.stash.pop')"
+                  @click="stashPop(s.index)"
+                >
+                  <CornerDownLeft :size="14" />
+                </button>
+                <button
+                  type="button"
+                  class="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground outline-none transition hover:bg-destructive/15 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50"
+                  :disabled="!!gitBusy"
+                  :title="$t('repo.stash.dropTooltip')"
+                  :aria-label="$t('repo.stash.drop')"
+                  @click="stashDrop(s.index)"
+                >
+                  <Trash2 :size="14" />
+                </button>
+              </div>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <span class="flex-1" />
           <Button
             variant="ghost"
@@ -893,10 +1261,103 @@ async function toggleStarred(): Promise<void> {
                 <EyeOff v-else :size="15" />
                 <span>{{ repo.hidden ? $t("repo.unhide") : $t("repo.hide") }}</span>
               </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem @select="manageOpen = true">
+                <Cloud :size="15" />
+                <span>{{ $t("repo.manage.open") }}</span>
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+
+        <!-- commit history (lazy-loaded when opened) -->
+        <div class="border-t border-border/40 pt-2">
+          <button
+            type="button"
+            class="flex w-full items-center gap-1.5 text-[12.5px] text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:text-foreground"
+            :aria-expanded="showHistory"
+            @click="toggleHistory"
+          >
+            <History :size="14" />
+            <span>{{ $t("repo.history.title") }}</span>
+            <ChevronDown :size="14" :class="cn('ml-auto transition-transform', showHistory && 'rotate-180')" />
+          </button>
+          <div v-if="showHistory" class="mt-2 space-y-0.5">
+            <div
+              v-if="loadingLog && !logResult"
+              class="flex items-center gap-2 px-1 py-1.5 text-[12px] text-muted-foreground"
+            >
+              <Loader2 :size="13" class="animate-spin" />{{ $t("repo.history.loading") }}
+            </div>
+            <div
+              v-else-if="logResult && !logResult.commits.length"
+              class="px-1 py-1.5 text-[12px] text-muted-foreground"
+            >
+              {{ $t("repo.history.empty") }}
+            </div>
+            <template v-else>
+              <div
+                v-for="cmt in logResult?.commits ?? []"
+                :key="cmt.hash"
+                class="group/c flex items-start gap-2 rounded-md px-1.5 py-1 hover:bg-accent/40"
+              >
+                <button
+                  type="button"
+                  class="mono mt-0.5 shrink-0 text-[11px] text-info/80 outline-none hover:underline focus-visible:underline"
+                  :title="$t('repo.history.copyHash')"
+                  :aria-label="$t('repo.history.copyHash')"
+                  @click="copyHash(cmt.hash)"
+                >
+                  {{ cmt.shortHash }}
+                </button>
+                <div class="min-w-0 flex-1">
+                  <div class="truncate text-[12.5px] text-foreground" :title="cmt.subject">{{ cmt.subject }}</div>
+                  <div class="truncate text-[11px] text-muted-foreground">
+                    {{ $t("repo.history.by", { author: cmt.authorName }) }} · {{ fromNow(cmt.date) }}
+                  </div>
+                </div>
+              </div>
+              <button
+                v-if="logResult?.hasMore"
+                type="button"
+                class="mt-1 w-full rounded-md py-1.5 text-[12px] text-muted-foreground outline-none transition-colors hover:bg-accent/40 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-60"
+                :disabled="loadingLog"
+                @click="loadMoreLog"
+              >
+                <Loader2 v-if="loadingLog" :size="13" class="mr-1 inline animate-spin" />{{ $t("repo.history.loadMore") }}
+              </button>
+            </template>
+          </div>
+        </div>
       </div>
     </CollapsibleContent>
+
+    <!-- confirm before discarding a file's working-tree changes (destructive) -->
+    <Dialog v-model:open="discardOpen">
+      <DialogContent class="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>{{ $t("repo.discard.title") }}</DialogTitle>
+          <DialogDescription>{{ $t("repo.discard.body", { file: discardTarget ?? "" }) }}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter class="gap-2 sm:gap-2">
+          <Button variant="secondary" @click="discardOpen = false">{{ $t("common.cancel") }}</Button>
+          <Button variant="destructive" @click="confirmDiscard">{{ $t("repo.discard.confirm") }}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <!-- smart-commit plan editor (AI multi-commit splitter). v-if so each open mounts a fresh
+         instance — keeps the drag-reorder binding wired to the freshly-mounted card list. -->
+    <SmartCommitPlan
+      v-if="smartOpen"
+      v-model:open="smartOpen"
+      :repo-id="repo.id"
+      :repo-name="repo.name"
+      :has-remote="hasRemote"
+      @committed="onSmartCommitted"
+    />
+
+    <!-- per-repo remote URL + tags management -->
+    <RepoManage v-model:open="manageOpen" :repo-id="repo.id" :remote="st?.remote ?? null" />
   </Collapsible>
 </template>

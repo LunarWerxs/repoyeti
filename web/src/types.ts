@@ -103,6 +103,82 @@ export interface FileDiff {
 
 export type ActionName = "fetch" | "pull" | "push" | "refresh" | "commit";
 
+// ── branches / history / stash (mirror src/inspect.ts) ──────────────────────────
+export interface BranchInfo {
+  name: string;
+  current: boolean;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  gone: boolean;
+}
+
+export interface BranchList {
+  ok: boolean;
+  code: ApiCode;
+  message?: string;
+  current: string | null;
+  detached: boolean;
+  branches: BranchInfo[];
+  total?: number;
+  truncated?: boolean;
+}
+
+export interface LogEntry {
+  hash: string;
+  shortHash: string;
+  subject: string;
+  authorName: string;
+  authorEmail: string;
+  /** Author date as epoch milliseconds. */
+  date: number;
+  /** Ref decorations, e.g. "HEAD -> main, origin/main". */
+  refs: string;
+}
+
+export interface LogResult {
+  ok: boolean;
+  code: ApiCode;
+  message?: string;
+  commits: LogEntry[];
+  hasMore: boolean;
+}
+
+export interface StashEntry {
+  index: number;
+  message: string;
+  /** Created date as epoch milliseconds. */
+  date: number;
+}
+
+export interface StashList {
+  ok: boolean;
+  code: ApiCode;
+  message?: string;
+  stashes: StashEntry[];
+}
+
+export interface TagEntry {
+  name: string;
+  /** Creation date as epoch milliseconds. */
+  date: number;
+  subject: string;
+}
+
+export interface TagList {
+  ok: boolean;
+  code: ApiCode;
+  message?: string;
+  tags: TagEntry[];
+}
+
+/** Summary of a bulk "fetch all" (mirrors src/service.ts FetchAllResult). */
+export interface FetchAllResult {
+  total: number;
+  ok: number;
+  failed: Array<{ id: string; name: string; code: string }>;
+}
+
 /**
  * Every error code the daemon can return. Keep in sync with `ApiErrorCode` in
  * src/contract.ts (the daemon's single source of truth + HTTP-status map). Typing this
@@ -123,6 +199,18 @@ export type ApiErrorCode =
   | "NOT_A_REPO"
   | "EXISTS"
   | "SUBMODULE_NOT_ACTIONABLE"
+  | "INVALID_REF_NAME"
+  | "BRANCH_EXISTS"
+  | "UNMERGED_BRANCH"
+  | "CANNOT_DELETE_CURRENT"
+  | "PROTECTED_BRANCH"
+  | "NOTHING_TO_STASH"
+  | "STASH_CONFLICT"
+  | "STASH_EMPTY"
+  | "DISCARD_FAILED"
+  | "EMPTY_PLAN"
+  | "PLAN_PATHS_INVALID"
+  | "PLAN_STALE"
   | "BAD_REQUEST"
   | "VALIDATION"
   | "NO_MESSAGE"
@@ -189,4 +277,58 @@ export interface AiSettings {
   providers: Partial<Record<AiProviderId, AiProviderState>>;
   defaultProvider: AiProviderId | null;
   style: CommitStyle;
+  /** Smart-commit YOLO mode: commit the AI plan immediately, skipping the review editor. */
+  yolo: boolean;
+}
+
+// ── smart commit (AI multi-commit splitter) — mirrors src/ai.ts + src/service.ts ──
+
+/** One proposed commit in a plan. */
+export interface CommitGroup {
+  type: string;
+  scope?: string;
+  subject: string;
+  body?: string;
+  files: string[];
+  rationale?: string;
+}
+
+/** A full proposed plan (read-only suggestion; the owner edits it before executing). */
+export interface CommitPlan {
+  groups: CommitGroup[];
+  /** Files the planner couldn't place — the UI blocks commit until each is in a group. */
+  leftovers: string[];
+  /** True when this came from the deterministic fallback (no/failed AI). */
+  degraded: boolean;
+  /** True when the diff shown to the AI was capped (large change-set). */
+  truncated: boolean;
+}
+
+export interface CommitPlanResponse {
+  ok: boolean;
+  plan: CommitPlan;
+  provider: AiProviderId;
+  model: string;
+  /** True when the daemon used the deterministic fallback after an AI failure. */
+  fallback?: boolean;
+}
+
+/** Per-group outcome of executing a plan, in order. */
+export interface CommitGroupResult {
+  ok: boolean;
+  code: ApiCode;
+  subject: string;
+  message?: string;
+}
+
+export interface SmartCommitResult {
+  ok: boolean;
+  code: ApiCode;
+  message: string;
+  repoId: string;
+  committed?: CommitGroupResult[];
+  remaining?: number;
+  synced?: boolean;
+  syncCode?: ApiCode;
+  syncMessage?: string;
 }

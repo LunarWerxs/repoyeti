@@ -9,9 +9,16 @@ import type {
   AiModel,
   AiProviderId,
   AiSettings,
+  BranchList,
   ChangedFile,
+  CommitPlanResponse,
+  FetchAllResult,
   Identity,
+  LogResult,
   Repo,
+  SmartCommitResult,
+  StashList,
+  TagList,
 } from "./types";
 
 /** Sync-status filter keys (multi-select; OR semantics). */
@@ -42,10 +49,24 @@ export const useStore = defineStore("gitmob", () => {
    *  (MAX_CHANGED_FILES); drives the "showing N of M" notice. Absent = not truncated. */
   const changesMeta = reactive<Record<string, { total: number; truncated: boolean }>>({});
 
+  // ── branches / history / stash (lazily loaded per repo when a section opens) ──
+  const branchesByRepo = reactive<Record<string, BranchList>>({});
+  const logByRepo = reactive<Record<string, LogResult>>({});
+  const stashesByRepo = reactive<Record<string, StashList>>({});
+  const tagsByRepo = reactive<Record<string, TagList>>({});
+  /** repoId → a secondary git op in flight (branch switch / stash / discard …), for spinners
+   *  and to disable the relevant control. Distinct from `busy` (the primary fetch/pull/push). */
+  const gitOpBusy = reactive<Record<string, string | undefined>>({});
+
+  // Scan roots (discovery directories) — lazily loaded when Settings opens.
+  const roots = ref<string[]>([]);
+  // True while a bulk "fetch all" is running (drives the header button spinner).
+  const fetchingAll = ref(false);
+
   // BYOK AI settings (redacted — never holds a key). `aiEnabled` gates the Generate button.
   // Style is hardcoded to Conventional Commits (no UI picker); owners can still override
   // it in ~/.gitmob/config.json. The daemon mirrors this default.
-  const aiSettings = ref<AiSettings>({ providers: {}, defaultProvider: null, style: "conventional" });
+  const aiSettings = ref<AiSettings>({ providers: {}, defaultProvider: null, style: "conventional", yolo: false });
   const aiReady = ref(false);
   /** Provider catalog from GET /api/ai/catalog — safe display metadata, no secrets. */
   const aiCatalog = ref<AiCatalogEntry[]>([]);
@@ -300,12 +321,50 @@ export const useStore = defineStore("gitmob", () => {
   async function setDefaultProvider(provider: AiProviderId): Promise<void> {
     aiSettings.value = await api.ai.setProvider(provider, { makeDefault: true });
   }
+  /** Toggle smart-commit YOLO mode (optimistic; rolls back on failure). */
+  async function setYolo(yolo: boolean): Promise<void> {
+    const prev = aiSettings.value.yolo;
+    aiSettings.value = { ...aiSettings.value, yolo };
+    try {
+      aiSettings.value = await api.ai.setYolo(yolo);
+    } catch (e) {
+      aiSettings.value = { ...aiSettings.value, yolo: prev }; // roll back
+      throw e;
+    }
+  }
   async function removeProvider(provider: AiProviderId): Promise<void> {
     aiSettings.value = await api.ai.removeProvider(provider);
   }
-  /** Draft a commit message from the repo's diff. Throws ApiError → caller toasts. */
-  async function genCommitMessage(repoId: string, provider?: AiProviderId): Promise<string> {
-    return (await api.ai.commitMessage(repoId, provider)).message;
+  /** Draft a commit message from the repo's diff (or just `paths`, for smart-commit per-group
+   *  regenerate). Throws ApiError → caller toasts. */
+  async function genCommitMessage(repoId: string, provider?: AiProviderId, paths?: string[]): Promise<string> {
+    return (await api.ai.commitMessage(repoId, provider, paths)).message;
+  }
+
+  /** Propose a multi-commit plan from the repo's working tree (commits nothing). Throws
+   *  ApiError (e.g. NO_AI_PROVIDER / NOTHING_TO_COMMIT) → the caller toasts. */
+  async function genCommitPlan(repoId: string, provider?: AiProviderId): Promise<CommitPlanResponse> {
+    return api.ai.commitPlan(repoId, provider);
+  }
+
+  /** Execute an (owner-edited) commit plan. Sets the commit busy state, reloads the changed-
+   *  file tree afterward (it shrank), and returns the structured result for the UI to render. */
+  async function smartCommit(
+    repoId: string,
+    commits: Array<{ message: string; paths: string[] }>,
+    sync = false,
+  ): Promise<SmartCommitResult> {
+    busy[repoId] = "commit";
+    try {
+      const r = await api.smartCommit(repoId, commits, sync);
+      await loadChanges(repoId); // some/all files were just committed
+      return r;
+    } catch (e) {
+      if (e instanceof ApiError) return { ok: false, code: e.code, message: e.message, repoId };
+      return { ok: false, code: "ERROR", message: e instanceof Error ? e.message : String(e), repoId };
+    } finally {
+      busy[repoId] = undefined;
+    }
   }
 
   function patchRepo(id: string, patch: Partial<Repo>): void {
@@ -322,6 +381,7 @@ export const useStore = defineStore("gitmob", () => {
         "ping",
         "repo_state_changed",
         "repo_added",
+        "repo_removed",
         "repo_identity_changed",
         "repo_hidden_changed",
         "repo_pinned_changed",
@@ -345,6 +405,9 @@ export const useStore = defineStore("gitmob", () => {
             if (idx >= 0) repos.value[idx] = repo;
             else repos.value.push(repo);
           }
+        } else if (event.value === "repo_removed") {
+          // A scan root was removed → its auto repos are forgotten. Drop the card live.
+          if (payload.id) repos.value = repos.value.filter((r) => r.id !== payload.id);
         } else if (event.value === "repo_identity_changed")
           patchRepo(payload.id, { identityId: payload.identityId });
         else if (event.value === "repo_hidden_changed")
@@ -456,8 +519,212 @@ export const useStore = defineStore("gitmob", () => {
     }
   }
 
+  // ── branches / history / stash / discard ─────────────────────────────────────
+  /** Normalise any thrown ApiError into the structured {ok,code,message} the UI toasts. */
+  function asResult(e: unknown): ActionResult {
+    if (e instanceof ApiError) return { ok: false, code: e.code, message: e.message };
+    return { ok: false, code: "ERROR", message: e instanceof Error ? e.message : String(e) };
+  }
+
+  async function loadBranches(repoId: string): Promise<void> {
+    try {
+      branchesByRepo[repoId] = await api.branches(repoId);
+    } catch (e) {
+      branchesByRepo[repoId] = { ...asResult(e), current: null, detached: false, branches: [] };
+    }
+  }
+
+  async function switchBranch(repoId: string, branch: string): Promise<ActionResult> {
+    gitOpBusy[repoId] = "checkout";
+    try {
+      const r = await api.checkout(repoId, branch);
+      await loadBranches(repoId);
+      return r;
+    } catch (e) {
+      return asResult(e);
+    } finally {
+      gitOpBusy[repoId] = undefined;
+    }
+  }
+
+  async function createBranch(repoId: string, name: string, switchTo = true): Promise<ActionResult> {
+    gitOpBusy[repoId] = "branch";
+    try {
+      const r = await api.createBranch(repoId, name, switchTo);
+      await loadBranches(repoId);
+      return r;
+    } catch (e) {
+      return asResult(e);
+    } finally {
+      gitOpBusy[repoId] = undefined;
+    }
+  }
+
+  async function deleteBranch(repoId: string, name: string): Promise<ActionResult> {
+    gitOpBusy[repoId] = "branch";
+    try {
+      const r = await api.deleteBranch(repoId, name);
+      await loadBranches(repoId);
+      return r;
+    } catch (e) {
+      return asResult(e);
+    } finally {
+      gitOpBusy[repoId] = undefined;
+    }
+  }
+
+  /** Load (or append, when `skip`>0) the commit log for a repo. */
+  async function loadLog(repoId: string, limit = 50, skip = 0): Promise<void> {
+    try {
+      const res = await api.log(repoId, limit, skip);
+      if (skip > 0 && logByRepo[repoId]) {
+        logByRepo[repoId] = {
+          ...res,
+          commits: [...logByRepo[repoId]!.commits, ...res.commits],
+        };
+      } else {
+        logByRepo[repoId] = res;
+      }
+    } catch (e) {
+      logByRepo[repoId] = { ...asResult(e), commits: [], hasMore: false };
+    }
+  }
+
+  async function loadStashes(repoId: string): Promise<void> {
+    try {
+      stashesByRepo[repoId] = await api.stashes(repoId);
+    } catch (e) {
+      stashesByRepo[repoId] = { ...asResult(e), stashes: [] };
+    }
+  }
+
+  async function stashSave(repoId: string, message?: string): Promise<ActionResult> {
+    gitOpBusy[repoId] = "stash";
+    try {
+      const r = await api.stashSave(repoId, message);
+      await Promise.all([loadStashes(repoId), loadChanges(repoId)]);
+      return r;
+    } catch (e) {
+      return asResult(e);
+    } finally {
+      gitOpBusy[repoId] = undefined;
+    }
+  }
+
+  async function stashPop(repoId: string, index = 0): Promise<ActionResult> {
+    gitOpBusy[repoId] = "stash";
+    try {
+      const r = await api.stashPop(repoId, index);
+      await Promise.all([loadStashes(repoId), loadChanges(repoId)]);
+      return r;
+    } catch (e) {
+      return asResult(e);
+    } finally {
+      gitOpBusy[repoId] = undefined;
+    }
+  }
+
+  async function stashDrop(repoId: string, index = 0): Promise<ActionResult> {
+    gitOpBusy[repoId] = "stash";
+    try {
+      const r = await api.stashDrop(repoId, index);
+      await loadStashes(repoId);
+      return r;
+    } catch (e) {
+      return asResult(e);
+    } finally {
+      gitOpBusy[repoId] = undefined;
+    }
+  }
+
+  /** Discard one changed file's working-tree changes (destructive — the card confirms first). */
+  async function discardFile(repoId: string, path: string): Promise<ActionResult> {
+    gitOpBusy[repoId] = "discard";
+    try {
+      const r = await api.discard(repoId, path);
+      await loadChanges(repoId);
+      return { ok: r.ok, code: r.code, message: r.message ?? "discarded" };
+    } catch (e) {
+      return asResult(e);
+    } finally {
+      gitOpBusy[repoId] = undefined;
+    }
+  }
+
+  // ── remotes / tags ───────────────────────────────────────────────────────────
+  async function loadTags(repoId: string): Promise<void> {
+    try {
+      tagsByRepo[repoId] = await api.tags(repoId);
+    } catch (e) {
+      tagsByRepo[repoId] = { ...asResult(e), tags: [] };
+    }
+  }
+  async function setRemote(repoId: string, url: string, name?: string): Promise<ActionResult> {
+    gitOpBusy[repoId] = "remote";
+    try {
+      return await api.setRemote(repoId, url, name);
+    } catch (e) {
+      return asResult(e);
+    } finally {
+      gitOpBusy[repoId] = undefined;
+    }
+  }
+  async function removeRemote(repoId: string, name?: string): Promise<ActionResult> {
+    gitOpBusy[repoId] = "remote";
+    try {
+      return await api.removeRemote(repoId, name);
+    } catch (e) {
+      return asResult(e);
+    } finally {
+      gitOpBusy[repoId] = undefined;
+    }
+  }
+
+  // ── scan roots / bulk fetch / sign-out-everywhere ────────────────────────────
+  async function loadRoots(): Promise<void> {
+    roots.value = await api.roots();
+  }
+  /** Add a scan root; repos under it stream in live via the `repo_added` SSE event. */
+  async function addScanRoot(path: string): Promise<void> {
+    const r = await api.addRoot(path);
+    roots.value = r.roots;
+  }
+  /** Remove a scan root; its auto-discovered repos disappear via `repo_removed`. */
+  async function removeScanRoot(path: string): Promise<number> {
+    const r = await api.removeRoot(path);
+    roots.value = r.roots;
+    return r.removed;
+  }
+  /** Fetch every repo with a remote. Returns a summary the caller toasts. */
+  async function fetchAll(): Promise<FetchAllResult> {
+    fetchingAll.value = true;
+    try {
+      return await api.fetchAll();
+    } finally {
+      fetchingAll.value = false;
+    }
+  }
+  /** Sign out on every device (rotates the daemon's signing key). */
+  async function logoutAll(): Promise<void> {
+    await api.logoutAll();
+  }
+
   async function addRepo(mode: "register" | "create", path: string): Promise<Repo> {
     const repo = mode === "register" ? await api.registerRepo(path) : await api.createRepo(path);
+    const idx = repos.value.findIndex((r) => r.id === repo.id);
+    if (idx >= 0) repos.value[idx] = repo;
+    else repos.value.push(repo);
+    return repo;
+  }
+
+  /** Clone a remote into a folder under a scan root; the new repo also arrives via SSE. */
+  async function cloneRepo(input: {
+    url: string;
+    parentPath: string;
+    name?: string;
+    identityId?: string | null;
+  }): Promise<Repo> {
+    const repo = await api.cloneRepo(input);
     const idx = repos.value.findIndex((r) => r.id === repo.id);
     if (idx >= 0) repos.value[idx] = repo;
     else repos.value.push(repo);
@@ -511,6 +778,31 @@ export const useStore = defineStore("gitmob", () => {
     changesLoading,
     changesMeta,
     loadChanges,
+    branchesByRepo,
+    logByRepo,
+    stashesByRepo,
+    gitOpBusy,
+    loadBranches,
+    switchBranch,
+    createBranch,
+    deleteBranch,
+    loadLog,
+    loadStashes,
+    tagsByRepo,
+    loadTags,
+    setRemote,
+    removeRemote,
+    stashSave,
+    stashPop,
+    stashDrop,
+    discardFile,
+    roots,
+    fetchingAll,
+    loadRoots,
+    addScanRoot,
+    removeScanRoot,
+    fetchAll,
+    logoutAll,
     aiSettings,
     aiCatalog,
     aiReady,
@@ -521,8 +813,11 @@ export const useStore = defineStore("gitmob", () => {
     listProviderModels,
     selectModel,
     setDefaultProvider,
+    setYolo,
     removeProvider,
     genCommitMessage,
+    genCommitPlan,
+    smartCommit,
     authReady,
     authEnforced,
     authenticated,
@@ -574,5 +869,6 @@ export const useStore = defineStore("gitmob", () => {
     createIdentity,
     updateIdentity,
     removeIdentity,
+    cloneRepo,
   };
 });

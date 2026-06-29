@@ -242,7 +242,7 @@ async function runDiscovery(cfg: GitmobConfig, knownIds: Set<string>): Promise<v
   let added = 0;
   try {
     const total = await discoverStream(cfg.roots, cfg.maxDepth, cfg.maxRepos, (f) => {
-      const id = upsertRepo(f.absPath, f.name, "auto", f.isSubmodule);
+      const id = upsertRepo(f.absPath, f.name, "auto", f.isSubmodule, f.vcs);
       watchOne(id, f.absPath);
       void refreshRepo(id, f.absPath).catch(() => {});
       if (!knownIds.has(id)) {

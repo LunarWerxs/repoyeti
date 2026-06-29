@@ -10,6 +10,7 @@ import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { DB_PATH, ensureConfigDir } from "./config.ts";
 import type { DiffStat } from "./diffstat.ts";
+import type { VcsKind } from "./vcs/types.ts";
 
 export type RepoSource = "auto" | "pinned" | "created";
 
@@ -38,6 +39,7 @@ interface RepoRow {
   abs_path: string;
   name: string;
   source: RepoSource;
+  vcs: string;
   workspace_id: string | null;
   identity_id: string | null;
   is_submodule: number;
@@ -55,6 +57,8 @@ export interface RepoView {
   name: string;
   absPath: string;
   source: RepoSource;
+  /** Which VCS backs this repo ("git" | "lore"). Drives backend dispatch in service.ts. */
+  vcs: VcsKind;
   isSubmodule: boolean;
   /** Repo-level identity override (null → inherit/none). */
   identityId: string | null;
@@ -105,6 +109,7 @@ export function initDb(): Database {
       abs_path      TEXT UNIQUE NOT NULL,
       name          TEXT NOT NULL,
       source        TEXT NOT NULL DEFAULT 'auto',
+      vcs           TEXT NOT NULL DEFAULT 'git',
       workspace_id  TEXT,
       identity_id   TEXT,
       is_submodule  INTEGER NOT NULL DEFAULT 0,
@@ -159,6 +164,11 @@ export function initDb(): Database {
   } catch {
     /* column already present */
   }
+  try {
+    handle.exec("ALTER TABLE repos ADD COLUMN vcs TEXT NOT NULL DEFAULT 'git';");
+  } catch {
+    /* column already present */
+  }
   db = handle;
   return db;
 }
@@ -173,11 +183,12 @@ export function upsertRepo(
   name: string,
   source: RepoSource,
   isSubmodule: boolean,
+  vcs: VcsKind = "git",
 ): string {
   const row = getDb()
     .query(
-      `INSERT INTO repos (id, abs_path, name, source, is_submodule, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO repos (id, abs_path, name, source, vcs, is_submodule, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(abs_path) DO UPDATE SET
          name = excluded.name,
           source = CASE
@@ -185,11 +196,12 @@ export function upsertRepo(
             WHEN repos.source = 'pinned' OR excluded.source = 'pinned' THEN 'pinned'
             ELSE excluded.source
           END,
+          vcs = excluded.vcs,
           is_submodule = excluded.is_submodule,
           updated_at = excluded.updated_at
        RETURNING id`,
     )
-    .get(randomUUID(), absPath, name, source, isSubmodule ? 1 : 0, Date.now()) as
+    .get(randomUUID(), absPath, name, source, vcs, isSubmodule ? 1 : 0, Date.now()) as
     | { id: string }
     | null;
   return row!.id;
@@ -207,6 +219,7 @@ function toView(r: RepoRow): RepoView {
     name: r.name,
     absPath: r.abs_path,
     source: r.source,
+    vcs: (r.vcs as VcsKind) || "git",
     isSubmodule: r.is_submodule === 1,
     identityId: r.identity_id,
     hidden: r.hidden === 1,
@@ -249,6 +262,16 @@ export function setRepoOrder(orderedIds: string[]): void {
 export function getRepo(id: string): RepoView | null {
   const r = getDb().query(`SELECT * FROM repos WHERE id = ?`).get(id) as RepoRow | null;
   return r ? toView(r) : null;
+}
+
+/** Delete repos by id (used when a scan root is removed). Path/owner logic lives in the
+ *  caller (service.ts) so this stays a dumb, transactional delete. */
+export function deleteRepos(ids: string[]): void {
+  if (ids.length === 0) return;
+  const d = getDb();
+  const stmt = d.query(`DELETE FROM repos WHERE id = ?`);
+  const tx = d.transaction((xs: string[]) => xs.forEach((id) => stmt.run(id)));
+  tx(ids);
 }
 
 /** Repos eligible for filesystem watching (real repos, not submodule worktrees). */

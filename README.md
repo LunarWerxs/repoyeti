@@ -33,11 +33,16 @@ The daemon is the primary artifact; the CLI is its launcher; a future Tauri tray
 
 ## Dashboard features
 
-- **Live repo grid** — branch / dirty / ahead / behind per repo, pushed over SSE; drag to reorder, filter by name / identity / sync state.
+- **Live repo grid** — branch / dirty / ahead / behind per repo, pushed over SSE; drag to reorder, filter by name / identity / sync state. **Fetch all** with one tap.
 - **Safe git actions** — fetch / pull (fast-forward only) / push (no force) / stage-all + commit, each identity-attributed.
+- **Self-service setup** — add or remove scan folders from Settings (no CLI needed), **clone a repo from a URL** onto the machine, and "sign out everywhere" to invalidate every device's session at once.
+- **Branches** — list local branches with ahead/behind, switch (clean-tree guarded), create (＋), and safe-delete (`-d` only; protected branches and the current branch are refused).
+- **Commit history** — a lazy, paginated read-only log per repo (hash · subject · author · relative time; tap a hash to copy).
+- **Stash** — stash all changes (incl. untracked) to escape the "dirty tree blocks pull" dead-end, then pop / drop from the phone. A conflicting pop keeps the stash and says "resolve at your desk" — never a silent half-merge.
+- **Discard a file** — revert one changed file to its last commit, straight from the changes tree (confirm-gated; the inverse of the in-app editor).
 - **AI commit messages (BYOK)** — draft a message from the repo's diff via your own key (Groq · OpenRouter · Gemini · Claude · ChatGPT · DeepSeek). Keys stay on the daemon; nothing leaves the machine without an explicit generate.
 - **VS Code-style changes tree** — real `vscode-icons` file-type glyphs, resizable per repo (drag / ↑↓ / double-click reset) with a Small / Medium / Tall default.
-- **Internationalised** — English base + Spanish / French / German / Simplified Chinese (machine-translated drafts); switch language in Settings → Appearance.
+- **English UI** — copy runs through `vue-i18n` (the `t()` layer is kept so locales can be re-added), but only English ships today.
 
 ## Run (Phase 1)
 
@@ -57,6 +62,7 @@ curl -N http://127.0.0.1:7171/api/events          # SSE stream — pushes on rea
 # manual targeting
 curl -XPOST :7171/api/repos/register -d '{"path":"/abs/path/to/existing-repo"}'  # "Point to folder"
 curl -XPOST :7171/api/repos/create   -d '{"path":"/abs/path/to/new-repo"}'       # "Create new" (git init)
+curl -XPOST :7171/api/repos/clone    -d '{"url":"git@github.com:org/repo.git","parentPath":"/your/code"}'  # clone (dest must be under a scan root)
 
 # identities + safe git actions
 curl -XPOST :7171/api/identities -d '{"displayName":"Personal","gitUsername":"Me","gitEmail":"me@ex.com","sshKeyPath":"~/.ssh/id_ed25519"}'
@@ -66,6 +72,15 @@ curl -XPOST :7171/api/repos/<id>/pull                                   # pull  
 curl -XPOST :7171/api/repos/<id>/push                                   # push   (never --force; 409 if non-fast-forward)
 curl -XPOST :7171/api/repos/<id>/commit -d '{"message":"wip"}'          # stage-all + commit (identity-attributed)
 curl -XPOST :7171/api/repos/<id>/refresh                                # force a fresh status read
+
+# branches / history / stash / discard
+curl :7171/api/repos/<id>/branches                                      # list local branches (+ ahead/behind)
+curl -XPOST :7171/api/repos/<id>/checkout -d '{"branch":"main"}'        # switch (409 if dirty)
+curl -XPOST :7171/api/repos/<id>/branch   -d '{"name":"feature/x"}'     # create (+switch); 409 if it exists
+curl -XPOST :7171/api/repos/<id>/stash    -d '{"message":"wip"}'        # stash all changes (incl. untracked)
+curl -XPOST :7171/api/repos/<id>/stash/pop                              # pop (409 STASH_CONFLICT keeps the stash)
+curl :7171/api/repos/<id>/log?limit=50                                  # read-only commit history
+curl -XPOST :7171/api/repos/<id>/discard  -d '{"path":"src/a.ts"}'      # revert one file to HEAD
 ```
 
 ## Remote access (over the internet)
@@ -104,7 +119,7 @@ Then `gitmob start --tunnel` → scan the QR → Sign in with Connections → da
 ## Testing
 
 ```sh
-bun test        # 19 tests: discovery, op-queue, git-action guards, auth gating, redirect shim
+bun test        # discovery, op-queue, git-action guards, branch/stash/discard, auth gating, redirect shim
 bun run typecheck
 ```
 

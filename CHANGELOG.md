@@ -8,6 +8,42 @@ All notable changes to GitMob are documented here. The format is based on
 
 ### Added
 
+- **Remote & tags management.** A per-repo "Remote & tags" dialog (repo card ⋮ menu) sets or
+  updates the `origin` URL — a local config change, no network — so a repo you created with
+  `git init` from the phone can finally be given a remote and pushed. It also lists the repo's
+  tags (read-only, newest first). Backed by `POST`/`DELETE /api/repos/:id/remote` (URL-scheme
+  validated) and `GET /api/repos/:id/tags`.
+- **Clone from URL.** The Add-repository dialog has a **Clone** mode: paste a git URL, pick a
+  destination folder (must be inside a scan folder) and an optional identity, and GitMob clones
+  it onto the machine — the new repo appears live. The URL scheme, target name, and destination
+  are validated server-side before any git runs, and the chosen identity's SSH key is injected
+  per-operation (same seam as fetch/pull/push).
+- **Recent commit messages.** The commit box shows your last few commit subjects as one-tap
+  chips — handy when typing on a phone.
+- **Scan folders from the dashboard.** Add or remove discovery roots in **Settings → Scan
+  folders** (no more CLI-only `gitmob add-root`). Adding one scans it immediately and the repos
+  stream in live; removing one drops the auto-discovered repos found under it (repos you added
+  explicitly by path are kept). The empty state now offers "Add a scan folder" too.
+- **Fetch all.** A header button fetches every repo that has a remote in one tap (bounded by the
+  network gate), then reports a one-line summary of what succeeded / failed.
+- **Sign out everywhere.** Settings → Access can invalidate the session on every device at once.
+  Sessions are stateless signed cookies, so this rotates the daemon's signing key — every existing
+  cookie stops verifying instantly.
+- **Branches.** Each repo card now lists its local branches (with ahead/behind), lets you
+  **switch** to one (refused on a dirty tree — "stash or resolve at your desk"), **create** a
+  new branch (＋), and **safe-delete** a merged local branch (`-d` only; the current branch and
+  protected `main`/`master`/`develop`/`trunk` are refused, and an unmerged branch surfaces
+  `UNMERGED_BRANCH` rather than being force-deleted).
+- **Commit history.** A lazy, paginated read-only log per repo (short hash · subject · author ·
+  relative time; tap a hash to copy it), backed by `GET /api/repos/:id/log`.
+- **Stash.** Stash all changes — including untracked — to escape the "dirty tree blocks pull"
+  dead-end, then **pop** or **drop** from the phone. A conflicting pop keeps the stash entry and
+  reports `STASH_CONFLICT` ("resolve at your desk") instead of leaving a silent half-merge.
+- **Discard a file.** Revert one changed file to its last-committed state directly from the
+  changes tree (confirm-gated) — the inverse of the in-app editor. Path-confined and behind the
+  per-repo op-queue, like every other mutation.
+- **Feature gap analysis.** `docs/FEATURE_GAP_ANALYSIS.md` — a rundown of the current feature set
+  plus a prioritized list of what to add next (and what stays out by design).
 - **In-app file viewer.** Click any changed file in a repo's tree to open its contents in an
   inline Monaco (VS Code) editor — a right-side push-drawer on desktop (the page slides left
   and stays centred; drag the left edge to resize) or a bottom sheet on mobile. Read-only,

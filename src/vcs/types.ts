@@ -1,0 +1,81 @@
+/**
+ * The VCS-agnostic backend contract — the core of the RepoYeti pivot.
+ *
+ * Until now every repo operation assumed git. RepoYeti makes the daemon manage *any* VCS
+ * (git today, Epic's Lore next) behind ONE interface, so service.ts / the watcher / the
+ * routes never branch on "which VCS" — they resolve a backend and call it. Each backend
+ * normalises its VCS into the SAME result shapes the dashboard already consumes
+ * (RepoStatus, ChangedFile, ActionResult, BranchList, LogResult, StashList), so the UI is
+ * unchanged regardless of which VCS owns a repo.
+ *
+ * The signatures deliberately mirror the existing git functions (absPath + per-op Identity),
+ * so the git backend (vcs/git.ts) is a thin pass-through and wiring this into service.ts
+ * later stays mechanical rather than a rewrite.
+ */
+import type { Identity, RepoStatus } from "../db.ts";
+import type { ChangedFile } from "../status.ts";
+import type { ActionResult } from "../git-actions.ts";
+import type { BranchList, LogResult, StashList } from "../inspect.ts";
+
+export type VcsKind = "git" | "lore";
+
+/**
+ * What a backend supports beyond the common core, so the UI/service can hide controls a VCS
+ * doesn't have. The common core — status, changed files, branches (list/create/switch),
+ * history, pull, push, commit — is assumed for EVERY backend. These flags cover the parts
+ * that genuinely differ (e.g. Lore is centralized: no separate fetch step, one server, no
+ * stash stack).
+ */
+export interface VcsCapabilities {
+  /** Has a stash stack (git: true). Lore has no stash concept → false. */
+  stash: boolean;
+  /** Has a distinct "fetch" step separate from pull (git: true). Lore syncs in one step → false. */
+  fetch: boolean;
+  /** Supports multiple named remotes (git: true). Lore is centralized (one server) → false. */
+  multipleRemotes: boolean;
+}
+
+/**
+ * One version-control backend. Implementations: vcs/git.ts (delegates to the existing,
+ * battle-tested git plumbing) and vcs/lore.ts (drives the `lore` CLI). Resolve one via
+ * vcs/index.ts → backendFor(kind) / detectVcs(absPath).
+ */
+export interface VcsBackend {
+  readonly kind: VcsKind;
+  /** Directory entry that marks a working copy of this VCS (".git" / ".lore"). */
+  readonly marker: string;
+  readonly capabilities: VcsCapabilities;
+
+  /** True when `absPath` is a working copy of this VCS (its marker is present). */
+  detect(absPath: string): boolean;
+
+  // ── status / changed files ──
+  readStatus(absPath: string, withDiff?: boolean): Promise<RepoStatus>;
+  readChanges(absPath: string, withStats?: boolean): Promise<ChangedFile[]>;
+
+  // ── safe remote/commit actions (identity injected per-op) ──
+  fetch(absPath: string, identity: Identity | null): Promise<ActionResult>;
+  pull(absPath: string, identity: Identity | null): Promise<ActionResult>;
+  push(absPath: string, identity: Identity | null): Promise<ActionResult>;
+  commitAll(
+    absPath: string,
+    identity: Identity | null,
+    message: string,
+    amend?: boolean,
+  ): Promise<ActionResult>;
+
+  // ── branches ──
+  listBranches(absPath: string): Promise<BranchList>;
+  checkout(absPath: string, branch: string): Promise<ActionResult>;
+  createBranch(absPath: string, name: string, switchTo?: boolean): Promise<ActionResult>;
+  deleteBranch(absPath: string, name: string): Promise<ActionResult>;
+
+  // ── history ──
+  readLog(absPath: string, limit?: number, skip?: number): Promise<LogResult>;
+
+  // ── stash (capabilities.stash === false → mutations return a clear error) ──
+  readStashes(absPath: string): Promise<StashList>;
+  stashSave(absPath: string, identity: Identity | null, message?: string): Promise<ActionResult>;
+  stashPop(absPath: string, index?: number): Promise<ActionResult>;
+  stashDrop(absPath: string, index?: number): Promise<ActionResult>;
+}

@@ -6,8 +6,8 @@
  * is still NO auth here — that's Phase 2's single middleware in front of /api/*
  * (MARCHING_ORDERS §7). The daemon binds to 127.0.0.1 only (see index.ts).
  */
-import { join, normalize, dirname } from "node:path";
-import { existsSync } from "node:fs";
+import { join, normalize, dirname, resolve, relative, isAbsolute } from "node:path";
+import { existsSync, statSync } from "node:fs";
 import { Hono, type Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { streamSSE } from "hono/streaming";
@@ -26,12 +26,13 @@ import {
   type GitmobConfig,
   type AiProviderId,
 } from "./config.ts";
-import { listModels, generateCommitMessage, AiError } from "./ai.ts";
+import { listModels, generateCommitMessage, generateCommitPlan, heuristicPlan, AiError } from "./ai.ts";
 import {
   authMiddleware,
   handleLogin,
   handleComplete,
   handleLogout,
+  handleLogoutAll,
   handleContinueLocal,
   readSession,
   isRemoteRequest,
@@ -57,6 +58,21 @@ import {
   pullRepo,
   pushRepo,
   commitRepo,
+  checkoutRepo,
+  createBranchRepo,
+  deleteBranchRepo,
+  stashSaveRepo,
+  stashPopRepo,
+  stashDropRepo,
+  getBranches,
+  getLog,
+  getStashes,
+  getTags,
+  setRemoteRepo,
+  removeRemoteRepo,
+  discardFile,
+  planCommitInput,
+  smartCommitRepo,
   forceRefresh,
   getChanges,
   searchChangedContent,
@@ -65,9 +81,14 @@ import {
   readFileDiff,
   writeFileContent,
   collectRepoDiff,
+  collectRepoPathsDiff,
   registerRepo,
   createRepo,
+  cloneRepo,
   reorderRepos,
+  fetchAllRepos,
+  discoverRoot,
+  forgetReposUnder,
   refreshAllRepos,
   getDiffPatchBytes,
   setDiffPatchBytes,
@@ -84,12 +105,24 @@ import {
   IdentityUpdateSchema,
   AssignIdentitySchema,
   RepoPathSchema,
+  RootPathSchema,
+  CloneSchema,
   ReorderSchema,
   CommitSchema,
+  CheckoutSchema,
+  CreateBranchSchema,
+  DeleteBranchSchema,
+  StashSaveSchema,
+  StashRefSchema,
+  DiscardSchema,
+  RemoteSetSchema,
+  RemoteDeleteSchema,
   ConnectSchema,
   AiSettingsSchema,
   ProviderUpdateSchema,
   CommitMessageSchema,
+  CommitPlanSchema,
+  SmartCommitSchema,
 } from "./schemas.ts";
 
 export function createApp(cfg: GitmobConfig): Hono {
@@ -189,6 +222,9 @@ export function createApp(cfg: GitmobConfig): Hono {
     return c.json({ ok: true, sub: s?.sub ?? null, email: s?.email ?? null });
   });
   app.post("/api/auth/logout", (c) => handleLogout(c));
+  // "Sign out everywhere" — rotate the signing key so every device's session cookie is
+  // invalidated at once (sessions are stateless signed cookies; there is no row to revoke).
+  app.post("/api/auth/logout-all", (c) => handleLogoutAll(c));
   // "Continue local for now" — grant a localhost-only bypass (refused over the tunnel).
   app.post("/api/auth/continue-local", (c) => handleContinueLocal(c));
 
@@ -244,12 +280,76 @@ export function createApp(cfg: GitmobConfig): Hono {
   app.post("/api/repos/register", repoFromPath(registerRepo));
   app.post("/api/repos/create", repoFromPath(createRepo));
 
+  // Clone a remote into a folder under a scan root. Validated hard (URL scheme, target name,
+  // and parent-under-root) before any git runs; the SSH key is injected per-op in cloneRepo.
+  app.post("/api/repos/clone", async (c) => {
+    const p = await parseBody(c, CloneSchema);
+    if (!p.ok) return p.res;
+    const url = p.data.url.trim();
+    if (!looksLikeGitUrl(url)) return jsonError(c, "BAD_REQUEST", "not a recognizable git URL");
+    const parentAbs = resolve(p.data.parentPath.trim());
+    try {
+      if (!existsSync(parentAbs) || !statSync(parentAbs).isDirectory()) {
+        return jsonError(c, "BAD_REQUEST", "destination folder does not exist");
+      }
+    } catch {
+      return jsonError(c, "BAD_REQUEST", "destination folder is not accessible");
+    }
+    if (!cfg.roots.some((r) => isUnder(resolve(r), parentAbs))) {
+      return jsonError(c, "BAD_REQUEST", "destination must be inside a scan folder");
+    }
+    const name = (p.data.name?.trim() || deriveCloneName(url));
+    if (!/^[A-Za-z0-9._-]+$/.test(name) || name === "." || name === "..") {
+      return jsonError(c, "BAD_REQUEST", "invalid target folder name");
+    }
+    if (existsSync(join(parentAbs, name))) {
+      return jsonError(c, "EXISTS", "a folder with that name already exists");
+    }
+    const result = await cloneRepo(parentAbs, name, url, p.data.identityId || null);
+    if (result.ok) return c.json(result, 201);
+    return c.json(result, statusForCode(result.code as ApiErrorCode));
+  });
+
   // Persist a drag-to-reorder of the repo list. Body: { order: string[] } (repo ids).
   app.post("/api/repos/reorder", async (c) => {
     const p = await parseBody(c, ReorderSchema);
     if (!p.ok) return p.res;
     reorderRepos(p.data.order);
     return c.json({ ok: true });
+  });
+
+  // Fetch every repo that has a remote (bounded by the network gate). Returns a summary.
+  app.post("/api/repos/fetch-all", async (c) => c.json(await fetchAllRepos()));
+
+  // ── scan roots (list / add / remove a discovery root from the dashboard) ─────
+  app.get("/api/roots", (c) => c.json({ roots: cfg.roots }));
+  app.post("/api/roots", async (c) => {
+    const p = await parseBody(c, RootPathSchema);
+    if (!p.ok) return p.res;
+    const abs = resolve(p.data.path);
+    try {
+      if (!existsSync(abs) || !statSync(abs).isDirectory()) {
+        return jsonError(c, "BAD_REQUEST", "path does not exist or is not a directory");
+      }
+    } catch {
+      return jsonError(c, "BAD_REQUEST", "path is not accessible");
+    }
+    if (!cfg.roots.includes(abs)) {
+      cfg.roots.push(abs);
+      saveConfig(cfg);
+    }
+    // Discover in the background (a big root can take a while); repos stream in over SSE.
+    void discoverRoot(abs, cfg.maxDepth, cfg.maxRepos).catch(() => {});
+    return c.json({ ok: true, roots: cfg.roots });
+  });
+  app.delete("/api/roots", async (c) => {
+    const p = await parseBody(c, RootPathSchema);
+    if (!p.ok) return p.res;
+    const abs = resolve(p.data.path);
+    cfg.roots = cfg.roots.filter((r) => resolve(r) !== abs);
+    saveConfig(cfg);
+    const removed = forgetReposUnder(abs); // drop auto-discovered repos under it (live, over SSE)
+    return c.json({ ok: true, roots: cfg.roots, removed });
   });
 
   // ── identities (CRUD) ──────────────────────────────────────────────────────
@@ -351,11 +451,127 @@ export function createApp(cfg: GitmobConfig): Hono {
     return c.json(r, r.ok ? 200 : statusForCode(r.code));
   });
 
+  // Smart commit: execute an (owner-edited) multi-commit plan — stage each group's files and
+  // commit it in order, optionally syncing after. The body is validated against the live tree
+  // in the service layer (PLAN_STALE / PLAN_PATHS_INVALID). See docs/SMART_COMMIT.md.
+  app.post("/api/repos/:id/smart-commit", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return jsonError(c, "BAD_REQUEST", "missing repo id");
+    const p = await parseBody(c, SmartCommitSchema);
+    if (!p.ok) return p.res;
+    const r = await smartCommitRepo(id, p.data.commits, p.data.sync === true);
+    return c.json(r, r.ok ? 200 : statusForCode(r.code));
+  });
+
   app.post("/api/repos/:id/refresh", async (c) => {
     const id = c.req.param("id");
     if (!id) return jsonError(c, "BAD_REQUEST", "missing repo id");
     const repo = await forceRefresh(id);
     return repo ? c.json({ repo }) : jsonError(c, "NOT_FOUND", "repo not found");
+  });
+
+  // ── branches (list / switch / create / delete) ───────────────────────────────
+  app.get("/api/repos/:id/branches", async (c) => {
+    const id = c.req.param("id");
+    if (!getRepo(id)) return jsonError(c, "NOT_FOUND", "repo not found");
+    return c.json(await getBranches(id));
+  });
+  app.post("/api/repos/:id/checkout", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return jsonError(c, "BAD_REQUEST", "missing repo id");
+    const p = await parseBody(c, CheckoutSchema);
+    if (!p.ok) return p.res;
+    const r = await checkoutRepo(id, p.data.branch.trim());
+    return c.json(r, r.ok ? 200 : statusForCode(r.code));
+  });
+  app.post("/api/repos/:id/branch", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return jsonError(c, "BAD_REQUEST", "missing repo id");
+    const p = await parseBody(c, CreateBranchSchema);
+    if (!p.ok) return p.res;
+    const r = await createBranchRepo(id, p.data.name.trim(), p.data.switch !== false);
+    return c.json(r, r.ok ? 201 : statusForCode(r.code));
+  });
+  app.delete("/api/repos/:id/branch", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return jsonError(c, "BAD_REQUEST", "missing repo id");
+    const p = await parseBody(c, DeleteBranchSchema);
+    if (!p.ok) return p.res;
+    const r = await deleteBranchRepo(id, p.data.name.trim());
+    return c.json(r, r.ok ? 200 : statusForCode(r.code));
+  });
+
+  // ── commit history (read-only, paginated) ────────────────────────────────────
+  app.get("/api/repos/:id/log", async (c) => {
+    const id = c.req.param("id");
+    if (!getRepo(id)) return jsonError(c, "NOT_FOUND", "repo not found");
+    const limit = Number(c.req.query("limit"));
+    const skip = Number(c.req.query("skip"));
+    return c.json(
+      await getLog(
+        id,
+        Number.isFinite(limit) ? limit : undefined,
+        Number.isFinite(skip) ? skip : undefined,
+      ),
+    );
+  });
+
+  // ── stash (list / save / pop / drop) ─────────────────────────────────────────
+  app.get("/api/repos/:id/stashes", async (c) => {
+    const id = c.req.param("id");
+    if (!getRepo(id)) return jsonError(c, "NOT_FOUND", "repo not found");
+    return c.json(await getStashes(id));
+  });
+  app.post("/api/repos/:id/stash", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return jsonError(c, "BAD_REQUEST", "missing repo id");
+    const p = await parseBody(c, StashSaveSchema);
+    if (!p.ok) return p.res;
+    const r = await stashSaveRepo(id, p.data.message);
+    return c.json(r, r.ok ? 200 : statusForCode(r.code));
+  });
+  app.post("/api/repos/:id/stash/pop", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return jsonError(c, "BAD_REQUEST", "missing repo id");
+    const p = await parseBody(c, StashRefSchema);
+    if (!p.ok) return p.res;
+    const r = await stashPopRepo(id, p.data.index ?? 0);
+    return c.json(r, r.ok ? 200 : statusForCode(r.code));
+  });
+  app.post("/api/repos/:id/stash/drop", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return jsonError(c, "BAD_REQUEST", "missing repo id");
+    const p = await parseBody(c, StashRefSchema);
+    if (!p.ok) return p.res;
+    const r = await stashDropRepo(id, p.data.index ?? 0);
+    return c.json(r, r.ok ? 200 : statusForCode(r.code));
+  });
+
+  // ── tags (read-only) ─────────────────────────────────────────────────────────
+  app.get("/api/repos/:id/tags", async (c) => {
+    const id = c.req.param("id");
+    if (!getRepo(id)) return jsonError(c, "NOT_FOUND", "repo not found");
+    return c.json(await getTags(id));
+  });
+
+  // ── remote (set-url / add-or-update origin, remove) — local config, no network ──
+  app.post("/api/repos/:id/remote", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return jsonError(c, "BAD_REQUEST", "missing repo id");
+    const p = await parseBody(c, RemoteSetSchema);
+    if (!p.ok) return p.res;
+    const url = p.data.url.trim();
+    if (!looksLikeGitUrl(url)) return jsonError(c, "BAD_REQUEST", "not a recognizable git URL");
+    const r = await setRemoteRepo(id, (p.data.name || "origin").trim(), url);
+    return c.json(r, r.ok ? 200 : statusForCode(r.code));
+  });
+  app.delete("/api/repos/:id/remote", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return jsonError(c, "BAD_REQUEST", "missing repo id");
+    const p = await parseBody(c, RemoteDeleteSchema);
+    if (!p.ok) return p.res;
+    const r = await removeRemoteRepo(id, (p.data.name || "origin").trim());
+    return c.json(r, r.ok ? 200 : statusForCode(r.code));
   });
 
   app.get("/api/repos/:id/changes", async (c) => {
@@ -426,6 +642,25 @@ export function createApp(cfg: GitmobConfig): Hono {
     return c.json(result);
   });
 
+  // Discard one changed file's working-tree changes (the changes-tree "Discard" action).
+  // Destructive → gated behind the same remote-editing toggle as file writes (loopback always allowed).
+  app.post("/api/repos/:id/discard", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return jsonError(c, "BAD_REQUEST", "missing repo id");
+    if (isRemoteRequest(c) && cfg.remoteEditing === false) {
+      return c.json(
+        { ok: false, code: "EDIT_REMOTE_DISABLED", message: "editing over remote access is turned off" },
+        403,
+      );
+    }
+    const p = await parseBody(c, DiscardSchema);
+    if (!p.ok) return p.res;
+    const result = await discardFile(id, p.data.path);
+    if (result.ok) return c.json(result);
+    const status: ContentfulStatusCode = result.code === "NOT_FOUND" ? 404 : statusForCode(result.code as ApiErrorCode);
+    return c.json(result, status);
+  });
+
   // ── AI: bring-your-own-key commit messages ──────────────────────────────────
   // The daemon makes every provider call; the owner's key never reaches the browser.
   // `cfg` is mutated in place AND persisted so a running daemon picks up new keys.
@@ -452,6 +687,7 @@ export function createApp(cfg: GitmobConfig): Hono {
     if (!p.ok) return p.res;
     const ai = ensureAi();
     if (p.data.style != null) ai.style = p.data.style;
+    if (typeof p.data.yolo === "boolean") ai.yolo = p.data.yolo;
     if (p.data.defaultProvider !== undefined) {
       const dp = p.data.defaultProvider == null ? undefined : (p.data.defaultProvider as AiProviderId);
       if (dp !== undefined && !resolveApiKey(cfg, dp)) {
@@ -547,7 +783,12 @@ export function createApp(cfg: GitmobConfig): Hono {
     const model = resolveModel(cfg, provider);
     if (!model) return jsonError(c, "NO_MODEL", `pick a model for ${provider} in Settings`);
 
-    const collected = await collectRepoDiff(id);
+    // With `paths`, draft from only those files (smart-commit per-group regenerate); else the
+    // whole working tree (the normal "✨ Generate" button).
+    const collected =
+      p.data.paths && p.data.paths.length
+        ? await collectRepoPathsDiff(id, p.data.paths)
+        : await collectRepoDiff(id);
     if (!collected.ok) {
       const status: ContentfulStatusCode =
         collected.code === "NOT_FOUND" ? 404 : collected.code === "NOTHING_TO_COMMIT" ? 409 : 400;
@@ -564,6 +805,41 @@ export function createApp(cfg: GitmobConfig): Hono {
       return c.json({ ok: true, message, provider, model });
     } catch (e) {
       return aiErr(c, e);
+    }
+  });
+
+  // Propose a multi-commit plan from the repo's working tree (read-only — commits NOTHING).
+  // On an AI failure other than a bad key we fall back to a deterministic grouping so Smart
+  // Commit always yields an editable plan; a rejected key surfaces so the owner can fix it.
+  app.post("/api/repos/:id/commit-plan", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return jsonError(c, "BAD_REQUEST", "missing repo id");
+    const p = await parseBody(c, CommitPlanSchema);
+    if (!p.ok) return p.res;
+    const requested = p.data.provider == null ? undefined : (p.data.provider as AiProviderId);
+    const provider = requested ?? effectiveDefaultProvider(cfg);
+    if (!provider) return jsonError(c, "NO_AI_PROVIDER", "no AI provider configured");
+    const apiKey = resolveApiKey(cfg, provider);
+    if (!apiKey) return jsonError(c, "NO_AI_PROVIDER", `${provider} is not configured`);
+    const model = resolveModel(cfg, provider);
+    if (!model) return jsonError(c, "NO_MODEL", `pick a model for ${provider} in Settings`);
+
+    const collected = await planCommitInput(id);
+    if (!collected.ok) {
+      const status: ContentfulStatusCode =
+        collected.code === "NOT_FOUND" ? 404 : collected.code === "NOTHING_TO_COMMIT" ? 409 : 400;
+      return c.json(collected, status);
+    }
+    const style = cfg.ai?.style ?? "conventional";
+    try {
+      const plan = await generateCommitPlan(provider, apiKey, model, collected.input!, style);
+      return c.json({ ok: true, plan, provider, model });
+    } catch (e) {
+      // A bad/rejected key is worth surfacing (the owner must fix it); anything else
+      // (provider down, garbage response) falls back to the deterministic plan.
+      if (e instanceof AiError && e.code === "AI_AUTH_FAILED") return aiErr(c, e);
+      const plan = heuristicPlan(collected.input!);
+      return c.json({ ok: true, plan, provider, model, fallback: true });
     }
   });
 
@@ -619,6 +895,28 @@ export function createApp(cfg: GitmobConfig): Hono {
   mountWeb(app);
 
   return app;
+}
+
+/** True when `p` is `root` itself or sits inside it (blocks a clone target outside the roots). */
+function isUnder(root: string, p: string): boolean {
+  const rel = relative(root, p);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+/** A conservative git-URL check: a known scheme, or the scp-like `user@host:path` form. Rejects
+ *  a leading dash (flag injection) and bare local paths (which would dodge the root confinement). */
+function looksLikeGitUrl(u: string): boolean {
+  if (!u || u.startsWith("-")) return false;
+  if (/^(https?|ssh|git|file):\/\/.+/i.test(u)) return true;
+  if (/^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:.+/.test(u)) return true; // git@github.com:org/repo.git
+  return false;
+}
+
+/** Derive a target folder name from a clone URL: last path segment, sans a trailing `.git`. */
+function deriveCloneName(url: string): string {
+  const cleaned = url.replace(/[/\\]+$/, "");
+  const seg = cleaned.split(/[/\\:]/).pop() ?? "repo";
+  return seg.replace(/\.git$/i, "") || "repo";
 }
 
 /** Path to the built PWA (`web/dist`). Works in dev (relative to this source) and

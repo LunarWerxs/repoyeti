@@ -22,9 +22,14 @@ export interface WatchHandle {
   readonly watching: boolean;
 }
 
-export function watchRepo(absPath: string, onChange: () => void, debounceMs = 250): WatchHandle {
-  const gitDir = join(absPath, ".git");
-  const logsDir = join(gitDir, "logs");
+export function watchRepo(
+  absPath: string,
+  onChange: () => void,
+  marker = ".git",
+  debounceMs = 250,
+): WatchHandle {
+  const markerDir = join(absPath, marker);
+  const logsDir = join(markerDir, "logs");
   const watchers: FSWatcher[] = [];
   let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -44,9 +49,10 @@ export function watchRepo(absPath: string, onChange: () => void, debounceMs = 25
     }
   };
 
-  // The `.git` dir carries the signals we care about; `.git/logs` is a bonus. Health
-  // hinges on the former — if even that couldn't be installed, this repo needs polling.
-  const gitWatched = addDir(gitDir);
+  // The marker dir (.git / .lore) carries the signals we care about; its `logs` subdir
+  // (git only) is a bonus. Health hinges on the former — if even that couldn't be
+  // installed, this repo needs polling. A missing logs dir (e.g. Lore) just no-ops.
+  const gitWatched = addDir(markerDir);
   addDir(logsDir);
 
   return {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { ChevronRight } from "@lucide/vue";
+import { ChevronRight, Undo2 } from "@lucide/vue";
 import type { DiffStat as DiffStatT, TreeNode } from "../types";
 import { fileVisual } from "@/lib/file-icons";
 import { fmtCount } from "@/lib/diffstat";
@@ -22,6 +22,9 @@ function diffTitle(s: DiffStatT): string {
 // Self-recursive component (renders <ChangesTree> for each subfolder).
 defineOptions({ name: "ChangesTree" });
 const props = defineProps<{ nodes: TreeNode[]; repoId: string; depth?: number; forceExpand?: boolean }>();
+// Bubbles a per-file "discard changes" request up to RepoCard (which confirms, then calls
+// the store). Re-emitted through each recursion level so a deep file reaches the root.
+const emit = defineEmits<{ discard: [path: string] }>();
 
 // Shared collapsed-folder state (provided once by RepoCard; see @/lib/changes-tree).
 const collapse = useTreeCollapse();
@@ -168,32 +171,45 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
         <component :is="icon" class="shrink-0 text-[15px]" />
         <span class="truncate text-[#93939f]">{{ n.name }}</span>
       </button>
-      <!-- file row — opens the read-only viewer (spacer keeps it aligned under folders) -->
-      <button
-        v-else
-        type="button"
-        class="group flex h-[26px] w-full items-center gap-1.5 rounded-md pr-2 text-left text-[12.5px] outline-none transition-colors hover:bg-accent/60 focus-visible:bg-accent/60"
-        :class="isViewing(repoId, n.path) && 'bg-accent/80 ring-1 ring-primary/30'"
-        :style="{ paddingLeft: (depth ?? 0) * 14 + 8 + 'px' }"
-        :title="n.path"
-        data-tree-row
-        :data-depth="depth ?? 0"
-        @click="open(n)"
-        @keydown="onRowKey($event, n, depth ?? 0)"
-      >
-        <span class="w-3.5 shrink-0" aria-hidden="true" />
-        <component :is="icon" class="shrink-0 text-[15px]" />
-        <span class="truncate" :class="n.staged ? 'text-[#cfe9d9]' : 'text-[#cfcfd8]'">
-          {{ n.name }}
-        </span>
-        <!-- right side: per-file diff stats (when enabled) + the git-status letter -->
-        <span class="mono ml-auto flex shrink-0 items-center gap-1.5">
-          <DiffStat v-if="n.stat" :stat="n.stat" show="both" :title="diffTitle(n.stat)" />
-          <span class="text-[11px] font-bold" :style="{ color: statusColor(n.status) }">{{
-            n.status
-          }}</span>
-        </span>
-      </button>
+      <!-- file row — opens the read-only viewer (spacer keeps it aligned under folders).
+           Wrapped so the hover "discard" button is a SIBLING (button-in-button is invalid). -->
+      <div v-else class="group/file relative">
+        <button
+          type="button"
+          class="group flex h-[26px] w-full items-center gap-1.5 rounded-md pr-8 text-left text-[12.5px] outline-none transition-colors hover:bg-accent/60 focus-visible:bg-accent/60"
+          :class="isViewing(repoId, n.path) && 'bg-accent/80 ring-1 ring-primary/30'"
+          :style="{ paddingLeft: (depth ?? 0) * 14 + 8 + 'px' }"
+          :title="n.path"
+          data-tree-row
+          :data-depth="depth ?? 0"
+          @click="open(n)"
+          @keydown="onRowKey($event, n, depth ?? 0)"
+        >
+          <span class="w-3.5 shrink-0" aria-hidden="true" />
+          <component :is="icon" class="shrink-0 text-[15px]" />
+          <span class="truncate" :class="n.staged ? 'text-[#cfe9d9]' : 'text-[#cfcfd8]'">
+            {{ n.name }}
+          </span>
+          <!-- right side: per-file diff stats (when enabled) + the git-status letter -->
+          <span class="mono ml-auto flex shrink-0 items-center gap-1.5">
+            <DiffStat v-if="n.stat" :stat="n.stat" show="both" :title="diffTitle(n.stat)" />
+            <span class="text-[11px] font-bold" :style="{ color: statusColor(n.status) }">{{
+              n.status
+            }}</span>
+          </span>
+        </button>
+        <!-- discard this file's working-tree changes (RepoCard confirms first) -->
+        <button
+          type="button"
+          tabindex="-1"
+          class="absolute top-1/2 right-1 flex size-5 -translate-y-1/2 items-center justify-center rounded bg-card/80 text-muted-foreground opacity-0 outline-none transition group-hover/file:opacity-100 hover:bg-destructive/15 hover:text-destructive focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/40"
+          :title="$t('repo.discard.action')"
+          :aria-label="$t('repo.discard.action')"
+          @click.stop="emit('discard', n.path)"
+        >
+          <Undo2 :size="12" />
+        </button>
+      </div>
       <!-- children render only while this folder is expanded -->
       <ChangesTree
         v-if="n.children && n.children.length && isOpen(n.path)"
@@ -201,6 +217,7 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
         :repo-id="repoId"
         :depth="(depth ?? 0) + 1"
         :force-expand="forceExpand"
+        @discard="emit('discard', $event)"
       />
     </template>
   </div>
