@@ -6,7 +6,8 @@
  * is still NO auth here — that's Phase 2's single middleware in front of /api/*
  * (MARCHING_ORDERS §7). The daemon binds to 127.0.0.1 only (see index.ts).
  */
-import { join, normalize, dirname, resolve, relative, isAbsolute } from "node:path";
+import { join, normalize, dirname, resolve } from "node:path";
+import { pathWithin } from "./paths.ts";
 import { existsSync, statSync } from "node:fs";
 import { Hono, type Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
@@ -344,7 +345,7 @@ export function createApp(cfg: GitmobConfig): Hono {
     } catch {
       return jsonError(c, "BAD_REQUEST", "destination folder is not accessible");
     }
-    if (!cfg.roots.some((r) => isUnder(resolve(r), parentAbs))) {
+    if (!cfg.roots.some((r) => pathWithin(resolve(r), parentAbs))) {
       return jsonError(c, "BAD_REQUEST", "destination must be inside a scan folder");
     }
     const name = (p.data.name?.trim() || deriveCloneName(url));
@@ -435,7 +436,7 @@ export function createApp(cfg: GitmobConfig): Hono {
     } catch {
       return jsonError(c, "BAD_REQUEST", "destination folder is not accessible");
     }
-    if (!cfg.roots.some((r) => isUnder(resolve(r), parentAbs))) {
+    if (!cfg.roots.some((r) => pathWithin(resolve(r), parentAbs))) {
       return jsonError(c, "BAD_REQUEST", "destination must be inside a scan folder");
     }
     const name = p.data.name?.trim() || deriveCloneName(url);
@@ -1001,12 +1002,6 @@ export function createApp(cfg: GitmobConfig): Hono {
   mountWeb(app);
 
   return app;
-}
-
-/** True when `p` is `root` itself or sits inside it (blocks a clone target outside the roots). */
-function isUnder(root: string, p: string): boolean {
-  const rel = relative(root, p);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
 /** A conservative git-URL check: a known scheme, or the scp-like `user@host:path` form. Rejects

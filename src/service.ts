@@ -7,7 +7,8 @@
  * phone sees the result over SSE without polling.
  */
 import { existsSync, lstatSync, mkdirSync, realpathSync, renameSync, unlinkSync } from "node:fs";
-import { resolve, join, basename, dirname, relative, isAbsolute } from "node:path";
+import { resolve, join, basename, dirname } from "node:path";
+import { pathWithin } from "./paths.ts";
 import { enqueue } from "./opqueue.ts";
 import { readStatus, readChanges, type ChangedFile } from "./status.ts";
 import { diffStatsEnabled } from "./diffstat.ts";
@@ -285,12 +286,6 @@ export async function fetchAllRepos(): Promise<FetchAllResult> {
 }
 
 // ── scan-root discovery / removal ─────────────────────────────────────────────────
-/** True when `p` is the root itself or sits inside it. */
-function isPathUnder(root: string, p: string): boolean {
-  const rel = relative(root, p);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
-
 /**
  * Discover one newly-added scan root in the background, mirroring boot discovery:
  * index → watch → status-read each repo as it's found and broadcast `repo_added` so the
@@ -320,7 +315,7 @@ export async function discoverRoot(absPath: string, maxDepth: number, maxRepos: 
  */
 export function forgetReposUnder(rootAbs: string): number {
   const root = resolve(rootAbs);
-  const victims = getRepos().filter((r) => r.source === "auto" && isPathUnder(root, r.absPath));
+  const victims = getRepos().filter((r) => r.source === "auto" && pathWithin(root, r.absPath));
   for (const r of victims) unwatchOne(r.id);
   deleteRepos(victims.map((r) => r.id));
   for (const r of victims) broadcast("repo_removed", { id: r.id });
@@ -525,12 +520,6 @@ function looksBinary(bytes: Uint8Array): boolean {
   return false;
 }
 
-/** True when `target` is the repo root itself or sits inside it (blocks `../` escapes). */
-function isInsideRepo(root: string, target: string): boolean {
-  const rel = relative(root, target);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
-
 /** Last-committed contents of a path (used for files deleted from the working tree). */
 async function readFromHead(absPath: string, clean: string): Promise<FileContentResult> {
   try {
@@ -588,7 +577,7 @@ function resolveRepoPath(
     .trim();
   if (!clean) return { error: "path is required" };
   const abs = resolve(absPath, clean);
-  if (!isInsideRepo(absPath, abs)) return { error: "path escapes the repository" };
+  if (!pathWithin(absPath, abs)) return { error: "path escapes the repository" };
   return { clean, abs };
 }
 
@@ -677,7 +666,7 @@ export async function writeFileContent(
   // Resolve symlinks for real: the *real* parent dir must sit inside the *real* repo root,
   // so a symlinked parent can't redirect the write outside the repo.
   try {
-    if (!isInsideRepo(realpathSync(repo.absPath), realpathSync(dirname(r.abs)))) {
+    if (!pathWithin(realpathSync(repo.absPath), realpathSync(dirname(r.abs)))) {
       return { ok: false, code: "NOT_WRITABLE", message: "path escapes the repository" };
     }
   } catch {
