@@ -44,7 +44,7 @@ jobs:
           bin=$(ls dist/repoyeti.exe dist/repoyeti 2>/dev/null | head -n1)
           if [ -z "$bin" ]; then echo "::error::no compiled binary found in dist/"; ls -la dist || true; exit 1; fi
           cp "$bin" "out/${{ matrix.asset }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset }}
           path: out/${{ matrix.asset }}
