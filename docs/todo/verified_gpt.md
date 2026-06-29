@@ -141,9 +141,13 @@ Criteria used: keep only items that still match the current codebase, have clear
 - [x] **P1 - Centralize API result/error contracts.** (DONE — see Completed 2026-06-28 second follow-up)
   - Done via `src/contract.ts` (`ApiErrorCode`, `statusForCode`, `jsonError`) + `web/src/types.ts` mirror.
 
-- [ ] **P2 - Add schema validation for request bodies and params.**
-  - Verified real: route handlers repeatedly coerce `unknown` JSON by hand.
-  - Suggested path: use a small shared schema layer, likely `zod` plus Hono validation, after the error contract is centralized.
+- [x] **P2 - Add schema validation for request bodies and params.** (DONE — third pass 2026-06-28)
+  - Done: `src/schemas.ts` (zod) + a `parseBody(c, schema)` helper; the structured routes (identities create/update,
+    repo register/create, reorder, commit, assign-identity, AI connect/settings/provider-update, commit-message)
+    validate their body and get typed data. Shape failures → `BAD_REQUEST` (names the bad field) via `contract.ts`;
+    domain codes (NO_KEY, NO_MESSAGE, NOT_CONFIGURED, …) stay as post-shape checks so they're unchanged. Trivial
+    boolean-toggle routes (hidden/pinned/starred) + the mode route keep their existing safe checks. Coverage in
+    `tests/schemas.test.ts`; all pre-existing route tests stay green.
 
 - [x] **P2 - Consolidate AI provider metadata and local adapters.** (DONE — third pass 2026-06-28)
   - Done: single `AI_CATALOG` in `src/config.ts` (`AI_PROVIDERS` derived from it), exposed via `GET /api/ai/catalog`;

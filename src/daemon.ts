@@ -25,7 +25,6 @@ import {
   effectiveDefaultProvider,
   type GitmobConfig,
   type AiProviderId,
-  type CommitStyle,
 } from "./config.ts";
 import { listModels, generateCommitMessage, AiError } from "./ai.ts";
 import {
@@ -79,6 +78,19 @@ import {
 import { diffStatsEnabled, setDiffStatsEnabled } from "./diffstat.ts";
 import { jsonError, statusForCode, type ApiErrorCode } from "./contract.ts";
 import { setSecret, deleteSecret, aiKeyName } from "./secrets.ts";
+import {
+  parseBody,
+  IdentityCreateSchema,
+  IdentityUpdateSchema,
+  AssignIdentitySchema,
+  RepoPathSchema,
+  ReorderSchema,
+  CommitSchema,
+  ConnectSchema,
+  AiSettingsSchema,
+  ProviderUpdateSchema,
+  CommitMessageSchema,
+} from "./schemas.ts";
 
 export function createApp(cfg: GitmobConfig): Hono {
   const app = new Hono();
@@ -219,10 +231,9 @@ export function createApp(cfg: GitmobConfig): Hono {
   // "Point to Folder" (register existing) + "Create New" (git init).
   const repoFromPath = (handler: (path: string) => Promise<{ ok: boolean; code: string; message: string }>) =>
     async (c: Context) => {
-      const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
-      const path = String(b.path ?? "").trim();
-      if (!path) return jsonError(c, "BAD_REQUEST", "path is required");
-      const r = await handler(path);
+      const p = await parseBody(c, RepoPathSchema);
+      if (!p.ok) return p.res;
+      const r = await handler(p.data.path);
       const status: ContentfulStatusCode = r.ok
         ? 201
         : r.code === "NOT_FOUND" || r.code === "NOT_A_REPO"
@@ -235,13 +246,9 @@ export function createApp(cfg: GitmobConfig): Hono {
 
   // Persist a drag-to-reorder of the repo list. Body: { order: string[] } (repo ids).
   app.post("/api/repos/reorder", async (c) => {
-    const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
-    const order = b.order;
-    if (!Array.isArray(order) || order.some((x) => typeof x !== "string")) {
-      return jsonError(c, "BAD_REQUEST", "order must be an array of repo ids");
-    }
-    if (order.length > 10_000) return jsonError(c, "BAD_REQUEST", "order list too long");
-    reorderRepos(order as string[]);
+    const p = await parseBody(c, ReorderSchema);
+    if (!p.ok) return p.res;
+    reorderRepos(p.data.order);
     return c.json({ ok: true });
   });
 
@@ -249,27 +256,25 @@ export function createApp(cfg: GitmobConfig): Hono {
   app.get("/api/identities", (c) => c.json({ identities: listIdentities() }));
 
   app.post("/api/identities", async (c) => {
-    const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
-    const displayName = String(b.displayName ?? "").trim();
-    const gitUsername = String(b.gitUsername ?? "").trim();
-    const gitEmail = String(b.gitEmail ?? "").trim();
-    if (!displayName || !gitUsername || !gitEmail) {
-      return jsonError(c, "BAD_REQUEST", "displayName, gitUsername and gitEmail are required");
-    }
-    const sshKeyPath = b.sshKeyPath ? String(b.sshKeyPath) : null;
-    const id = createIdentity({ displayName, gitUsername, gitEmail, sshKeyPath });
+    const p = await parseBody(c, IdentityCreateSchema);
+    if (!p.ok) return p.res;
+    const { displayName, gitUsername, gitEmail } = p.data;
+    const id = createIdentity({ displayName, gitUsername, gitEmail, sshKeyPath: p.data.sshKeyPath || null });
     return c.json({ identity: getIdentity(id) }, 201);
   });
 
   app.put("/api/identities/:id", async (c) => {
     const id = c.req.param("id");
     if (!getIdentity(id)) return jsonError(c, "NOT_FOUND", "identity not found");
-    const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+    const p = await parseBody(c, IdentityUpdateSchema);
+    if (!p.ok) return p.res;
+    const b = p.data;
     updateIdentity(id, {
-      displayName: b.displayName != null ? String(b.displayName) : undefined,
-      gitUsername: b.gitUsername != null ? String(b.gitUsername) : undefined,
-      gitEmail: b.gitEmail != null ? String(b.gitEmail) : undefined,
-      sshKeyPath: b.sshKeyPath === undefined ? undefined : b.sshKeyPath ? String(b.sshKeyPath) : null,
+      displayName: b.displayName,
+      gitUsername: b.gitUsername,
+      gitEmail: b.gitEmail,
+      // undefined = leave unchanged; null or "" = clear it.
+      sshKeyPath: b.sshKeyPath === undefined ? undefined : b.sshKeyPath || null,
     });
     return c.json({ identity: getIdentity(id) });
   });
@@ -283,8 +288,9 @@ export function createApp(cfg: GitmobConfig): Hono {
   app.post("/api/repos/:id/identity", async (c) => {
     const repoId = c.req.param("id");
     if (!getRepo(repoId)) return jsonError(c, "NOT_FOUND", "repo not found");
-    const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
-    const identityId = b.identityId == null ? null : String(b.identityId);
+    const p = await parseBody(c, AssignIdentitySchema);
+    if (!p.ok) return p.res;
+    const identityId = p.data.identityId || null;
     if (identityId && !getIdentity(identityId)) return jsonError(c, "NOT_FOUND", "identity not found");
     setRepoIdentity(repoId, identityId);
     broadcast("repo_identity_changed", { id: repoId, identityId });
@@ -337,10 +343,11 @@ export function createApp(cfg: GitmobConfig): Hono {
   app.post("/api/repos/:id/commit", async (c) => {
     const id = c.req.param("id");
     if (!id) return jsonError(c, "BAD_REQUEST", "missing repo id");
-    const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
-    const message = String(b.message ?? "").trim();
+    const p = await parseBody(c, CommitSchema);
+    if (!p.ok) return p.res;
+    const message = (p.data.message ?? "").trim();
     if (!message) return jsonError(c, "NO_MESSAGE", "commit message required");
-    const r = await commitRepo(id, message, b.amend === true);
+    const r = await commitRepo(id, message, p.data.amend === true);
     return c.json(r, r.ok ? 200 : statusForCode(r.code));
   });
 
@@ -441,14 +448,12 @@ export function createApp(cfg: GitmobConfig): Hono {
 
   // Update commit style and/or the default provider.
   app.put("/api/ai/settings", async (c) => {
-    const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+    const p = await parseBody(c, AiSettingsSchema);
+    if (!p.ok) return p.res;
     const ai = ensureAi();
-    if (b.style != null) {
-      const style = String(b.style) as CommitStyle;
-      if (["conventional", "concise", "detailed"].includes(style)) ai.style = style;
-    }
-    if (b.defaultProvider !== undefined) {
-      const dp = b.defaultProvider == null ? undefined : (String(b.defaultProvider) as AiProviderId);
+    if (p.data.style != null) ai.style = p.data.style;
+    if (p.data.defaultProvider !== undefined) {
+      const dp = p.data.defaultProvider == null ? undefined : (p.data.defaultProvider as AiProviderId);
       if (dp !== undefined && !resolveApiKey(cfg, dp)) {
         return jsonError(c, "NOT_CONFIGURED", `${dp} has no key`);
       }
@@ -462,8 +467,9 @@ export function createApp(cfg: GitmobConfig): Hono {
   app.post("/api/ai/providers/:provider/connect", async (c) => {
     const provider = parseProvider(c);
     if (!provider) return jsonError(c, "BAD_PROVIDER", "unknown provider");
-    const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
-    const apiKey = String(b.apiKey ?? "").trim();
+    const p = await parseBody(c, ConnectSchema);
+    if (!p.ok) return p.res;
+    const apiKey = (p.data.apiKey ?? "").trim();
     if (!apiKey) return jsonError(c, "NO_KEY", "API key required");
     try {
       const models = await listModels(provider, apiKey);
@@ -504,11 +510,12 @@ export function createApp(cfg: GitmobConfig): Hono {
     if (!resolveApiKey(cfg, provider)) {
       return jsonError(c, "NOT_CONFIGURED", "connect this provider first", 404);
     }
-    const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+    const p = await parseBody(c, ProviderUpdateSchema);
+    if (!p.ok) return p.res;
     const ai = ensureAi();
     const entry = ai.providers[provider];
-    if (b.model !== undefined && entry) entry.model = b.model == null ? null : String(b.model);
-    if (b.makeDefault) ai.defaultProvider = provider;
+    if (p.data.model !== undefined && entry) entry.model = p.data.model ?? null;
+    if (p.data.makeDefault) ai.defaultProvider = provider;
     saveConfig(cfg);
     return c.json(redactAi(cfg));
   });
@@ -530,8 +537,9 @@ export function createApp(cfg: GitmobConfig): Hono {
   app.post("/api/repos/:id/commit-message", async (c) => {
     const id = c.req.param("id");
     if (!id) return jsonError(c, "BAD_REQUEST", "missing repo id");
-    const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
-    const requested = b.provider == null ? undefined : (String(b.provider) as AiProviderId);
+    const p = await parseBody(c, CommitMessageSchema);
+    if (!p.ok) return p.res;
+    const requested = p.data.provider == null ? undefined : (p.data.provider as AiProviderId);
     const provider = requested ?? effectiveDefaultProvider(cfg);
     if (!provider) return jsonError(c, "NO_AI_PROVIDER", "no AI provider configured");
     const apiKey = resolveApiKey(cfg, provider);

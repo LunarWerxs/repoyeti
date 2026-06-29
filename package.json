@@ -18,7 +18,8 @@
     "hono": "^4.6.14",
     "jose": "^6.2.3",
     "qrcode-terminal": "^0.12.0",
-    "simple-git": "^3.27.0"
+    "simple-git": "^3.27.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/bun": "latest",
