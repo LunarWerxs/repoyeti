@@ -19,7 +19,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "monaco-editor": "^0.55.1",
-    "pinia": "^2.3.0",
+    "pinia": "^3.0.4",
     "qrcode": "^1.5.4",
     "reka-ui": "^2.10.1",
     "tailwind-merge": "^3.6.0",
