@@ -32,6 +32,37 @@ So this is a **cleanup + guardrails + docs** job, not a rescue. ~16,700 LOC acro
 
 ---
 
+## 0b. Progress log (live)
+
+**✅ DONE (committed locally, 2026-06-29 — additive, conflict-free with the live Lore session):**
+A2/A3 package.json metadata (license/repo/author/keywords/engines) · **B2** architectural boundary
+guard + **B6** ApiErrorCode drift guard (`scripts/check-boundaries.ts` + `check-error-codes.ts` under
+`bun run check`, in CI) · **B3** global coverage gate (`scripts/check-coverage.ts`, 80% floor, in CI) ·
+**B4** CI hardening (Bun pinned + dep cache) + **B4b** `release.yml` (tag→binary) · **B5** auto-enable
+`.githooks` via `prepare` · **B7** `.editorconfig` · **D4** `asResult()` dedup (store.ts) · **D5** dead
+`sessions`/`workspaces` tables removed · **E1/E2** detached-HEAD + push-error tests · **E3** SSE/bus tests
+(+ broadcast exception isolation) · **F1** SECURITY.md · **F3** community/issue/PR templates + dependabot.
+
+**✅ ALSO DONE:** **C3** ActionResult/ActionCode moved to contract.ts (+ the `vcs/types ⊥ git-actions`
+boundary is now enforced by the guard).
+
+**↩ NOW UNBLOCKED (the parallel remote-sync session landed; tree is quiet):** C2 finish VCS abstraction ·
+D2 daemon `repoRoute()` wrapper · D4 `src/paths.ts` (isUnder dedup) + `ok()`/`PATCH_CAP` share. ·
+**C1 registerRepo-git-only** — left to the VCS-domain owner (it may be intentionally git-only; a separate
+Lore-clone route exists). C4 (`cloneLoreRepo`) is moot — that session wired it into a route.
+
+**⛔ BLOCKED — needs a new dependency** (shared `bun.lock`; can't add without coordinating): B1
+linter+formatter (Biome) · E6 frontend tests (Vitest).
+
+**⛔ BLOCKED — needs a quiet tree + a visual pass:** D1 decompose `RepoCard.vue` (1,332 lines).
+
+**🧑 NEEDS YOUR DECISION:** A5 README personal-infra fix (is connections.icu public/internal?) · A4
+version bump + CHANGELOG cut · F5 move `MARCHING_ORDERS.md` (your active spec).
+
+**Deferred (heavier/flakier test infra):** E4 tunnel toggle · E5 watcher callback + secrets-without-keychain.
+
+---
+
 ## 1. Workstream A — Release blockers (P0) · ~1–2 hrs total
 
 These must be true before the repo goes public.
