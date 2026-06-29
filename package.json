@@ -3,6 +3,29 @@
   "version": "0.0.1",
   "description": "System-wide remote git manager — a background daemon with a mobile dashboard.",
   "type": "module",
+  "license": "MIT",
+  "author": "L0garithmic <2claude@lunarwerx.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LunarWerxs/gitmob.git"
+  },
+  "homepage": "https://github.com/LunarWerxs/gitmob#readme",
+  "bugs": {
+    "url": "https://github.com/LunarWerxs/gitmob/issues"
+  },
+  "keywords": [
+    "git",
+    "bun",
+    "daemon",
+    "remote",
+    "vcs",
+    "pwa",
+    "self-hosted",
+    "developer-tools"
+  ],
+  "engines": {
+    "bun": ">=1.1.0"
+  },
   "bin": {
     "gitmob": "./src/index.ts"
   },
@@ -12,6 +35,8 @@
     "status": "bun run src/index.ts status",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
+    "test:coverage": "bun test --coverage",
+    "check:codes": "bun run scripts/check-error-codes.ts",
     "build": "bun run scripts/build.ts"
   },
   "dependencies": {

@@ -1,0 +1,28 @@
+name: Feature request
+description: Suggest an idea or improvement for GitMob.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the use case or pain point — not just the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like GitMob to do?
+    validations:
+      required: false
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety considerations
+      description: |
+        GitMob's core invariant is that the daemon never leaves a repo in an unsafe / half-merged
+        state, and never performs irreversible actions from the phone without confirmation. Does
+        your idea fit that? (See docs/FEATURE_GAP_ANALYSIS.md for what's intentionally out of scope.)
+    validations:
+      required: false
