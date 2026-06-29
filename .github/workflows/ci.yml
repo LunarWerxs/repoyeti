@@ -21,7 +21,7 @@ jobs:
           restore-keys: bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
-      - run: bun run check:codes # ApiErrorCode backend↔frontend drift guard
+      - run: bun run check # ApiErrorCode drift guard + architectural boundary guard
       - run: bun test
 
   web:
