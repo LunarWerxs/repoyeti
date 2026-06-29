@@ -30,6 +30,7 @@
     "gitmob": "./src/index.ts"
   },
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks || true",
     "start": "bun run src/index.ts start",
     "dev": "bun run scripts/dev.ts",
     "status": "bun run src/index.ts status",
