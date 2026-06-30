@@ -26,6 +26,7 @@
  *   git stash             → (none)                       → UNSUPPORTED
  */
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { sdkStatus } from "./lore-sdk.ts";
 import { join } from "node:path";
 import type { Identity, RepoStatus } from "../db.ts";
 import type { ChangedFile } from "../status.ts";
@@ -257,19 +258,12 @@ function errorStatus(message: string): RepoStatus {
   };
 }
 
-async function loreReadStatus(absPath: string, _withDiff = false): Promise<RepoStatus> {
-  // NOTE: `--scan` walks the working tree (so external edits show) AND persists dirty flags —
-  // a write. Fine for a spike; the production watcher should debounce / use `--check-dirty` or
-  // the SDK instead of scanning on every poll. ahead/behind don't map cleanly to Lore's
-  // compare-and-swap model yet, so they stay 0.
-  const run = await runLore(absPath, ["status", "--scan"]);
-  if (run.spawnError) return errorStatus("lore CLI not available");
-  if (run.code !== 0) return errorStatus(classifyLore(run).message);
-  const branch = parseBranchFromStatus(run.stdout);
+function statusFrom(branch: string | null, dirty: number): RepoStatus {
+  // ahead/behind don't map cleanly to Lore's compare-and-swap model yet, so they stay 0.
   return {
     branch,
     detached: branch === null,
-    dirty: parseChangedLines(run.stdout).length,
+    dirty,
     ahead: 0,
     behind: 0,
     remote: null,
@@ -280,7 +274,19 @@ async function loreReadStatus(absPath: string, _withDiff = false): Promise<RepoS
   };
 }
 
+async function loreReadStatus(absPath: string, _withDiff = false): Promise<RepoStatus> {
+  // Prefer the structured SDK (drift-proof); fall back to scraping `lore status --scan` text.
+  const s = await sdkStatus(absPath);
+  if (s) return statusFrom(s.branch, s.files.length);
+  const run = await runLore(absPath, ["status", "--scan"]);
+  if (run.spawnError) return errorStatus("lore CLI not available");
+  if (run.code !== 0) return errorStatus(classifyLore(run).message);
+  return statusFrom(parseBranchFromStatus(run.stdout), parseChangedLines(run.stdout).length);
+}
+
 async function loreReadChanges(absPath: string, _withStats = false): Promise<ChangedFile[]> {
+  const s = await sdkStatus(absPath);
+  if (s) return s.files;
   const run = await runLore(absPath, ["status", "--scan"]);
   if (run.spawnError || run.code !== 0) return [];
   return parseChangedLines(run.stdout);

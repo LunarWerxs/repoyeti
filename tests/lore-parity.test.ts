@@ -43,6 +43,15 @@ test.skipIf(!RUN)("lore parity: AI diff · content search · plan input · smart
     expect(reg.repo?.vcs).toBe("lore");
     const id = reg.repo!.id;
 
+    // ── SDK read path: structured status via @lore-vcs/sdk (proves the native binding loads and
+    //    returns typed data — not the CLI text-scrape fallback) ──
+    const { sdkStatus } = await import("../src/vcs/lore-sdk.ts");
+    const sdk = await sdkStatus(proj);
+    expect(sdk).not.toBeNull();
+    expect(sdk?.branch).toBe("main");
+    expect((sdk?.files ?? []).map((f) => f.path).sort()).toEqual(["alpha.txt", "beta.txt"]);
+    expect((sdk?.files ?? []).every((f) => f.status === "A")).toBe(true); // both are new files → ADD
+
     // ── AI commit-diff: whole-tree `lore diff` + status summary ──
     const diff = await collectRepoDiff(id);
     expect(diff.ok).toBe(true);
