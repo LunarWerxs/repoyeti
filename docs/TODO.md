@@ -10,13 +10,13 @@
 > also gate the release). 🤖 = an agent can do it. Each item keeps its original code (`A4`, `C1`, `D1`…)
 > so older cross-references still resolve. Status verified against the tree on **2026-06-30** (HEAD `fddae3b`).
 
-> **▶ RESUME HERE (next session — use ONE chat).** Tree is **clean and `tsc`-green**; the big `src/`
-> reorg + agent surfaces have all **landed** (see the 2026-06-30 wave below). **Per-file-staging WEB UI
-> is now DONE** (commit `876638a` — selection checkboxes in `ChangesTree.vue`, a "Commit selected (N)"
-> bar in `RepoCard.vue`, `api.commitSelected` + store action, a shared `changes-selection.ts` store;
-> verified end-to-end against a live daemon, `vue-tsc` + `i18n-check` green). **Next agent-doable item:
-> `D1`** — decompose `RepoCard.vue` (now ~1,476 lines) into sibling panels → then **`E6`** frontend
-> test infra (⚠️ needs new dev-deps in the shared `bun.lock` — get owner OK first).
+> **▶ RESUME HERE (next session — use ONE chat).** Tree is **clean and `tsc`-green**. Two items landed
+> this session: **per-file-staging WEB UI** (`876638a`) and **`D1` — `RepoCard.vue` split** (`9e36113`:
+> 1,535→1,184 lines; extracted `BranchPanel`/`StashPanel`/`LogPanel` + a shared `repo-feedback.ts`
+> composable; Tag/Remote were already `RepoManage.vue`, FileViewer already global — so those three were
+> D1's real remaining surface). Both verified end-to-end against a live daemon. **Next: Lore feature-
+> parity port** (re-enable AI commit-diff / smart-commit staging / content-search for Lore) → then
+> **`E6`** frontend tests (owner approved Vitest + @vue/test-utils + Playwright on **2026-06-30**).
 >
 > ⚠️ **Run ONE agent session at a time** (the owner's standing rule — item **G**): this cycle two
 > sessions on one tree collided (a refactor landed mid-edit and broke `tsc`); avoid that by working in
@@ -135,11 +135,13 @@ infra decision `A5`, branch protection).
 
 ## 🟡 Big deal — before a polished public launch (P1)
 
-- [ ] **🤖 `D1` — decompose `RepoCard.vue` (~1,382 lines). The #1 remaining maintainability win.** ~8 UI
-  concerns in one file. Extract `BranchPanel` / `StashPanel` / `LogPanel` / `TagPanel` / `RemoteManager` /
-  `FileViewerDrawer` siblings; `RepoCard` becomes a thin composer. Do it incrementally **on `main`** (the
-  owner's work-only-on-main rule; one session at a time). _Note: the **backend** reorg already happened
-  (`daemon.ts`→`src/http/`, `service.ts`→`src/service/*`); `D1` is now the **frontend** counterpart._
+- [x] **🤖 `D1` — DONE** (`9e36113`). `RepoCard.vue` 1,535 → 1,184 lines. Extracted the 3 concerns still
+  inline — `BranchPanel.vue` (switch/create/delete), `StashPanel.vue` (save/pop/drop), `LogPanel.vue`
+  (history + per-commit diff) — plus a shared `@/lib/repo-feedback.ts` composable (`friendly()` +
+  `toastResult()`) so panels don't duplicate the error map. The other proposed panels were already done:
+  **TagPanel + RemoteManager = `RepoManage.vue`**, **FileViewerDrawer = global `FileViewer` in
+  `AppShell.vue`**. All three panels browser-verified end-to-end (history diff, branch create/switch/
+  delete-guard, stash save/pop); `vue-tsc` + `i18n-check` green.
 - [x] **🤖 `E5` — DONE** (see Landed): headless in-memory keychain stub so the migration path runs in CI +
   legacy `"gitmob"`-service rehome coverage.
 - [ ] **🤖 `E6` — frontend tests: currently zero.** Add **Vitest + @vue/test-utils** (pure-lib units, a
