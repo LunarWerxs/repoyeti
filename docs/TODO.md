@@ -10,13 +10,14 @@
 > also gate the release). 🤖 = an agent can do it. Each item keeps its original code (`A4`, `C1`, `D1`…)
 > so older cross-references still resolve. Status verified against the tree on **2026-06-30** (HEAD `fddae3b`).
 
-> **▶ RESUME HERE (next session — use ONE chat).** Tree is **clean and `tsc`-green**. Two items landed
-> this session: **per-file-staging WEB UI** (`876638a`) and **`D1` — `RepoCard.vue` split** (`9e36113`:
-> 1,535→1,184 lines; extracted `BranchPanel`/`StashPanel`/`LogPanel` + a shared `repo-feedback.ts`
-> composable; Tag/Remote were already `RepoManage.vue`, FileViewer already global — so those three were
-> D1's real remaining surface). Both verified end-to-end against a live daemon. **Next: Lore feature-
-> parity port** (re-enable AI commit-diff / smart-commit staging / content-search for Lore) → then
-> **`E6`** frontend tests (owner approved Vitest + @vue/test-utils + Playwright on **2026-06-30**).
+> **▶ RESUME HERE (next session — use ONE chat).** Tree is **clean, `tsc`-green, web build + tests
+> green**. **All agent-doable items are now DONE** — the four that landed this session:
+> **per-file-staging WEB UI** (`876638a`), **`D1` RepoCard split** (`9e36113`), **Lore feature-parity**
+> (was already done — re-verified at runtime, `535c66b`), and **`E6` frontend tests** (`f300e7c`:
+> Vitest 23 tests + 1 Playwright SSE E2E, Vitest wired into CI). **What remains is OWNER-ONLY** (nothing
+> an agent can finish): `A6` live sign-in · `A4` cut `0.1.0` · `A5` README infra decision · branch-protect
+> `main` · confirm MIT · PAT/HTTPS (needs a real private repo + token to test). The "niche / someday"
+> features (git blame, compare-refs, cross-repo search, web-push, commit signing…) are deferred by choice.
 >
 > ⚠️ **Run ONE agent session at a time** (the owner's standing rule — item **G**): this cycle two
 > sessions on one tree collided (a refactor landed mid-edit and broke `tsc`); avoid that by working in
@@ -144,9 +145,14 @@ infra decision `A5`, branch protection).
   delete-guard, stash save/pop); `vue-tsc` + `i18n-check` green.
 - [x] **🤖 `E5` — DONE** (see Landed): headless in-memory keychain stub so the migration path runs in CI +
   legacy `"gitmob"`-service rehome coverage.
-- [ ] **🤖 `E6` — frontend tests: currently zero.** Add **Vitest + @vue/test-utils** (pure-lib units, a
-  store smoke test, a `SmartCommitPlan.vue` render) + one Playwright E2E of the SSE flow.
-  ⛔ *Needs new dev-deps in the shared `bun.lock` — coordinate before adding.*
+- [x] **🤖 `E6` — DONE** (`f300e7c`). Owner approved the dev-deps (2026-06-30). **Vitest +
+  @vue/test-utils + happy-dom**: 23 tests / 5 files — `buildChangeTree`, `diffstat`, the
+  `changes-selection` store (in a real setup context), a `DiffStat.vue` render, and a Pinia store
+  smoke (mocked-fetch `loadChanges`). **Playwright**: one SSE-flow E2E (`test/e2e/sse.spec.ts`) —
+  dashboard reaches "Connected — live updates" + renders the repo count; verified locally (1 pass).
+  Vitest is wired into the web CI job; the E2E is local-only (needs a live daemon + browser). _(Used
+  `DiffStat.vue` for the component render instead of `SmartCommitPlan.vue` — the latter pulls
+  drag-and-drop + the full store, too heavy/fragile for a first render smoke.)_
 - [x] **🤖 `F2` — DONE** (see Landed): loud `isRemoteRequest()` code comment + a README note on the
   Cloudflare-header (local-vs-remote) auth assumption behind a non-Cloudflare proxy.
 - [x] **🤖 `F6` — DONE** (see Landed): card header → `role=button` + keyboard, status chips got
