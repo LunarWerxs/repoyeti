@@ -371,11 +371,31 @@ export function handleLogoutAll(c: Context): Response {
   return c.json({ ok: true });
 }
 
+/**
+ * OPTIONAL API Bearer token check. Validates `Authorization: Bearer <token>` against the owner's
+ * minted `cfg.apiToken`, constant-time. OFF BY DEFAULT: when `cfg.apiToken` is unset this ALWAYS
+ * returns false — so an unconfigured daemon never matches a bearer header and auth behaves exactly
+ * as OIDC-only (zero behavior change). The token is a separate, LOCAL credential (never touches
+ * connections.icu); it lets a remote/headless agent authenticate over the tunnel.
+ */
+export function validBearerToken(c: Context, cfg: RepoYetiConfig): boolean {
+  const header = c.req.header("authorization");
+  if (!header || !header.startsWith("Bearer ")) return false;
+  const presented = header.slice("Bearer ".length);
+  // UNSET ⇒ never matches ⇒ no behavior change.
+  if (!cfg.apiToken) return false;
+  // timingSafeEqual throws on a length mismatch, so length-guard first (a length-only side channel
+  // is acceptable here, and unsign() in this file uses the same pattern). Compare over UTF-8 bytes.
+  if (Buffer.byteLength(presented) !== Buffer.byteLength(cfg.apiToken)) return false;
+  return timingSafeEqual(Buffer.from(presented), Buffer.from(cfg.apiToken));
+}
+
 /** Middleware gating /api/*. The invariants:
  *  - No OIDC client at all (bare test configs) → fully open.
- *  - A request over the tunnel ALWAYS requires a signed-in owner, in any mode.
+ *  - A request over the tunnel ALWAYS requires a signed-in owner (or a valid API Bearer token),
+ *    in any mode.
  *  - A local (loopback) request: open in "local" mode; in "remote" mode it needs either an
- *    owner session or the local bypass ("Continue local for now").
+ *    owner session, the local bypass ("Continue local for now"), or a valid API Bearer token.
  *  Public endpoints (health + the status probes the gate itself relies on) always pass. */
 export function authMiddleware(cfg: RepoYetiConfig) {
   return async (c: Context, next: () => Promise<void>): Promise<Response | void> => {
@@ -395,13 +415,13 @@ export function authMiddleware(cfg: RepoYetiConfig) {
     }
 
     if (isRemoteRequest(c)) {
-      // Over-the-tunnel: owner session required, no exceptions.
-      if (!readSession(c, cfg.oauth!)) return c.body(null, 401);
+      // Over-the-tunnel: owner session required (or a valid API Bearer token, when configured).
+      if (!readSession(c, cfg.oauth!) && !validBearerToken(c, cfg)) return c.body(null, 401);
       return next();
     }
     // Local request.
     if (accessMode(cfg) !== "remote") return next(); // local mode → open on this machine
-    if (readSession(c, cfg.oauth!) || hasLocalBypass(c)) return next();
+    if (readSession(c, cfg.oauth!) || hasLocalBypass(c) || validBearerToken(c, cfg)) return next();
     return c.body(null, 401);
   };
 }

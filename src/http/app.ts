@@ -20,6 +20,7 @@ import {
 } from "../remote-sync.ts";
 import * as health from "./routes/health.ts";
 import * as auth from "./routes/auth.ts";
+import * as token from "./routes/token.ts";
 import * as mode from "./routes/mode.ts";
 import * as repos from "./routes/repos.ts";
 import * as roots from "./routes/roots.ts";
@@ -65,6 +66,7 @@ export function createApp(cfg: RepoYetiConfig): Hono {
   // Register every route module, preserving the original route registration order.
   health.register(app, deps);
   auth.register(app, deps);
+  token.register(app, deps);
   mode.register(app, deps);
   repos.register(app, deps);
   roots.register(app, deps);

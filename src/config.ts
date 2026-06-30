@@ -17,6 +17,7 @@ import {
   aiKeyName,
   OAUTH_CLIENT_SECRET,
   TUNNEL_TOKEN,
+  API_TOKEN,
 } from "./secrets.ts";
 
 export const VERSION = "0.1.0";
@@ -228,6 +229,16 @@ export interface RepoYetiConfig {
   tunnel?: TunnelConfig;
   /** Bring-your-own-key AI config (optional). */
   ai?: AiConfig;
+  /**
+   * OPTIONAL, owner-minted API Bearer token (off by default). When present, a request carrying
+   * `Authorization: Bearer <token>` passes the /api/* gate just like an owner session — so a
+   * remote/headless agent can authenticate over the tunnel without a browser sign-in. It's a
+   * separate, LOCAL credential (minted via POST /api/auth/token; never touches connections.icu).
+   * Absent ⇒ auth behaves EXACTLY as OIDC-only (zero behavior change). Like the tunnel token, the
+   * durable bytes live in the OS keychain (see secrets.ts API_TOKEN) — this in-memory slot is
+   * hydrated at boot by `hydrateSecrets()` and stripped from config.json by `saveConfig()`.
+   */
+  apiToken?: string;
 }
 
 /** The redacted AI view safe to send to any client — keys are dropped entirely. */
@@ -472,6 +483,7 @@ function stripSecretsForDisk(cfg: RepoYetiConfig): RepoYetiConfig {
   }
   if (clone.oauth) delete clone.oauth.clientSecret;
   if (clone.tunnel) delete clone.tunnel.token;
+  delete clone.apiToken;
   return clone;
 }
 
@@ -533,6 +545,15 @@ export async function hydrateSecrets(cfg: RepoYetiConfig): Promise<void> {
       const t = await getSecret(TUNNEL_TOKEN);
       if (t) cfg.tunnel.token = t;
     }
+  }
+
+  // Optional API Bearer token (off by default). Mirror the tunnel-token hydration: a legacy
+  // plaintext token on disk gets moved into the keychain (then stripped), else hydrate from it.
+  if (cfg.apiToken) {
+    if (await setSecret(API_TOKEN, cfg.apiToken)) migrated = true;
+  } else {
+    const t = await getSecret(API_TOKEN);
+    if (t) cfg.apiToken = t;
   }
 
   // Re-persist so the now-migrated plaintext secrets are stripped from config.json.

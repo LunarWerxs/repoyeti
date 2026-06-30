@@ -9,6 +9,7 @@
 import { VERSION } from "../config.ts";
 import { start, addRootCmd, statusCmd } from "./lifecycle.ts";
 import { runGitVerb } from "./git.ts";
+import { runTokenVerb } from "./token.ts";
 import { runStdioMcp } from "../mcp/stdio.ts";
 
 /** Verbs that drive a running daemon over HTTP (src/cli/git.ts). `status` is handled separately
@@ -43,6 +44,10 @@ export async function main(argv: string[]): Promise<void> {
       // git verb that asks the running daemon for that repo's state.
       if (argv[1]) await runGitVerb("status", argv.slice(1));
       else statusCmd();
+      break;
+    case "token":
+      // Manage the optional API Bearer token (new / revoke / show) on the running daemon.
+      await runTokenVerb(argv[1] ?? "show");
       break;
     case "mcp":
       // Run an MCP (stdio) server — what an AI agent (Claude Desktop/Code, Cursor) spawns. It
@@ -85,6 +90,7 @@ Drive a running daemon:
   repoyeti drift                                            List repos ahead/behind their remote
   repoyeti stash <repo> [list|pop|drop]                    Stash (no sub = save)
   repoyeti push|pull|fetch <repo>                          Sync with the remote
+  repoyeti token [new|revoke|show]                         Manage the optional API Bearer token
   repoyeti mcp                                              Run an MCP server (stdio) for AI agents
 `);
 }
