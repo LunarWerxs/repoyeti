@@ -48,6 +48,11 @@ test("getCommit returns a commit's changed files + bounded diff", async () => {
     expect(garbage.message).toContain("invalid");
   } finally {
     stopWatching();
-    rmSync(dir, { recursive: true, force: true });
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Windows may still hold the fs.watch handle for a beat after stopWatching — temp-dir
+      // cleanup is best-effort (the OS reclaims tmp anyway); a locked dir must not fail the test.
+    }
   }
 });
