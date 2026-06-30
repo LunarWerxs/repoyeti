@@ -40,9 +40,9 @@ already set in AEGIS via the vault. No write was made; the only unproven step is
 with the daemon running (owner step). (Key is now stored in gitignored `.env` as `CONNECTIONS_API_KEY`.)
 
 **Frontend pass — in progress** (dev env stood up: daemon on `:7171` + Vite + `loreserver`, verified via
-browser preview tools). **toast-undo DONE & verified** (hide/pin/star → Undo action restores). Remaining:
-AI-style picker, tunnel-URL UI, Lore servers UI, `F6` a11y, then `D1` RepoCard split (biggest), + the UI
-halves of per-file staging & commit-detail diff.
+browser preview tools). **DONE & browser-verified:** toast-undo (hide/pin/star → Undo restores) ·
+AI-style picker (Settings → AI; change → daemon persists `style`). Remaining: tunnel-URL UI, Lore servers
+UI, `F6` a11y, then `D1` RepoCard split (biggest), + the UI halves of per-file staging & commit-detail diff.
 
 **Still open:**
 - **`E6`** frontend test infra (Vitest + Playwright) — adds dev-deps to the shared `bun.lock`.
