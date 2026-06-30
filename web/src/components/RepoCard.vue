@@ -97,9 +97,10 @@ const isLore = computed(() => props.repo.vcs === "lore");
 const hasUpstream = computed(() => isLore.value || hasRemote.value);
 // "Pull" for git; "Sync" for a centralized backend (Lore), where pull maps to `lore sync`.
 const pullLabel = computed(() => (caps.value.fetch ? t("repo.actions.pull") : t("repo.actions.sync")));
-// AI commit message + smart-commit read a git diff, so they're git-only until ported — hide
-// them on Lore repos rather than show dead buttons.
-const aiHere = computed(() => store.aiEnabled && !isLore.value);
+// AI commit message + smart-commit are now VCS-agnostic (the daemon's VcsBackend collects the
+// diff / stages groups via `lore diff` / `lore stage`+`lore commit` for Lore), so they're shown
+// whenever AI is enabled, on git and Lore alike.
+const aiHere = computed(() => store.aiEnabled);
 const busyAction = computed(() => store.busy[props.repo.id]);
 const anyBusy = computed(() => !!busyAction.value);
 const isClean = computed(

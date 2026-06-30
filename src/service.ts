@@ -10,7 +10,7 @@ import { existsSync, lstatSync, mkdirSync, realpathSync, renameSync, unlinkSync 
 import { resolve, join, basename, dirname } from "node:path";
 import { pathWithin } from "./paths.ts";
 import { enqueue } from "./opqueue.ts";
-import { readStatus, readChanges, type ChangedFile } from "./status.ts";
+import type { ChangedFile } from "./status.ts";
 import { diffStatsEnabled } from "./diffstat.ts";
 import { broadcast } from "./bus.ts";
 import { getRepo, getRepos, getWatchableRepos, getIdentity, setRepoStatus, upsertRepo, setRepoOrder, deleteRepos } from "./db.ts";
@@ -21,23 +21,17 @@ import { backendFor, detectVcs } from "./vcs/index.ts";
 import { loreClone } from "./vcs/lore.ts";
 import type { VcsBackend } from "./vcs/types.ts";
 import {
-  gitPullFfOnly,
-  gitPush,
   gitClone,
   gitRemoteSet,
   gitRemoteRemove,
   gitTagCreate,
-  collectCommitDiff,
-  collectPathsDiff,
   collectCommitPlanInput,
-  gitCommitGroups,
-  grepChangedContent,
   type ActionResult,
   type ActionCode,
   type CommitGroupSpec,
   type CommitGroupResult,
 } from "./git-actions.ts";
-import type { CommitPlanInput } from "./ai.ts";
+import type { CommitPlanInput, PlanInputFile } from "./ai.ts";
 import { readTags, type BranchList, type LogResult, type StashList, type TagList } from "./inspect.ts";
 import { watchRepo, type WatchHandle } from "./watcher.ts";
 import type { Identity, RepoView } from "./db.ts";
@@ -481,12 +475,11 @@ export async function searchChangedContent(repoId: string, query: string): Promi
   if (!repo) return { ok: false, code: "NOT_FOUND", message: "repo not found" };
   const needle = query.trim();
   if (needle.length < MIN_CONTENT_SEARCH) return { ok: true, code: "OK", paths: [] };
-  // Content search uses `git grep`; not wired for non-git backends (Lore) yet → no matches.
-  if (repo.vcs !== "git") return { ok: true, code: "OK", paths: [] };
+  const backend = backendFor(repo.vcs);
   try {
-    const changed = await readChanges(repo.absPath, false);
+    const changed = await backend.readChanges(repo.absPath, false);
     if (changed.length === 0) return { ok: true, code: "OK", paths: [] };
-    const paths = await grepChangedContent(repo.absPath, needle, changed.map((f) => f.path));
+    const paths = await backend.searchContent(repo.absPath, needle, changed.map((f) => f.path));
     return { ok: true, code: "OK", paths };
   } catch (e) {
     return { ok: false, code: "ERROR", message: e instanceof Error ? e.message : String(e) };
@@ -894,14 +887,15 @@ export async function collectRepoDiff(repoId: string): Promise<DiffResult> {
   const repo = getRepo(repoId);
   if (!repo) return { ok: false, code: "NOT_FOUND", message: "repo not found" };
   if (repo.isSubmodule) return { ok: false, code: "ERROR", message: "submodule worktree is not actionable" };
+  const backend = backendFor(repo.vcs);
   return enqueue(repoId, async () => {
-    // C5: readStatus takes the read-gate but is NOT itself enqueued (it's a bare git read), so
-    // calling it inside this op-queue slot cannot deadlock. It does hold the op slot while
-    // awaiting a read slot — intentional, so the status check + diff are one consistent snapshot.
-    const st = await readStatus(repo.absPath);
+    // C5: the backend's readStatus takes the read-gate (git) but is NOT itself enqueued, so calling
+    // it inside this op-queue slot cannot deadlock. It holds the op slot while awaiting a read slot —
+    // intentional, so the status check + diff are one consistent snapshot.
+    const st = await backend.readStatus(repo.absPath);
     if (st.error) return { ok: false, code: "ERROR" as const, message: st.error };
     if (st.dirty === 0) return { ok: false, code: "NOTHING_TO_COMMIT" as const, message: "nothing to commit" };
-    const diff = await collectCommitDiff(repo.absPath);
+    const diff = await backend.collectAiDiff(repo.absPath);
     return { ok: true, code: "OK" as const, diff };
   });
 }
@@ -916,8 +910,9 @@ export async function collectRepoPathsDiff(repoId: string, paths: string[]): Pro
   if (!repo) return { ok: false, code: "NOT_FOUND", message: "repo not found" };
   if (repo.isSubmodule) return { ok: false, code: "ERROR", message: "submodule worktree is not actionable" };
   if (paths.length === 0) return { ok: false, code: "NOTHING_TO_COMMIT", message: "no files selected" };
+  const backend = backendFor(repo.vcs);
   return enqueue(repoId, async () => {
-    const diff = await collectPathsDiff(repo.absPath, paths);
+    const diff = await backend.collectAiDiff(repo.absPath, paths);
     return { ok: true, code: "OK" as const, diff };
   });
 }
@@ -940,16 +935,34 @@ export async function planCommitInput(repoId: string): Promise<PlanInputResult> 
   const repo = getRepo(repoId);
   if (!repo) return { ok: false, code: "NOT_FOUND", message: "repo not found" };
   if (repo.isSubmodule) return { ok: false, code: "ERROR", message: "submodule worktree is not actionable" };
+  const backend = backendFor(repo.vcs);
   return enqueue(repoId, async () => {
-    // C5: readStatus takes the read-gate but is NOT itself enqueued (bare git read), so calling it
-    // inside this op-queue slot can't deadlock. It holds the op slot while awaiting a read slot —
-    // intentional, so the status check + plan input are one consistent snapshot.
-    const st = await readStatus(repo.absPath);
+    // C5: the backend's readStatus takes the read-gate (git) but is NOT itself enqueued, so calling
+    // it inside this op-queue slot can't deadlock — intentional, so status + plan input are one snapshot.
+    const st = await backend.readStatus(repo.absPath);
     if (st.error) return { ok: false, code: "ERROR" as const, message: st.error };
     if (st.dirty === 0) return { ok: false, code: "NOTHING_TO_COMMIT" as const, message: "nothing to commit" };
-    const input = await collectCommitPlanInput(repo.absPath);
+    const input = await planInputFor(backend, repo.absPath);
     return { ok: true, code: "OK" as const, input };
   });
+}
+
+/** AI smart-commit plan input. Git uses the rich collector (folds noisy files, `-U0`, binary
+ *  detection); other backends (Lore) build it from the changed-file list + the backend's AI diff —
+ *  the file list drives grouping, the diff carries the textual context. */
+async function planInputFor(backend: VcsBackend, absPath: string): Promise<CommitPlanInput> {
+  if (backend.kind === "git") return collectCommitPlanInput(absPath);
+  const changed = await backend.readChanges(absPath, true);
+  const diff = await backend.collectAiDiff(absPath);
+  const files: PlanInputFile[] = changed.map((f) => ({
+    path: f.path,
+    status: f.status,
+    ...(f.from ? { from: f.from } : {}),
+    additions: f.stat?.addedLines ?? 0,
+    removals: f.stat?.removedLines ?? 0,
+    binary: false,
+  }));
+  return { files, diff, truncated: false };
 }
 
 export interface SmartCommitOutcome {
@@ -990,10 +1003,11 @@ export async function smartCommitRepo(
     return { ok: false, code: "SUBMODULE_NOT_ACTIONABLE", message: "submodule worktree is not actionable", repoId };
   if (commits.length === 0) return { ok: false, code: "EMPTY_PLAN", message: "no commits in the plan", repoId };
   const identity = resolveRepoIdentity(repo);
+  const backend = backendFor(repo.vcs);
 
   const outcome = await enqueue(repoId, async (): Promise<Omit<SmartCommitOutcome, "repoId">> => {
     // Validate against the CURRENT tree (the plan may have been built minutes ago).
-    const fresh = await readChanges(repo.absPath, false);
+    const fresh = await backend.readChanges(repo.absPath, false);
     const changedSet = new Set(fresh.map((f) => f.path));
     const renameFrom = new Map<string, string>();
     for (const f of fresh) if (f.from) renameFrom.set(f.path, f.from);
@@ -1018,7 +1032,7 @@ export async function smartCommitRepo(
       specs.push({ message: c.message, paths: expanded });
     }
 
-    const res = await gitCommitGroups(repo.absPath, identity, specs);
+    const res = await backend.commitGroups(repo.absPath, identity, specs);
     const base: Omit<SmartCommitOutcome, "repoId"> = {
       ok: res.ok,
       code: res.code,
@@ -1029,8 +1043,8 @@ export async function smartCommitRepo(
     if (!res.ok || !sync) return base;
 
     // Post-commit sync (mirrors the UI's "commit & sync"): pull --ff-only, then push.
-    const pull = await gitPullFfOnly(repo.absPath, identity);
-    const push = await gitPush(repo.absPath, identity);
+    const pull = await backend.pull(repo.absPath, identity);
+    const push = await backend.push(repo.absPath, identity);
     if (push.ok) return { ...base, synced: true };
     return { ...base, synced: false, syncCode: push.code, syncMessage: push.message || pull.message };
   });

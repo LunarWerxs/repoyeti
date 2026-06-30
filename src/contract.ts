@@ -89,6 +89,36 @@ export const fail = (code: ActionCode, message: string): ActionResult => ({ ok: 
  *  huge file" case so neither backend ever buffers an unbounded patch. Shared by git + Lore. */
 export const PATCH_CAP = 1_000_000;
 
+// ── smart commit: split the working tree into several scoped commits ─────────────────
+// These shapes live here (the contract layer) so they're part of the VcsBackend contract that
+// both backends implement, without either backend's impl owning them.
+
+/** One proposed commit to execute: a message + the exact paths to stage for it. Paths are
+ *  already expanded by the caller to include a rename's old path (see service.smartCommitRepo). */
+export interface CommitGroupSpec {
+  message: string;
+  paths: string[];
+}
+
+/** Per-group outcome, in plan order. */
+export interface CommitGroupResult {
+  ok: boolean;
+  code: ActionCode;
+  /** First line of the message (a label for the UI). */
+  subject: string;
+  message?: string;
+}
+
+export interface CommitGroupsResult {
+  ok: boolean;
+  code: ActionCode;
+  message: string;
+  /** Outcome of each group we attempted, in order. */
+  committed: CommitGroupResult[];
+  /** Groups never attempted because an earlier one failed (their changes stay in the tree). */
+  remaining: number;
+}
+
 /** Canonical HTTP status for a code. Routes can still override per call site. */
 export function statusForCode(code: ApiCode): ContentfulStatusCode {
   switch (code) {

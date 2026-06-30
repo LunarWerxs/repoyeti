@@ -18,8 +18,17 @@ import type { CommitPlanInput, PlanInputFile } from "./ai.ts";
 // The result envelope + code now live in contract.ts (the contract layer) so the VCS
 // abstraction can depend on them without importing this git module. Re-exported here for
 // back-compat — service.ts and the vcs backends still import them from git-actions.ts.
-import { ok, fail, PATCH_CAP, type ActionResult, type ActionCode } from "./contract.ts";
-export type { ActionResult, ActionCode };
+import {
+  ok,
+  fail,
+  PATCH_CAP,
+  type ActionResult,
+  type ActionCode,
+  type CommitGroupSpec,
+  type CommitGroupResult,
+  type CommitGroupsResult,
+} from "./contract.ts";
+export type { ActionResult, ActionCode, CommitGroupSpec, CommitGroupResult, CommitGroupsResult };
 
 /** Map a thrown git error (simple-git surfaces stderr in the message) to a code. */
 function classify(err: unknown): ActionResult {
@@ -133,32 +142,9 @@ export async function gitCommitAll(
 }
 
 // ── smart commit: split the working tree into several scoped commits ─────────────────
-
-/** One proposed commit to execute: a message + the exact paths to stage for it. Paths are
- *  already expanded by the caller to include a rename's old path (see service.smartCommitRepo). */
-export interface CommitGroupSpec {
-  message: string;
-  paths: string[];
-}
-
-/** Per-group outcome, in plan order. */
-export interface CommitGroupResult {
-  ok: boolean;
-  code: ActionCode;
-  /** First line of the message (a label for the UI). */
-  subject: string;
-  message?: string;
-}
-
-export interface CommitGroupsResult {
-  ok: boolean;
-  code: ActionCode;
-  message: string;
-  /** Outcome of each group we attempted, in order. */
-  committed: CommitGroupResult[];
-  /** Groups never attempted because an earlier one failed (their changes stay in the tree). */
-  remaining: number;
-}
+// CommitGroupSpec / CommitGroupResult / CommitGroupsResult now live in contract.ts (the backend
+// contract); they're imported + re-exported above so existing `from "./git-actions.ts"` callers
+// keep working.
 
 const subjectOf = (message: string): string => (message.split("\n")[0] ?? "").slice(0, 120);
 

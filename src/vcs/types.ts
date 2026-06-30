@@ -14,7 +14,7 @@
  */
 import type { Identity, RepoStatus } from "../db.ts";
 import type { ChangedFile } from "../status.ts";
-import type { ActionResult } from "../contract.ts";
+import type { ActionResult, CommitGroupSpec, CommitGroupsResult } from "../contract.ts";
 import type { BranchList, LogResult, StashList } from "../inspect.ts";
 
 export type VcsKind = "git" | "lore";
@@ -97,4 +97,14 @@ export interface VcsBackend {
   /** Discard ONE file's working-tree changes — restore it to its committed/absent state.
    *  DESTRUCTIVE (the UI gates it behind an explicit confirm); never touches HEAD. */
   discardFile(absPath: string, relPath: string): Promise<ActionResult>;
+
+  // ── AI commit-diff · smart-commit grouping · content search ──
+  /** A compact, bounded working-tree diff snapshot for an AI commit-message/plan prompt.
+   *  `paths` scopes it to a subset (smart-commit per-group regenerate); omitted = whole tree. */
+  collectAiDiff(absPath: string, paths?: string[]): Promise<string>;
+  /** Execute a multi-commit plan: stage each group's files in isolation and commit it, in order. */
+  commitGroups(absPath: string, identity: Identity | null, groups: CommitGroupSpec[]): Promise<CommitGroupsResult>;
+  /** Of `paths` (the changed-file set), the ones whose working-tree content contains `needle`
+   *  (literal, case-insensitive). Read-only. */
+  searchContent(absPath: string, needle: string, paths: string[]): Promise<string[]>;
 }

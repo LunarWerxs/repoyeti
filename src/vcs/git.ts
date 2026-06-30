@@ -24,6 +24,10 @@ import {
   gitStashDrop,
   fileDiffPatch,
   gitDiscardFile,
+  collectCommitDiff,
+  collectPathsDiff,
+  gitCommitGroups,
+  grepChangedContent,
 } from "../git-actions.ts";
 import { readBranches, readLog, readStashes } from "../inspect.ts";
 import type { VcsBackend, FilePatchResult } from "./types.ts";
@@ -64,4 +68,9 @@ export const gitBackend: VcsBackend = {
     }
   },
   discardFile: gitDiscardFile,
+
+  collectAiDiff: (absPath, paths) =>
+    paths && paths.length ? collectPathsDiff(absPath, paths) : collectCommitDiff(absPath),
+  commitGroups: gitCommitGroups,
+  searchContent: grepChangedContent,
 };

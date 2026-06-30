@@ -25,11 +25,19 @@
  *   git fetch             → (none; Lore is centralized) → fetch() is a benign no-op
  *   git stash             → (none)                       → UNSUPPORTED
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Identity, RepoStatus } from "../db.ts";
 import type { ChangedFile } from "../status.ts";
-import { ok, fail, PATCH_CAP, type ActionResult } from "../contract.ts";
+import {
+  ok,
+  fail,
+  PATCH_CAP,
+  type ActionResult,
+  type CommitGroupSpec,
+  type CommitGroupResult,
+  type CommitGroupsResult,
+} from "../contract.ts";
 import type { BranchList, LogResult, StashList } from "../inspect.ts";
 import type { VcsBackend } from "./types.ts";
 
@@ -441,6 +449,89 @@ export async function loreClone(
   return { ok: true };
 }
 
+// ── AI commit-diff · smart-commit grouping · content search (Lore) ────────────────────
+
+/** Bounded working-tree diff snapshot for an AI prompt — the Lore analogue of
+ *  git-actions.collectCommitDiff/collectPathsDiff. `lore status --scan` gives the changed-file
+ *  list (so untracked names show) and `lore diff [paths]` the textual diff. `paths` scopes it to a
+ *  subset (smart-commit per-group regenerate); omitted = whole tree. */
+const LORE_DIFF_CAP = 24_000;
+export async function loreCollectDiff(absPath: string, paths?: string[]): Promise<string> {
+  const statusRun = await runLore(absPath, ["status", "--scan"]);
+  const files = statusRun.code === 0 ? parseChangedLines(statusRun.stdout) : [];
+  const status = files.length ? files.map((f) => `${f.status} ${f.path}`).join("\n") : "(clean)";
+  const diffRun = await runLore(absPath, paths && paths.length ? ["diff", ...paths] : ["diff"]);
+  const diff = diffRun.code === 0 ? diffRun.stdout.trim() : "";
+  let combined = `# lore status\n${status}\n\n# lore diff\n${diff || "(no textual diff — new/untracked files only)"}`;
+  if (combined.length > LORE_DIFF_CAP) combined = `${combined.slice(0, LORE_DIFF_CAP)}\n…[truncated]`;
+  return combined;
+}
+
+const loreSubjectOf = (message: string): string => (message.split("\n")[0] ?? "").slice(0, 120);
+
+/** Execute a smart-commit plan on a Lore repo: stage each group's paths and commit it, in order.
+ *  `lore stage <paths>` stages exactly those paths and the commit captures only the staged set,
+ *  clearing staging — so groups stay isolated WITHOUT a git-style `reset` (Lore has none). Stops on
+ *  the first failure and reports a partial result; the remaining groups' changes stay safely in the
+ *  tree. Runs inside one op-queue slot (the service wrapper enqueues once and refreshes after). */
+export async function loreCommitGroups(
+  absPath: string,
+  identity: Identity | null,
+  groups: CommitGroupSpec[],
+): Promise<CommitGroupsResult> {
+  const pre = await runLore(absPath, ["status", "--scan"]);
+  if (pre.spawnError)
+    return { ok: false, code: "ERROR", message: "lore CLI not available", committed: [], remaining: groups.length };
+  if (pre.code !== 0) {
+    const c = classifyLore(pre);
+    return { ok: false, code: c.code, message: c.message, committed: [], remaining: groups.length };
+  }
+  if (parseChangedLines(pre.stdout).length === 0)
+    return { ok: false, code: "NOTHING_TO_COMMIT", message: "nothing to commit", committed: [], remaining: groups.length };
+
+  const committed: CommitGroupResult[] = [];
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i]!;
+    const subject = loreSubjectOf(g.message);
+    const staged = await runLore(absPath, ["stage", ...g.paths]);
+    if (staged.spawnError || staged.code !== 0) {
+      const c = classifyLore(staged);
+      committed.push({ ok: false, code: c.code, subject, message: c.message });
+      return { ok: false, code: c.code, message: c.message, committed, remaining: groups.length - i - 1 };
+    }
+    const run = await runLore(absPath, [...loreIdentityArgs(identity), "commit", g.message]);
+    if (run.code !== 0) {
+      const c = classifyLore(run);
+      committed.push({ ok: false, code: c.code, subject, message: c.message });
+      return { ok: false, code: c.code, message: c.message, committed, remaining: groups.length - i - 1 };
+    }
+    committed.push({ ok: true, code: "OK", subject });
+  }
+  const n = committed.length;
+  return { ok: true, code: "OK", message: `committed ${n} change set${n === 1 ? "" : "s"}`, committed, remaining: 0 };
+}
+
+/** Of `paths` (the changed-file set), the ones whose working-tree content contains `needle`
+ *  (literal, case-insensitive). A VCS-agnostic JS scan — Lore has no `git grep`. Skips files that
+ *  are missing/deleted, oversized, or look binary (a NUL byte in the head). */
+const LORE_SEARCH_FILE_CAP = 2_000_000;
+export async function loreSearchContent(absPath: string, needle: string, paths: string[]): Promise<string[]> {
+  const lower = needle.toLowerCase();
+  const hits: string[] = [];
+  for (const rel of paths) {
+    try {
+      const st = statSync(join(absPath, rel));
+      if (!st.isFile() || st.size > LORE_SEARCH_FILE_CAP) continue;
+      const buf = readFileSync(join(absPath, rel));
+      if (buf.subarray(0, 8000).includes(0)) continue; // NUL byte → binary, skip
+      if (buf.toString("utf8").toLowerCase().includes(lower)) hits.push(rel);
+    } catch {
+      /* missing / unreadable (e.g. a deleted file) → skip */
+    }
+  }
+  return hits;
+}
+
 export const loreBackend: VcsBackend = {
   kind: "lore",
   marker: ".lore",
@@ -475,4 +566,8 @@ export const loreBackend: VcsBackend = {
     const lr = await loreDiscardFile(absPath, relPath);
     return lr.ok ? ok("discarded") : fail("DISCARD_FAILED", lr.message ?? "lore reset failed");
   },
+
+  collectAiDiff: loreCollectDiff,
+  commitGroups: loreCommitGroups,
+  searchContent: loreSearchContent,
 };
