@@ -43,8 +43,7 @@ with the daemon running (owner step). (Key is now stored in gitignored `.env` as
 preview tools). **DONE & browser-verified:** toast-undo (hide/pin/star → Undo restores) · AI-style picker
 (Settings → AI; change → daemon persists `style`) · **Lore servers UI** (Settings → "Lore servers" panel
 add/remove → daemon persists; Add-repo → "From Lore" tab cloned `clonetest` from a live server end-to-end).
-**`F6` a11y DONE** (header role=button + keyboard + chip aria-labels, verified). Remaining: tunnel-URL UI (needs a PUT /api/tunnel route), commit-detail diff +
-per-file staging (each needs a backend route), then `D1` RepoCard split (biggest), and `E6` test infra.
+**`F6` a11y DONE** (header role=button + keyboard + chip aria-labels, verified). **commit-detail diff DONE** (tap a History commit → changed files + diff; new readCommit on VcsBackend + route, git verified, Lore degrades gracefully). Remaining: tunnel-URL UI (needs PUT /api/tunnel), per-file staging (needs a route), then `D1` RepoCard split (biggest), and `E6` test infra.
 
 **Still open:**
 - **`E6`** frontend test infra (Vitest + Playwright) — adds dev-deps to the shared `bun.lock`.
