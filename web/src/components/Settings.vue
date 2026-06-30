@@ -80,6 +80,46 @@ async function setAccessMode(toRemote: boolean): Promise<void> {
   }
 }
 
+// ── stable address (named Cloudflare tunnel) ──────────────────────────────────
+// By default the remote URL rotates each restart; a named tunnel (stable hostname + connector
+// token) gives a permanent address. The token is write-only — the daemon never echoes it back,
+// so the field stays blank and an empty submit keeps the saved one.
+const tunnelHost = ref("");
+const tunnelToken = ref("");
+const savingTunnel = ref(false);
+const confirmForgetTunnel = ref(false);
+async function saveTunnel(): Promise<void> {
+  if (savingTunnel.value) return;
+  savingTunnel.value = true;
+  try {
+    const input: { hostname?: string; token?: string } = { hostname: tunnelHost.value.trim() };
+    const tok = tunnelToken.value.trim();
+    if (tok) input.token = tok; // omit when blank → keep the saved token
+    await store.setTunnel(input);
+    tunnelToken.value = "";
+    toast.success(t("settings.tunnelSaved"));
+  } catch (e) {
+    toast.error(e instanceof ApiError ? e.message : t("settings.tunnelSaveFailed"));
+  } finally {
+    savingTunnel.value = false;
+  }
+}
+async function forgetTunnel(): Promise<void> {
+  if (!confirmForgetTunnel.value) {
+    confirmForgetTunnel.value = true; // first click arms the confirm
+    return;
+  }
+  confirmForgetTunnel.value = false;
+  try {
+    await store.setTunnel({ hostname: "", token: "" });
+    tunnelHost.value = "";
+    tunnelToken.value = "";
+    toast.success(t("settings.tunnelForgot"));
+  } catch {
+    toast.error(t("settings.tunnelSaveFailed"));
+  }
+}
+
 // ── sign out everywhere (rotates the daemon signing key) ──────────────────────
 const confirmSignOutAll = ref(false);
 async function signOutAll(): Promise<void> {
@@ -107,6 +147,9 @@ watch(open, (isOpen) => {
   if (isOpen) {
     void store.loadRoots();
     void store.loadServers();
+    // Seed the stable-address field from the live config (the token stays blank — it's write-only).
+    tunnelHost.value = store.tunnelConfig.hostname ?? "";
+    confirmForgetTunnel.value = false;
   }
 });
 async function addRoot(): Promise<void> {
@@ -427,6 +470,55 @@ async function remove(id: AiProviderId): Promise<void> {
                 @update:model-value="(v: boolean) => setAccessMode(v)"
               />
             </label>
+
+            <!-- stable address (named Cloudflare tunnel) — a permanent URL instead of a rotating one -->
+            <div class="flex flex-col gap-2.5 border-t border-border/60 pt-4">
+              <div class="flex flex-col gap-0.5">
+                <span class="text-[12.5px] font-medium text-foreground">{{ $t("settings.tunnelLabel") }}</span>
+                <span class="text-[12px] text-muted-foreground">{{ $t("settings.tunnelHint") }}</span>
+              </div>
+              <p
+                v-if="store.tunnelConfig.named"
+                class="flex items-center gap-1.5 text-[12px] text-success"
+              >
+                <Check :size="13" class="shrink-0" />
+                <span class="min-w-0 break-all">{{ $t("settings.tunnelActive", { host: store.tunnelConfig.hostname }) }}</span>
+              </p>
+              <Input
+                v-model="tunnelHost"
+                class="mono text-[12.5px]"
+                :placeholder="$t('settings.tunnelHostPlaceholder')"
+                :aria-label="$t('settings.tunnelHostLabel')"
+              />
+              <Input
+                v-if="!store.tunnelConfig.tokenFromEnv"
+                v-model="tunnelToken"
+                type="password"
+                class="text-[12.5px]"
+                :placeholder="store.tunnelConfig.hasToken ? $t('settings.tunnelTokenSaved') : $t('settings.tunnelTokenPlaceholder')"
+                :aria-label="$t('settings.tunnelTokenLabel')"
+              />
+              <p v-else class="text-[11.5px] text-muted-foreground">{{ $t("settings.tunnelTokenEnv") }}</p>
+              <div class="flex items-center gap-2">
+                <Button size="sm" :disabled="savingTunnel" @click="saveTunnel">
+                  <Loader2 v-if="savingTunnel" class="animate-spin" />
+                  <Check v-else />
+                  {{ $t("settings.tunnelSave") }}
+                </Button>
+                <Button
+                  v-if="store.tunnelConfig.hostname || store.tunnelConfig.hasToken"
+                  :variant="confirmForgetTunnel ? 'destructive' : 'ghost'"
+                  size="sm"
+                  class="ml-auto"
+                  @click="forgetTunnel"
+                  @blur="confirmForgetTunnel = false"
+                >
+                  <Trash2 />
+                  {{ confirmForgetTunnel ? $t("settings.tunnelForgetConfirm") : $t("settings.tunnelForget") }}
+                </Button>
+              </div>
+            </div>
+
             <!-- sign out everywhere (rotates the signing key → invalidates all devices) -->
             <div v-if="store.authEnforced" class="flex items-center justify-between gap-3">
               <span class="flex flex-col gap-0.5">
