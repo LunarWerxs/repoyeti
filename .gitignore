@@ -26,6 +26,11 @@ desktop.ini
 *.log
 coverage/
 
+# Playwright E2E artifacts (web/) — regenerated per run, never committed
+web/test-results/
+web/playwright-report/
+web/.playwright/
+
 # bundled binaries (fetched per-platform, not committed)
 vendor/cloudflared/
 

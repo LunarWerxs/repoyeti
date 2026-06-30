@@ -49,4 +49,8 @@ jobs:
           restore-keys: bun-web-${{ runner.os }}-
       - run: bun install --frozen-lockfile
       - run: bun run i18n:check # fail on untranslated strings / missing keys / locale parity drift
+      - run: bun run test # Vitest: pure-lib units + component render + store smoke (no server needed)
       - run: bun run build # vue-tsc type-check + production bundle (re-runs i18n:check)
+      # The Playwright SSE E2E (test:e2e) is intentionally NOT in CI — it needs a live daemon + a
+      # registered repo + a browser binary. Run it locally: start the daemon + `bun run dev`, then
+      # `bunx playwright install chromium && bun run test:e2e`.
