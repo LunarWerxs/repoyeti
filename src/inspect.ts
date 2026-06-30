@@ -177,6 +177,97 @@ export async function readLog(absPath: string, limit = LOG_PAGE_DEFAULT, skip = 
   }
 }
 
+/** One changed file in a commit (`git show --name-status`). */
+export interface CommitFile {
+  /** A / M / D / R / C (first letter of the name-status code). */
+  status: string;
+  path: string;
+  /** Rename/copy source path (only for R/C). */
+  from?: string;
+}
+
+/** Full detail for one commit: header + changed-file list + a bounded unified diff. */
+export interface CommitDetail {
+  ok: boolean;
+  code: "OK" | "ERROR";
+  message?: string;
+  hash: string;
+  shortHash: string;
+  subject: string;
+  authorName: string;
+  authorEmail: string;
+  date: number;
+  files: CommitFile[];
+  diff: string;
+  truncated: boolean;
+}
+
+/** ~48 KB of a single commit's patch is plenty for a phone; bound a pathological huge commit. */
+const COMMIT_DIFF_CAP = 48_000;
+
+const emptyCommitDetail = (hash: string, code: "OK" | "ERROR", message?: string): CommitDetail => ({
+  ok: code === "OK",
+  code,
+  message,
+  hash,
+  shortHash: hash.slice(0, 12),
+  subject: "",
+  authorName: "",
+  authorEmail: "",
+  date: 0,
+  files: [],
+  diff: "",
+  truncated: false,
+});
+
+/**
+ * Full detail for ONE commit (the History "tap a commit → see its changes" view): the header
+ * fields, its changed-file list (`--name-status`), and a bounded unified `git show -p`. Read-only,
+ * behind the read-gate. The hash is shape-guarded so no flag/path can sneak through `git show`.
+ */
+export async function readCommit(absPath: string, hash: string): Promise<CommitDetail> {
+  if (!/^[0-9a-fA-F]{4,64}$/.test(hash)) return emptyCommitDetail(hash, "ERROR", "invalid commit hash");
+  try {
+    return await readGate.run(async () => {
+      const git = gitFor(absPath);
+      const fmt = ["%H", "%h", "%an", "%ae", "%at", "%s"].join(US);
+      // Header (first line) + name-status lines (the rest).
+      const metaOut = await git.raw(["show", "--no-color", "--name-status", `--format=${fmt}`, hash]);
+      const lines = metaOut.split("\n");
+      const [full = "", short = "", an = "", ae = "", at = "0", ...subjRest] = (lines[0] ?? "").split(US);
+      const subject = subjRest.join(US);
+      const files: CommitFile[] = [];
+      for (const l of lines.slice(1)) {
+        const t = l.trim();
+        if (!t) continue;
+        const parts = t.split("\t");
+        const status = (parts[0] ?? "M")[0] ?? "M";
+        if (status === "R" || status === "C") files.push({ status, path: parts[2] ?? "", from: parts[1] });
+        else files.push({ status, path: parts[1] ?? "" });
+      }
+      // The patch (empty --format suppresses the header so we get just the diff body).
+      let diff = await git.raw(["show", "--no-color", "-p", "--format=", hash]);
+      const truncated = diff.length > COMMIT_DIFF_CAP;
+      if (truncated) diff = `${diff.slice(0, COMMIT_DIFF_CAP)}\n…[truncated]`;
+      return {
+        ok: true,
+        code: "OK" as const,
+        hash: full || hash,
+        shortHash: short || hash.slice(0, 12),
+        subject,
+        authorName: an,
+        authorEmail: ae,
+        date: Number(at) * 1000,
+        files,
+        diff: diff.trim(),
+        truncated,
+      };
+    });
+  } catch (e) {
+    return emptyCommitDetail(hash, "ERROR", e instanceof Error ? e.message : String(e));
+  }
+}
+
 export interface StashEntry {
   /** 0-based stash index (maps to `stash@{index}`). */
   index: number;

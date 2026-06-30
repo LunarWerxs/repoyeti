@@ -39,7 +39,7 @@ import {
   type CommitGroupResult,
   type CommitGroupsResult,
 } from "../contract.ts";
-import type { BranchList, LogResult, StashList } from "../inspect.ts";
+import type { BranchList, LogResult, StashList, CommitDetail } from "../inspect.ts";
 import type { VcsBackend } from "./types.ts";
 
 /** The Lore binary. Overridable for tests / non-PATH installs (e.g. a downloaded release). */
@@ -584,6 +584,22 @@ export const loreBackend: VcsBackend = {
   deleteBranch: loreDeleteBranch,
 
   readLog: loreReadLog,
+  // Per-commit diff isn't surfaced by the lore CLI yet (no structured `show`); return a graceful
+  // "unavailable" detail so the History UI degrades instead of erroring.
+  readCommit: async (_absPath, hash): Promise<CommitDetail> => ({
+    ok: false,
+    code: "ERROR",
+    message: "commit detail isn't available for Lore yet",
+    hash,
+    shortHash: hash.slice(0, 12),
+    subject: "",
+    authorName: "",
+    authorEmail: "",
+    date: 0,
+    files: [],
+    diff: "",
+    truncated: false,
+  }),
 
   readStashes: loreReadStashes,
   stashSave: loreStashSave,

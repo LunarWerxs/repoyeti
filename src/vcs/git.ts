@@ -29,7 +29,7 @@ import {
   gitCommitGroups,
   grepChangedContent,
 } from "../git-actions.ts";
-import { readBranches, readLog, readStashes } from "../inspect.ts";
+import { readBranches, readLog, readStashes, readCommit } from "../inspect.ts";
 import type { VcsBackend, FilePatchResult } from "./types.ts";
 
 export const gitBackend: VcsBackend = {
@@ -53,6 +53,7 @@ export const gitBackend: VcsBackend = {
   deleteBranch: gitDeleteBranch,
 
   readLog,
+  readCommit,
 
   readStashes,
   stashSave: gitStashSave,

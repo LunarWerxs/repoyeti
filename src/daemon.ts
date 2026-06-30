@@ -67,6 +67,7 @@ import {
   stashDropRepo,
   getBranches,
   getLog,
+  getCommit,
   getStashes,
   getTags,
   setRemoteRepo,
@@ -615,6 +616,13 @@ export function createApp(cfg: RepoYetiConfig): Hono {
         Number.isFinite(skip) ? skip : undefined,
       ),
     );
+  });
+
+  // One commit's detail (changed files + bounded diff) — the History "tap a commit" view.
+  app.get("/api/repos/:id/commit/:hash", async (c) => {
+    const id = c.req.param("id");
+    if (!getRepo(id)) return jsonError(c, "NOT_FOUND", "repo not found");
+    return c.json(await getCommit(id, c.req.param("hash")));
   });
 
   // ── stash (list / save / pop / drop) ─────────────────────────────────────────

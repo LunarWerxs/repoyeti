@@ -15,7 +15,7 @@
 import type { Identity, RepoStatus } from "../db.ts";
 import type { ChangedFile } from "../status.ts";
 import type { ActionResult, CommitGroupSpec, CommitGroupsResult } from "../contract.ts";
-import type { BranchList, LogResult, StashList } from "../inspect.ts";
+import type { BranchList, LogResult, StashList, CommitDetail } from "../inspect.ts";
 
 export type VcsKind = "git" | "lore";
 
@@ -84,6 +84,8 @@ export interface VcsBackend {
 
   // ── history ──
   readLog(absPath: string, limit?: number, skip?: number): Promise<LogResult>;
+  /** Full detail for one commit: changed-file list + a bounded unified diff. */
+  readCommit(absPath: string, hash: string): Promise<CommitDetail>;
 
   // ── stash (capabilities.stash === false → mutations return a clear error) ──
   readStashes(absPath: string): Promise<StashList>;

@@ -32,7 +32,7 @@ import {
   type CommitGroupResult,
 } from "./git-actions.ts";
 import type { CommitPlanInput, PlanInputFile } from "./ai.ts";
-import { readTags, type BranchList, type LogResult, type StashList, type TagList } from "./inspect.ts";
+import { readTags, type BranchList, type LogResult, type StashList, type TagList, type CommitDetail } from "./inspect.ts";
 import { watchRepo, type WatchHandle } from "./watcher.ts";
 import type { Identity, RepoView } from "./db.ts";
 
@@ -232,6 +232,26 @@ export function getLog(repoId: string, limit?: number, skip?: number): Promise<L
   const repo = getRepo(repoId);
   if (!repo) return Promise.resolve({ ok: false, code: "ERROR", message: "repo not found", commits: [], hasMore: false });
   return backendFor(repo.vcs).readLog(repo.absPath, limit, skip);
+}
+
+export function getCommit(repoId: string, hash: string): Promise<CommitDetail> {
+  const repo = getRepo(repoId);
+  if (!repo)
+    return Promise.resolve({
+      ok: false,
+      code: "ERROR",
+      message: "repo not found",
+      hash,
+      shortHash: hash.slice(0, 12),
+      subject: "",
+      authorName: "",
+      authorEmail: "",
+      date: 0,
+      files: [],
+      diff: "",
+      truncated: false,
+    });
+  return backendFor(repo.vcs).readCommit(repo.absPath, hash);
 }
 
 export function getStashes(repoId: string): Promise<StashList> {
