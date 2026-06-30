@@ -1,12 +1,13 @@
 import type { Hono } from "hono";
 import type { Deps } from "../deps.ts";
 import { jsonError, statusForCode } from "../../contract.ts";
-import { parseBody, CommitSchema, SmartCommitSchema } from "../../schemas.ts";
+import { parseBody, CommitSchema, CommitSelectedSchema, SmartCommitSchema } from "../../schemas.ts";
 import {
   fetchRepo,
   pullRepo,
   pushRepo,
   commitRepo,
+  commitSelectedRepo,
   smartCommitRepo,
   forceRefresh,
 } from "../../service/index.ts";
@@ -25,6 +26,19 @@ export function register(app: Hono, _deps: Deps): void {
     const message = (p.data.message ?? "").trim();
     if (!message) return jsonError(c, "NO_MESSAGE", "commit message required");
     const r = await commitRepo(id, message, p.data.amend === true);
+    return c.json(r, r.ok ? 200 : statusForCode(r.code));
+  });
+
+  // Per-file staging: commit ONLY the selected paths in one ordinary commit (Smart Commit does this
+  // per-group internally; this exposes it for a single commit). Anything unselected stays pending.
+  app.post("/api/repos/:id/commit-selected", async (c) => {
+    const id = requireId(c);
+    if (id instanceof Response) return id;
+    const p = await parseBody(c, CommitSelectedSchema);
+    if (!p.ok) return p.res;
+    const message = (p.data.message ?? "").trim();
+    if (!message) return jsonError(c, "NO_MESSAGE", "commit message required");
+    const r = await commitSelectedRepo(id, message, p.data.paths);
     return c.json(r, r.ok ? 200 : statusForCode(r.code));
   });
 

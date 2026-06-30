@@ -16,6 +16,7 @@ import { z } from "zod";
 import { VERSION } from "../config.ts";
 import {
   CommitSchema,
+  CommitSelectedSchema,
   SmartCommitSchema,
   CheckoutSchema,
   CreateBranchSchema,
@@ -98,6 +99,7 @@ export const META: Record<string, RouteMeta> = {
   "POST /api/repos/:id/pull": { summary: "git pull (fast-forward) for one repo.", tags: ["git"] },
   "POST /api/repos/:id/push": { summary: "git push for one repo.", tags: ["git"] },
   "POST /api/repos/:id/commit": { summary: "Commit the working tree (optionally amend).", body: CommitSchema, tags: ["git"] },
+  "POST /api/repos/:id/commit-selected": { summary: "Commit only a selected subset of changed files.", body: CommitSelectedSchema, tags: ["git"] },
   "POST /api/repos/:id/smart-commit": { summary: "Execute an owner-edited multi-commit plan.", body: SmartCommitSchema, tags: ["git"] },
 
   // ── branches ──────────────────────────────────────────────────────────────────

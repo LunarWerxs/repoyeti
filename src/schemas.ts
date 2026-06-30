@@ -160,3 +160,12 @@ export const SmartCommitSchema = z.object({
     .max(MAX_PLAN_GROUPS),
   sync: z.boolean().optional(),
 });
+
+// ── per-file (selected) staging for a single ordinary commit ──────────────────────
+// Stage + commit ONLY these paths (a rename's old path is auto-added in the service); any other
+// pending change stays in the working tree. `message` is optional here so NO_MESSAGE stays a
+// domain check in the handler (mirrors CommitSchema).
+export const CommitSelectedSchema = z.object({
+  message: z.string().optional(),
+  paths: z.array(nonEmpty).min(1).max(MAX_PLAN_PATHS),
+});

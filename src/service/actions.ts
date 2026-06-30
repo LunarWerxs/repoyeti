@@ -14,6 +14,7 @@ import {
   type CommitGroupSpec,
   type CommitGroupResult,
 } from "../git-actions.ts";
+import type { ActionResult } from "../contract.ts";
 import { runAction, refreshRepo, type ActionOutcome } from "./core.ts";
 import { guardRepo } from "./guards.ts";
 import { resolveRepoPath } from "./files.ts";
@@ -217,5 +218,60 @@ export async function smartCommitRepo(
 
   // Refresh AFTER the slot releases (refreshRepo enqueues again → nesting would deadlock).
   await refreshRepo(repo.id, repo.absPath, outcome.ok && outcome.synced === true);
+  return { ...outcome, repoId };
+}
+
+/**
+ * Commit ONLY a selected subset of changed files in one ordinary commit — file-level staging for a
+ * normal commit (Smart Commit already stages per-group internally; this exposes it for a single
+ * commit). Stage exactly `paths` (a rename's old path auto-added so the deletion lands with the
+ * addition), commit with `message`, and leave every other pending change in the working tree. Runs
+ * in one op-queue slot so nothing interleaves; refreshes status afterward. A reuse of the same
+ * `commitGroups` primitive Smart Commit drives, with a single group and no completeness requirement.
+ */
+export async function commitSelectedRepo(
+  repoId: string,
+  message: string,
+  paths: string[],
+): Promise<ActionResult & { repoId: string }> {
+  const g = guardRepo<"SUBMODULE_NOT_ACTIONABLE", { repoId: string }>(repoId, "SUBMODULE_NOT_ACTIONABLE", { repoId });
+  if (g.fail) return g.fail;
+  const repo = g.repo;
+  const identity = resolveRepoIdentity(repo);
+  const backend = backendFor(repo.vcs);
+
+  const outcome = await enqueue(repoId, async (): Promise<ActionResult> => {
+    // Validate the selection against the CURRENT tree (it may have shifted since the UI read it).
+    const fresh = await backend.readChanges(repo.absPath, false);
+    const changedSet = new Set(fresh.map((f) => f.path));
+    const renameFrom = new Map<string, string>();
+    for (const f of fresh) if (f.from) renameFrom.set(f.path, f.from);
+
+    const seen = new Set<string>();
+    const staged: string[] = [];
+    for (const raw of paths) {
+      const p = raw.replace(/\\/g, "/").trim();
+      if (!changedSet.has(p)) {
+        return { ok: false, code: "PLAN_STALE", message: `"${p}" is no longer a pending change — refresh and retry` };
+      }
+      if (seen.has(p)) continue; // ignore an accidental duplicate selection
+      seen.add(p);
+      staged.push(p);
+      const from = renameFrom.get(p);
+      if (from) staged.push(from); // stage the rename's old path with the new one
+    }
+    if (staged.length === 0) {
+      return { ok: false, code: "NOTHING_TO_COMMIT", message: "select at least one changed file to commit" };
+    }
+
+    // Single group → surface its per-group result (commitGroups already maps git errors to codes).
+    const res = await backend.commitGroups(repo.absPath, identity, [{ message, paths: staged }]);
+    const only = res.committed[0];
+    return only
+      ? { ok: only.ok, code: only.code, message: only.message ?? res.message }
+      : { ok: res.ok, code: res.code, message: res.message };
+  });
+
+  await refreshRepo(repo.id, repo.absPath);
   return { ...outcome, repoId };
 }
