@@ -10,7 +10,7 @@ import {
   planCommitInput,
   smartCommitRepo,
   stopWatching,
-} from "../src/service.ts";
+} from "../src/service/index.ts";
 
 // Verifies the Lore feature-parity port (AI commit-diff, content search, smart-commit plan input +
 // group staging) against a REAL `lore` CLI + a live local loreserver. Skipped when either is absent

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/daemon.ts";
 import type { RepoYetiConfig } from "../src/config.ts";
-import { MIN_CONTENT_SEARCH } from "../src/service.ts";
+import { MIN_CONTENT_SEARCH } from "../src/service/index.ts";
 import { upsertRepo, getRepo, setRepoHidden, setRepoPinned, setRepoStarred } from "../src/db.ts";
 
 // Local mode (no OIDC) → /api/* is not gated, so we can exercise the routes directly.

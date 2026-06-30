@@ -29,7 +29,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { sdkStatus, sdkBranches, sdkLog } from "./lore-sdk.ts";
 import { join } from "node:path";
 import type { Identity, RepoStatus } from "../db.ts";
-import type { ChangedFile } from "../status.ts";
+import type { ChangedFile } from "../read/status.ts";
 import {
   ok,
   fail,
@@ -39,7 +39,7 @@ import {
   type CommitGroupResult,
   type CommitGroupsResult,
 } from "../contract.ts";
-import type { BranchList, LogResult, StashList, CommitDetail } from "../inspect.ts";
+import type { BranchList, LogResult, StashList, CommitDetail } from "../read/inspect.ts";
 import type { VcsBackend } from "./types.ts";
 
 /** The Lore binary. Overridable for tests / non-PATH installs (e.g. a downloaded release). */

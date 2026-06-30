@@ -6,7 +6,7 @@ import { $ } from "bun";
 import { createApp } from "../src/daemon.ts";
 import type { RepoYetiConfig } from "../src/config.ts";
 import { upsertRepo } from "../src/db.ts";
-import { writeFileContent } from "../src/service.ts";
+import { writeFileContent } from "../src/service/index.ts";
 
 // Edit-mode save path: writeFileContent (src/service.ts) + PUT /api/repos/:id/file
 // (src/daemon.ts). Guards the confinement + binary/size limits that keep an untrusted edit

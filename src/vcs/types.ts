@@ -13,9 +13,9 @@
  * later stays mechanical rather than a rewrite.
  */
 import type { Identity, RepoStatus } from "../db.ts";
-import type { ChangedFile } from "../status.ts";
+import type { ChangedFile } from "../read/status.ts";
 import type { ActionResult, CommitGroupSpec, CommitGroupsResult } from "../contract.ts";
-import type { BranchList, LogResult, StashList, CommitDetail } from "../inspect.ts";
+import type { BranchList, LogResult, StashList, CommitDetail } from "../read/inspect.ts";
 
 export type VcsKind = "git" | "lore";
 

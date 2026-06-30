@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
-import { registerRepo, getLog, getCommit, stopWatching } from "../src/service.ts";
+import { registerRepo, getLog, getCommit, stopWatching } from "../src/service/index.ts";
 
 // Covers the commit-detail read path (the History "tap a commit → see its changed files + diff"
 // feature): readCommit → VcsBackend → service.getCommit → GET /api/repos/:id/commit/:hash.

@@ -6,7 +6,7 @@ import { $ } from "bun";
 import { createApp } from "../src/daemon.ts";
 import type { RepoYetiConfig } from "../src/config.ts";
 import { gitRemoteSet, gitRemoteRemove, gitTagCreate } from "../src/git-actions.ts";
-import { readTags } from "../src/inspect.ts";
+import { readTags } from "../src/read/inspect.ts";
 import { upsertRepo } from "../src/db.ts";
 
 const localCfg = (): RepoYetiConfig => ({ roots: [], port: 7171, maxDepth: 6, maxRepos: 200 });

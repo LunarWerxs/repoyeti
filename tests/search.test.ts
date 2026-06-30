@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
 import { upsertRepo } from "../src/db.ts";
-import { searchChangedContent } from "../src/service.ts";
+import { searchChangedContent } from "../src/service/index.ts";
 
 async function gitRepo(): Promise<string> {
   const dir = mkdtempSync(join(tmpdir(), "gm-search-"));

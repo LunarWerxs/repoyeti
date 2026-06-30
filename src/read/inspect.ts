@@ -11,8 +11,8 @@
  * between fields and newlines between records, so a commit subject or branch name with
  * spaces/tabs can never split a field.
  */
-import { gitFor } from "./git.ts";
-import { readGate } from "./gitgate.ts";
+import { gitFor } from "../git.ts";
+import { readGate } from "../gitgate.ts";
 
 const US = "\x1f"; // field separator (unit separator) — can't appear in a ref name or subject
 

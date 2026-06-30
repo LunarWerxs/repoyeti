@@ -12,7 +12,7 @@
  *    native lib, a `bun --compile` build that didn't bundle it). Callers fall back to the CLI
  *    parsers in lore.ts, so Lore never breaks just because the SDK is absent.
  */
-import type { ChangedFile } from "../status.ts";
+import type { ChangedFile } from "../read/status.ts";
 
 // undefined = not yet tried · null = unavailable (fall back to CLI) · module = loaded.
 let mod: typeof import("@lore-vcs/sdk") | null | undefined;

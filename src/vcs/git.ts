@@ -10,7 +10,7 @@
  */
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { readStatus, readChanges } from "../status.ts";
+import { readStatus, readChanges } from "../read/status.ts";
 import {
   gitFetch,
   gitPullFfOnly,
@@ -29,7 +29,7 @@ import {
   gitCommitGroups,
   grepChangedContent,
 } from "../git-actions.ts";
-import { readBranches, readLog, readStashes, readCommit } from "../inspect.ts";
+import { readBranches, readLog, readStashes, readCommit } from "../read/inspect.ts";
 import type { VcsBackend, FilePatchResult } from "./types.ts";
 
 export const gitBackend: VcsBackend = {

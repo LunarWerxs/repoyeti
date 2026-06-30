@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
 import { createApp } from "../src/daemon.ts";
-import { registerRepo, refreshRepo, stopWatching } from "../src/service.ts";
+import { registerRepo, refreshRepo, stopWatching } from "../src/service/index.ts";
 import type { RepoYetiConfig } from "../src/config.ts";
 
 // Closes E4: the PUT /api/mode start/stop toggle and the watcher→broadcast→SSE delivery path

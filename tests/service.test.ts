@@ -13,7 +13,7 @@ import {
   stopWatching,
   watcherHealth,
   MAX_CHANGED_FILES,
-} from "../src/service.ts";
+} from "../src/service/index.ts";
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), "gm-svc-"));
 

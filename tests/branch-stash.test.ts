@@ -12,9 +12,9 @@ import {
   gitStashDrop,
   isValidBranchName,
 } from "../src/git-actions.ts";
-import { readBranches, readLog, readStashes } from "../src/inspect.ts";
+import { readBranches, readLog, readStashes } from "../src/read/inspect.ts";
 import { upsertRepo } from "../src/db.ts";
-import { discardFile } from "../src/service.ts";
+import { discardFile } from "../src/service/index.ts";
 import type { Identity } from "../src/db.ts";
 
 const ID: Identity = {

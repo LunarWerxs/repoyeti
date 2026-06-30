@@ -11,7 +11,7 @@
 import { existsSync, lstatSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { gitFor, identityConfigArgs, safeGitEnv } from "./git.ts";
-import { readStatus, readChanges } from "./status.ts";
+import { readStatus, readChanges } from "./read/status.ts";
 import { netGate } from "./gitgate.ts";
 import type { Identity } from "./db.ts";
 import type { CommitPlanInput, PlanInputFile } from "./ai.ts";

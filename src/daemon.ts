@@ -100,8 +100,8 @@ import {
   getDiffPatchEnabled,
   setDiffPatchEnabled,
   type ActionOutcome,
-} from "./service.ts";
-import { diffStatsEnabled, setDiffStatsEnabled } from "./diffstat.ts";
+} from "./service/index.ts";
+import { diffStatsEnabled, setDiffStatsEnabled } from "./read/diffstat.ts";
 import {
   syncCheckEnabled,
   keepInSyncEnabled,

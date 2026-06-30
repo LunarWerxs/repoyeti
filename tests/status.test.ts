@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
-import { readStatus } from "../src/status.ts";
+import { readStatus } from "../src/read/status.ts";
 
 async function gitRepo(prefix = "gm-status-"): Promise<string> {
   const dir = mkdtempSync(join(tmpdir(), prefix));

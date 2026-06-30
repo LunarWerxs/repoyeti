@@ -9,7 +9,7 @@
 import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { DB_PATH, ensureConfigDir } from "./config.ts";
-import type { DiffStat } from "./diffstat.ts";
+import type { DiffStat } from "./read/diffstat.ts";
 import type { VcsKind } from "./vcs/types.ts";
 
 export type RepoSource = "auto" | "pinned" | "created";

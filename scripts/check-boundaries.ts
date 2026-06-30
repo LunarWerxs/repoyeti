@@ -25,13 +25,13 @@ const rules: Array<{ file: string; forbid: RegExp; why: string }> = [
     why: "daemon.ts (routes) must call service.ts, not the git/inspection layers directly",
   },
   {
-    file: "src/status.ts",
-    forbid: /from\s+"\.\/service(\.ts)?"/g,
+    file: "src/read/status.ts",
+    forbid: /from\s+"(\.\.\/)+service(\.ts|\/|")/g,
     why: "status.ts (read-only) must not import the orchestration layer",
   },
   {
-    file: "src/inspect.ts",
-    forbid: /from\s+"\.\/service(\.ts)?"/g,
+    file: "src/read/inspect.ts",
+    forbid: /from\s+"(\.\.\/)+service(\.ts|\/|")/g,
     why: "inspect.ts (read-only) must not import the orchestration layer",
   },
   {
@@ -49,7 +49,7 @@ for (const r of rules) {
 
 // VCS backends must not import the service layer (would create a cycle).
 for (const f of readdirSync(join(ROOT, "src/vcs")).filter((n) => n.endsWith(".ts"))) {
-  for (const m of read(`src/vcs/${f}`).matchAll(/from\s+"(\.\.\/)+service(\.ts)?"/g)) {
+  for (const m of read(`src/vcs/${f}`).matchAll(/from\s+"(\.\.\/)+service(\.ts|\/|")/g)) {
     violations.push(`src/vcs/${f}: forbidden import \`${m[0]}\` — VCS backends must not depend on service.ts`);
   }
 }

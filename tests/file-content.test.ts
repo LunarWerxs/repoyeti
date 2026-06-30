@@ -11,7 +11,7 @@ import {
   setDiffPatchBytes,
   getDiffPatchEnabled,
   setDiffPatchEnabled,
-} from "../src/service.ts";
+} from "../src/service/index.ts";
 
 async function gitRepo(): Promise<string> {
   const dir = mkdtempSync(join(tmpdir(), "gm-file-"));

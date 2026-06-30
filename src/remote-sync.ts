@@ -22,7 +22,7 @@
  * dispatches per backend, and Lore's fetch is a benign no-op (it's centralized), so a Lore repo
  * simply never reports "behind" here.
  */
-import { fetchAllRepos, pullRepo } from "./service.ts";
+import { fetchAllRepos, pullRepo } from "./service/index.ts";
 import { getWatchableRepos } from "./db.ts";
 import { broadcast } from "./bus.ts";
 import type { RepoStatus } from "./db.ts";

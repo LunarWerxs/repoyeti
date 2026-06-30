@@ -3,8 +3,8 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
-import { parsePatchStats, computeDiffStats } from "../src/diffstat.ts";
-import { readStatus, readChanges } from "../src/status.ts";
+import { parsePatchStats, computeDiffStats } from "../src/read/diffstat.ts";
+import { readStatus, readChanges } from "../src/read/status.ts";
 import { createApp } from "../src/daemon.ts";
 import type { RepoYetiConfig } from "../src/config.ts";
 

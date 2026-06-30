@@ -13,7 +13,7 @@
  * shrank — which is exactly the intuition behind "lines/characters changed".
  */
 import { join } from "node:path";
-import { safeGitEnv } from "./git.ts";
+import { safeGitEnv } from "../git.ts";
 
 export interface DiffStat {
   addedLines: number;

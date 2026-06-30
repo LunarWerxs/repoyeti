@@ -9,10 +9,10 @@
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import type { SimpleGit } from "simple-git";
-import { gitFor } from "./git.ts";
-import { readGate } from "./gitgate.ts";
+import { gitFor } from "../git.ts";
+import { readGate } from "../gitgate.ts";
 import { computeDiffStats, type DiffStat } from "./diffstat.ts";
-import type { RepoStatus } from "./db.ts";
+import type { RepoStatus } from "../db.ts";
 
 /**
  * Remote URLs change only when the user edits `.git/config` (`git remote add/set-url`),

@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { $ } from "bun";
 import { createApp } from "../src/daemon.ts";
 import type { RepoYetiConfig } from "../src/config.ts";
-import { cloneRepo } from "../src/service.ts";
+import { cloneRepo } from "../src/service/index.ts";
 import { getRepos } from "../src/db.ts";
 
 const localCfg = (roots: string[] = []): RepoYetiConfig => ({ roots, port: 7171, maxDepth: 6, maxRepos: 200 });
