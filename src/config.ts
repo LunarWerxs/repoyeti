@@ -325,15 +325,16 @@ export function redactAi(cfg: RepoYetiConfig): RedactedAiConfig {
 
 /**
  * The public "Sign in with Connections" OAuth client for RepoYeti, baked in so login works
- * with zero owner setup. These are PUBLIC by nature (a PKCE client — no secret): the
- * client id and the fixed redirect "shim" are registered in the Connections IdP. The shim
- * is a tiny Cloudflare Worker that bounces the login back to whatever origin this daemon is
- * reached at (its tunnel URL rotates each run). An owner can override `oauth` in config.json.
+ * with zero owner setup. These are PUBLIC by nature (a PKCE client — no secret). Now that we own
+ * a stable domain, login is done the RIGHT way: the daemon registers its OWN callback at its
+ * current origin (`<origin>/oauth/callback`, see src/auth.ts) — the old rotating-URL "shim" Worker
+ * is retired. The IdP allow-lists `https://app.repoyeti.com/oauth/callback` + the loopback. This
+ * `redirectUri` is now just a presence marker for authEnforced(); auth.ts derives the live value.
  */
 const CONNECTIONS_OAUTH: OAuthConfig = {
   issuer: "https://accounts.connections.icu",
   clientId: "a790090c23b353c15ed973fd5fe20563",
-  redirectUri: "https://repoyeti-auth.lunawerx.workers.dev/cb",
+  redirectUri: "https://app.repoyeti.com/oauth/callback",
   scopes: "openid profile email",
 };
 

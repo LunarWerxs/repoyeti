@@ -233,7 +233,9 @@ export async function handleLogin(c: Context, cfg: RepoYetiConfig): Promise<Resp
   const url = new URL(doc.authorization_endpoint!);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", o.clientId);
-  url.searchParams.set("redirect_uri", o.redirectUri);
+  // Doing it right (we own the domain): register the daemon's OWN callback at its current origin —
+  // no rotating-URL shim. The IdP allow-lists app.repoyeti.com/oauth/callback + the loopback.
+  url.searchParams.set("redirect_uri", `${origin}/oauth/callback`);
   url.searchParams.set("scope", o.scopes || "openid profile email");
   url.searchParams.set("code_challenge", challenge);
   url.searchParams.set("code_challenge_method", "S256");
@@ -266,8 +268,11 @@ export async function handleComplete(
   const sp = unsign(state);
   if (!sp) return c.html(errPage("Invalid or tampered sign-in state."), 400);
   let nonce: string;
+  let stateOrigin: string;
   try {
-    nonce = JSON.parse(sp).n as string;
+    const parsed = JSON.parse(sp);
+    nonce = parsed.n as string;
+    stateOrigin = String(parsed.o || "");
   } catch {
     return c.html(errPage("Invalid sign-in state."), 400);
   }
@@ -283,7 +288,9 @@ export async function handleComplete(
     const body = new URLSearchParams({
       grant_type: "authorization_code",
       code,
-      redirect_uri: o.redirectUri,
+      // Must EXACTLY match the redirect_uri sent at /oauth/login — the daemon's own origin (from the
+      // signed state, so it can't be tampered) + /oauth/callback. No shim.
+      redirect_uri: `${stateOrigin}/oauth/callback`,
       client_id: o.clientId,
       code_verifier: tx.verifier,
     });
