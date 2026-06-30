@@ -12,9 +12,15 @@
 
 ---
 
-## ✅ Landed in the `0.1.0` burndown (2026-06-29, branch `wrap-up/todo-burndown`)
+## ✅ Landed in the `0.1.0` burndown (2026-06-29 → 06-30, all on `main`)
 
-All verified green at each step (275 tests, `tsc`, `check:codes`/`check:boundaries`, lint).
+All verified green at each step (276 daemon tests + web build, `tsc`, `check:codes`/`check:boundaries`, lint).
+
+**🟡 Lore feature-parity port — DONE & verified end-to-end** against a live `loreserver` 0.8.4 (the
+`lore` CLI is now installed at `~/bin`). AI commit-diff, smart-commit (plan input + group staging via
+`lore stage`+`lore commit`), and content-search (JS scan) all routed through `VcsBackend` and re-enabled
+in the Lore UI (`aiHere`). New gated `tests/lore-parity.test.ts`. **`F5` DONE** — `MARCHING_ORDERS.md`
+promoted to `ARCHITECTURE.md`, all refs repointed.
 
 **🔴 Vital — ALL DONE:** `C1` (registerRepo → `detectVcs`), `C2` (file diff + discard routed through
 `VcsBackend` — `filePatch`/`discardFile` + `fileModels` capability), `E4` (PUT /api/mode toggle +
@@ -33,15 +39,13 @@ RepoYeti app (`a790090c…`) is an **AEGIS-direct registration** with no Studio 
 already set in AEGIS via the vault. No write was made; the only unproven step is a **live sign-in**
 with the daemon running (owner step). (Key is now stored in gitignored `.env` as `CONNECTIONS_API_KEY`.)
 
-**Still open** — all need something I can't safely do solo here:
-- **Frontend** (`D1` RepoCard split, `F6` a11y, Lore servers UI, toast-undo, tunnel UI, AI-style picker,
-  + the UI halves of per-file staging & commit-detail diff): code is doable, but runtime verification
-  needs a running daemon + dev server, which collides with the single-instance rule — needs owner OK.
-- **Lore parity port:** implementable but **not runtime-verifiable without the `lore` CLI** installed.
-- **`E6`** frontend test infra: needs new dev-deps in the shared `bun.lock` (coordinate first).
+**Still open** (owner cleared the dev-server + `lore`-install blockers, so the frontend pass is next):
+- **Frontend pass** (verify with a dev server): toast-undo, AI-style picker, tunnel-URL UI, Lore servers
+  UI, `F6` a11y, then `D1` RepoCard split (biggest), + the UI halves of per-file staging & commit-detail diff.
+- **`E6`** frontend test infra (Vitest + Playwright) — adds dev-deps to the shared `bun.lock`.
 - **PAT/HTTPS:** the network path can't be unit-verified without a real private repo + token (owner).
-- **🧑 owner:** `F5` (promote vs archive `MARCHING_ORDERS.md`), branch-protect `main`, confirm MIT,
-  adopt process `G`, push the `v0.1.0` tag, the live sign-in.
+- **SDK migration:** decision pending (owner asked for a TL;DR — given below in chat).
+- **🧑 owner:** branch-protect `main`, confirm MIT, push the `v0.1.0` tag, the live sign-in.
 
 ---
 
