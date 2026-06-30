@@ -58,6 +58,19 @@ obsolete.** Now:
 - **Shim retired:** the `gitmob-auth` Worker (it was never re-deployed under the new name) was **deleted** from
   the Lunawerx Cloudflare account. `shim/` in this repo is now dead reference code.
 
+## Headless agents — an optional Bearer API token (no browser needed)
+A **remote or headless AI agent** can't complete the browser-based OIDC dance. For that case the
+owner can mint an **optional API token** and the agent authenticates with a Bearer header:
+- `repoyeti token new` mints + prints the token **once** (`POST /api/auth/token`); `repoyeti token
+  revoke` deletes it; `repoyeti token show` reports only whether one is configured.
+- Then send `Authorization: Bearer <token>` (or set `REPOYETI_TOKEN` for the CLI verbs and
+  `repoyeti mcp`).
+- It's a **separate, local credential** (constant-time compared, kept in the OS keychain) — it never
+  touches connections.icu and exists only on this daemon.
+- **Off by default, and it never weakens the default posture.** When no token is set, auth is
+  byte-for-byte the OIDC-only behavior described above; a request over the tunnel still requires a
+  signed-in owner *or* the explicit token. The token is purely additive, for the headless case.
+
 ## To bring it fully live
 1. Run RepoYeti with **remote access on** (it reads `~/.repoyeti/config.json` and runs the named-tunnel
    connector itself; `cloudflared` is installed).

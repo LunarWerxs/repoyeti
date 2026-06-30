@@ -111,7 +111,7 @@ If that loop works over HTTPS from a cellular connection with no port forwarding
 - **PWA:** flat repo list sorted by name; per-repo card = branch badge + dirty count + ahead/behind
   (with fetch timestamp) + identity selector + fetch/pull/push buttons; dark terminal theme;
   Add-to-Home-Screen manifest.
-- **CLI:** `repoyeti start | stop | status | add-root <path> | set-owner <sub|email>` (`set-owner` sets the trusted Connections identity; OAuth `client_id`/redirect come from config — see §13).
+- **CLI:** `repoyeti start | stop | status | add-root <path> | set-owner <sub|email>` (`set-owner` sets the trusted Connections identity; OAuth `client_id`/redirect come from config — see §13). _Since v1 the CLI has grown beyond lifecycle: it now also has **git verbs** (`repos`/`status <repo>`/`log`/`branches`/`branch`/`checkout`/`commit`/`diff`/`drift`/`stash`/`push`/`pull`/`fetch`) that drive the running daemon over its loopback HTTP API, plus **`repoyeti mcp`** (an MCP stdio server for AI agents) and **`repoyeti token`** (mint/revoke the optional API token). See the new "Agent & CLI surfaces" note under §4._
 - **Robustness:** port-conflict auto-increment; 30s op timeout; structured error codes.
 
 ### OUT (explicitly deferred — do not build in v1)
@@ -167,6 +167,23 @@ If that loop works over HTTPS from a cellular connection with no port forwarding
 - *Commands (phone→daemon):* PWA `POST`s a REST action with `Authorization: Bearer <jwt>` → auth
   middleware verifies → op-queue serializes the git call → conflict guard preflights → `simple-git`
   runs with injected identity → result returned + SSE follow-up.
+
+### Agent & CLI surfaces (one orchestration core, several front doors)
+
+There are now **three** ways to reach the same git operations — the HTTP routes, the CLI verbs, and
+the MCP tools — and they all funnel into the **one service orchestration layer** (`src/service/`),
+so every guard (op-queue serialization, FF-only pull, no-force push, dirty-tree refusal, identity
+injection) holds no matter which door a request comes through. The layering:
+
+- **HTTP routes** (`src/http/routes/*`) — the canonical surface; the PWA and any external caller use it.
+- **CLI verbs** (`src/cli/git.ts`) and **MCP-stdio** (`repoyeti mcp`) are **thin HTTP clients to the
+  loopback daemon** — they never touch git or the service layer in-process; they locate the live
+  daemon and call its `127.0.0.1` API (single-instance respected). A boundary check enforces that
+  `cli/*` and the MCP core/tools import no service/read/git layer.
+- **MCP-HTTP** (`POST /api/mcp`) uses an **in-process adapter** into the service layer and is gated
+  by the same `/api/*` auth middleware as every other route. (MCP-stdio reuses the same tool catalog
+  via an HTTP adapter, so both transports advertise the identical 14 tools.)
+- The full HTTP surface is described machine-readably at `GET /api/openapi.json` (see §6).
 
 ---
 
@@ -250,6 +267,15 @@ Every git operation returns a **structured result**: `{ ok, code, message }`. Er
 first-class (`DIRTY_WORKING_TREE`, `NON_FAST_FORWARD`, `SSH_AUTH_FAILED`, `SSH_PASSPHRASE_REQUIRED`,
 `DETACHED_HEAD`, `TUNNEL_DOWN`, `AUTH_WRONG_OWNER`, `OIDC_VERIFY_FAILED`) so the UI can render the
 right state.
+
+> **The surface has grown well past the table above** (60+ routes: branches, log, stash, tags,
+> remotes, files/diff, AI/smart-commit, servers, settings, …). Rather than enumerate them all here,
+> the live surface is published machine-readably at **`GET /api/openapi.json`** (OpenAPI 3.1, built
+> by introspecting the router; the one `/api/*` path fetchable without sign-in). The **MCP** tool
+> server is exposed at **`POST /api/mcp`** (same JSON-RPC, same auth gate). For **remote/headless
+> agents** an optional, owner-minted **Bearer API token** sits alongside the OIDC session
+> (`POST`/`DELETE`/`GET /api/auth/token`); it's off by default and never weakens the OIDC posture
+> (see §7 and `docs/REMOTE_ACCESS.md`).
 
 ---
 
@@ -477,36 +503,71 @@ These were not in the original briefs; they will bite if ignored.
 
 ## 11. Repo structure (minimal monorepo)
 
+> **This grew past the flat tree in the original plan.** A maintainability reorg split the three
+> god-files (`index.ts` / `daemon.ts` / `service.ts`) into layered directories. The layering is
+> **structure, not behavior** — the same operations, just one public seam each.
+
 ```
 repoyeti/
-├─ package.json              # bun workspaces; bin: repoyeti
+├─ package.json              # bun workspaces; bin: repoyeti (→ src/index.ts)
 ├─ src/
-│  ├─ index.ts               # CLI entry: start|stop|status|key|add-root
-│  ├─ daemon.ts              # boots Hono server + watchers + tunnel
-│  ├─ db.ts                  # bun:sqlite open (WAL), schema, queries
-│  ├─ discovery.ts           # BFS crawler (depth≤6, submodule-aware)
-│  ├─ watcher.ts             # .git/HEAD + .git/index watchers → events
-│  ├─ status.ts              # simple-git status/branch/rev-list
-│  ├─ opqueue.ts             # Map<repoId,Promise> per-repo serialization
-│  ├─ git-actions.ts         # fetch/pull/push + conflict guards
-│  ├─ identity.ts            # CRUD + GIT_SSH_COMMAND / git -c injection
-│  ├─ secrets.ts             # keytar + AES-256-GCM fallback
-│  ├─ auth.ts                # OIDC login/callback + JWKS verify + session middleware
-│  ├─ tunnel.ts              # spawn/monitor bundled cloudflared
-│  ├─ sse.ts                 # event stream
-│  └─ routes.ts              # Hono router (every route behind the auth middleware)
+│  ├─ index.ts               # 2-line bin shim → cli/main.ts
+│  ├─ cli/                   # the command-line front door
+│  │  ├─ main.ts             #   dispatcher: start|add-root|status + git verbs + mcp + token
+│  │  ├─ lifecycle.ts        #   daemon-lifecycle commands (start/add-root/status + boot helpers)
+│  │  ├─ git.ts              #   git verbs (repos/log/branches/checkout/commit/diff/drift/stash/…)
+│  │  ├─ client.ts           #   tiny HTTP client → loopback daemon (REPOYETI_BASE_URL/_TOKEN aware)
+│  │  ├─ format.ts           #   zero-dep table / colour output
+│  │  └─ token.ts            #   `repoyeti token new|revoke|show`
+│  ├─ http/                  # the HTTP surface (Hono)
+│  │  ├─ app.ts              #   composition root: wires routes/* behind the /api/* auth middleware
+│  │  ├─ deps.ts             #   shared route deps (cfg, …)
+│  │  ├─ respond.ts          #   structured {ok,code,message} response helpers
+│  │  ├─ web.ts              #   static PWA mount (last, so /* doesn't shadow /api)
+│  │  ├─ openapi.ts          #   builds the OpenAPI 3.1 doc by introspecting the router + META
+│  │  └─ routes/             #   one module per domain (repos, branches, log, stash, tags, remote,
+│  │     …                   #     files, ai, identities, roots, servers, git-ops, events, health,
+│  │     …                   #     mode, repo-flags, auth, token, openapi, mcp)
+│  ├─ service/              # the ONE orchestration layer (op-queue + guards live here)
+│  │  ├─ core.ts             #   shared internals (op-queue access, repo lookup)
+│  │  ├─ watch.ts            #   watcher → status-recompute → SSE wiring
+│  │  ├─ actions.ts          #   fetch/pull/push/commit/checkout/branch/stash mutations
+│  │  ├─ repo-mgmt.ts        #   register / create / clone / remove
+│  │  ├─ reads.ts            #   status / log / branches / drift reads
+│  │  ├─ files.ts            #   changed-files tree, file content/diff, search, discard, write
+│  │  ├─ guards.ts           #   shared guardRepo() (NOT_FOUND / SUBMODULE)
+│  │  └─ index.ts            #   barrel — the single public import surface for the service
+│  ├─ read/                 # pure read-only inspection layer (no mutation, no service deps)
+│  │  ├─ status.ts           #   simple-git status / branch / rev-list
+│  │  ├─ inspect.ts          #   log + commit detail (parents/isMerge), changed-files
+│  │  └─ diffstat.ts         #   per-file +/- diff stats (toggleable)
+│  ├─ vcs/                  # pluggable VCS backend (VcsBackend interface)
+│  │  ├─ index.ts · types.ts #   registry + interface
+│  │  ├─ git.ts              #   git backend (default)
+│  │  └─ lore.ts · lore-sdk.ts  # Epic's Lore (experimental, REPOYETI_LORE=1)
+│  ├─ mcp/                  # hand-rolled MCP server (zero new deps; JSON-RPC 2.0 + MCP)
+│  │  ├─ core.ts             #   transport-agnostic dispatch (initialize/ping/tools.list/tools.call)
+│  │  ├─ tools.ts            #   the 14-tool catalog (readOnly vs MUTATES)
+│  │  ├─ backend.ts          #   McpBackend interface the tools call
+│  │  ├─ adapter-service.ts  #   in-process adapter (service/db) — behind POST /api/mcp
+│  │  ├─ adapter-http.ts     #   HTTP adapter (cli/client) — behind `repoyeti mcp`
+│  │  └─ stdio.ts            #   newline-delimited JSON stdio server; diagnostics → stderr
+│  └─ (flat kernel)         # db.ts · discovery.ts · watcher.ts · opqueue.ts · git-actions.ts ·
+│     …                      #   identity.ts · secrets.ts · auth.ts · tunnel.ts · runtime.ts ·
+│     …                      #   instance.ts · config.ts · remote-sync.ts · ai.ts · bus.ts · …
 ├─ web/                      # Vue 3 + Vite + Tailwind PWA
 │  ├─ src/ … (App, RepoCard, IdentitySelector, sse client)
 │  └─ vite.config.ts         # build → embedded static assets
-├─ shim/                     # OAuth redirect shim (Cloudflare Worker, ~30 lines)
-│  └─ worker.ts              # reads state, validates daemon URL, 302 → daemon /oauth/finish
+├─ shim/                     # OAuth redirect shim — now DEAD reference code (named tunnel + own /oauth/callback)
 ├─ vendor/cloudflared/       # pinned per-platform binaries
 └─ scripts/build.ts          # vite build → bun --compile per target
 ```
 
 The daemon is the **primary artifact**; `web/` builds into it; `vendor/cloudflared/` ships with it;
-`shim/` deploys once to a free `*.workers.dev` (dropped when a real domain exists); a future `tray/`
-(Tauri) would spawn the same binary unchanged.
+`shim/` is retired (the named tunnel + the daemon's own `/oauth/callback` replaced it — see
+`docs/REMOTE_ACCESS.md`); a future `tray/` (Tauri) would spawn the same binary unchanged.
+`scripts/check-boundaries.ts` enforces the layering: `read ⊥ service`, `vcs ⊥ service`, `cli ⊥
+service/read/git`, and the MCP core/tools/backend touch the service only through their adapters.
 
 ---
 

@@ -219,7 +219,7 @@ for (const c of commits) {
 
 ---
 
-## 7. Service layer (`src/service.ts`)
+## 7. Service layer (`src/service/` — `reads.ts` + `actions.ts`)
 
 - `planCommitInput(repoId)` — like `collectRepoDiff`: enqueue a `readStatus` (refuse
   submodule / `NOTHING_TO_COMMIT`), then `collectCommitPlanInput`. Read-only.
@@ -242,11 +242,11 @@ for (const c of commits) {
 - **`src/schemas.ts`** —
   `CommitPlanSchema = { provider?: string }` (mirror of `CommitMessageSchema`);
   `SmartCommitSchema = { commits: [{ message: nonEmpty, paths: string[].min(1) }].min(1), sync?: boolean }`.
-- **`src/daemon.ts`** —
-  - `POST /api/repos/:id/commit-plan` → resolve provider/key/model → `planCommitInput` →
+- **HTTP routes (`src/http/routes/`)** — (the old monolithic `daemon.ts` is now split into per-domain route modules)
+  - `ai.ts`: `POST /api/repos/:id/commit-plan` → resolve provider/key/model → `planCommitInput` →
     `generateCommitPlan` (fall back to `heuristicPlan` on AI failure) → `{ ok, plan }`.
     409 on `NOTHING_TO_COMMIT`.
-  - `POST /api/repos/:id/smart-commit` → `parseBody(SmartCommitSchema)` → `smartCommitRepo`
+  - `git-ops.ts`: `POST /api/repos/:id/smart-commit` → `parseBody(SmartCommitSchema)` → `smartCommitRepo`
     → map result via `statusForCode`.
 
 ## 9. Web (`web/`)

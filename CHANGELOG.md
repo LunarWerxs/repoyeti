@@ -6,6 +6,52 @@ All notable changes to RepoYeti are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **MCP server for AI agents.** A hand-rolled Model Context Protocol server (zero new deps —
+  JSON-RPC 2.0 + MCP implemented directly) exposes RepoYeti's git operations to AI agents over
+  two transports: **`repoyeti mcp`** (stdio — what an MCP client like Claude Desktop/Code or
+  Cursor spawns) and **`POST /api/mcp`** (HTTP, auto-gated by the same `/api/*` auth). One
+  transport-agnostic core drives **14 tools** — 8 read-only (`list_repos`, `repo_status`,
+  `git_log`, `list_branches`, `git_diff`, `git_search`, `list_stashes`, `drift`) and 6 mutating
+  (`git_commit`, `create_branch`, `git_checkout`, `git_push`, `git_pull`, `git_fetch`, each
+  tagged `MUTATES`). The stdio server proxies to the local daemon over HTTP; the HTTP endpoint
+  uses an in-process adapter. Either way every call runs behind the same op-queue and safety
+  guards as the dashboard — the daemon never half-merges, no matter who asks.
+- **CLI git verbs.** `repoyeti repos / status <repo> / log / branches / branch / checkout /
+  commit / diff / drift / stash / push / pull / fetch` — real shell shortcuts (no `curl`) that
+  drive the already-running daemon over its loopback HTTP API and pretty-print the result. They
+  locate the live daemon and never start one or touch git in-process (single-instance respected).
+  Honour `REPOYETI_BASE_URL` (override the daemon origin) and `REPOYETI_TOKEN` (Bearer auth for a
+  remote daemon). Bare `status` stays the daemon-config summary; `status <repo>` is the git verb.
+- **Opt-in API token (Bearer) for remote/headless agents.** An owner-minted token
+  (`repoyeti token new` → `POST /api/auth/token`, value shown once; revoke/show too) lets a
+  remote or headless agent authenticate over the tunnel with `Authorization: Bearer <token>` (or
+  `REPOYETI_TOKEN` for the CLI/MCP) when there's no browser for the OIDC login. **Off by
+  default** — when no token is set, auth is byte-for-byte the prior OIDC-only behavior. The token
+  is a separate, local credential (constant-time compared, stored in the OS keychain), never
+  touches connections.icu, and never weakens the default OIDC posture.
+- **Machine-readable API surface.** `GET /api/openapi.json` serves an OpenAPI 3.1 document built
+  by introspecting the live router against a curated metadata registry (per-route summary, tags,
+  Zod request bodies, query params). It's the one `/api/*` path fetchable without sign-in, so
+  agents and tooling can auto-discover the surface; a drift-guard test asserts every `/api` route
+  appears in the doc.
+- **Merge-commit detection.** The log/commit reads now capture parent hashes, so `LogEntry` and
+  `CommitDetail` carry `parents: string[]` + `isMerge`, and `GET /api/repos/:id/log` accepts
+  `?merges=only|exclude`. Surfaces in the CLI `log`, the MCP `git_log` tool, and OpenAPI. (Lore
+  history is linear, so its backend reports `parents: []` / `isMerge: false`.)
+
+### Changed
+
+- **Maintainability reorg (structure-only, no behavior change).** The three god-files were split
+  into layered directories: the read-only inspection layer moved to **`src/read/`**;
+  `service.ts` (1075 lines) became **`src/service/`** (core / watch / actions / repo-mgmt / reads
+  / files / guards + an `index.ts` barrel); `daemon.ts` (1159 lines) became **`src/http/`** (an
+  `app.ts` composition root wiring per-domain `routes/*` behind the single `/api/*` auth
+  middleware, plus `respond.ts` / `web.ts` / `openapi.ts`); and the CLI entry moved to
+  **`src/cli/`** (a thin `main.ts` dispatcher + `lifecycle.ts`). `check-boundaries.ts` enforces
+  the new layering (`read ⊥ service`, `cli ⊥ service/read/git`, MCP core ⊥ service/read/db).
+
 ## [0.1.0] — 2026-06-29
 
 ### Added

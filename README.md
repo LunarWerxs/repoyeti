@@ -69,7 +69,8 @@ bun run src/index.ts status                           # print configured roots +
 ```
 
 > The curl examples below are a representative subset — the full API surface (branches, stash,
-> tags, remotes, smart-commit, servers, settings, …) lives in [`src/daemon.ts`](src/daemon.ts).
+> tags, remotes, smart-commit, servers, settings, …) lives in [`src/http/routes/`](src/http/routes/)
+> and is published machine-readably at `GET /api/openapi.json`.
 
 Then:
 
@@ -100,6 +101,73 @@ curl -XPOST :7171/api/repos/<id>/stash/pop                              # pop (4
 curl :7171/api/repos/<id>/log?limit=50                                  # read-only commit history
 curl -XPOST :7171/api/repos/<id>/discard  -d '{"path":"src/a.ts"}'      # revert one file to HEAD
 ```
+
+## Command line
+
+Beyond the lifecycle commands (`start` / `add-root` / `status`), `repoyeti` ships git verbs that
+**drive the already-running daemon** over its loopback HTTP API — real shell shortcuts, no `curl`.
+They locate the live daemon and pretty-print; they never start a daemon or touch git in-process
+(the single-instance rule is respected). Mirror of `repoyeti --help`:
+
+```sh
+repoyeti repos                                            # list repos (branch / dirty / drift / vcs)
+repoyeti status <repo>                                    # one repo's status block
+repoyeti log <repo> [--limit N] [--merges only|exclude]  # commit history (merge-aware)
+repoyeti branches <repo>                                  # branches (ahead/behind/upstream)
+repoyeti branch <repo> <name> [--switch]                 # create a branch (optionally switch)
+repoyeti checkout <repo> <branch>                         # switch branch
+repoyeti commit <repo> -m <msg> [--amend]                # commit staged changes
+repoyeti diff <repo> <path>                               # show a file's diff
+repoyeti drift                                            # repos ahead/behind their remote
+repoyeti stash <repo> [list|pop|drop]                    # stash (no sub = save)
+repoyeti push|pull|fetch <repo>                          # sync with the remote
+```
+
+> Bare `status` stays the daemon-config summary; `status <repo>` is the per-repo git verb. Point the
+> verbs at a non-default daemon with `REPOYETI_BASE_URL`, and at a token-protected one with
+> `REPOYETI_TOKEN` (see **AI agent access**).
+
+## AI agent access (MCP)
+
+RepoYeti ships a hand-rolled **MCP server** so an AI agent (Claude Desktop / Code, Cursor, …) can
+inspect and drive your repos through the same guarded daemon — it proxies every tool call to the
+local daemon over HTTP, so the daemon must already be running.
+
+**stdio (what an MCP client spawns):**
+
+```jsonc
+{
+  "mcpServers": {
+    "repoyeti": { "command": "repoyeti", "args": ["mcp"] }
+  }
+}
+```
+
+**HTTP:** `POST /api/mcp` speaks the same JSON-RPC 2.0 / MCP, gated by the same `/api/*` auth.
+
+**14 tools** — 8 read-only and 6 mutating (each mutating tool says `MUTATES` in its description so
+the agent, and the human approving its calls, can tell them apart):
+
+| Read-only | Mutating |
+|---|---|
+| `list_repos` · `repo_status` · `git_log` · `list_branches` · `git_diff` · `git_search` · `list_stashes` · `drift` | `git_commit` · `create_branch` · `git_checkout` · `git_push` · `git_pull` · `git_fetch` |
+
+Mutating tools run behind the same per-repo op-queue and safety guards as the dashboard (FF-only
+pull, no-force push, dirty-tree checkout refusal) — the daemon never half-merges, no matter who
+asks. The full HTTP surface is also published machine-readably at **`GET /api/openapi.json`**
+(OpenAPI 3.1) for OpenAPI-driven tooling; it's the one `/api/*` path fetchable without sign-in.
+
+For a **remote / headless agent** (no browser to complete the OIDC login), the owner can mint an
+optional API token and authenticate with a Bearer header:
+
+```sh
+repoyeti token new        # mints + prints the token ONCE; revoke with `repoyeti token revoke`
+```
+
+Then send `Authorization: Bearer <token>` (or set `REPOYETI_TOKEN` for the CLI verbs and
+`repoyeti mcp`). The token is **off by default** — when none is set, auth is byte-for-byte today's
+OIDC-only behavior, and local (loopback) requests stay open in local mode. It's a separate, local
+credential and never touches connections.icu.
 
 ## Remote access (over the internet)
 
