@@ -32,8 +32,11 @@ const ACTION_LETTER: Record<number, string> = { 0: "M", 1: "A", 2: "D", 3: "R", 
 
 // LoreEventTag values we read (full enum in @lore-vcs/sdk).
 const TAG_COMPLETE = 2;
+const TAG_METADATA = 3;
+const TAG_BRANCH_LIST_ENTRY = 15;
 const TAG_STATUS_REVISION = 151;
 const TAG_STATUS_FILE = 152;
+const TAG_REVISION_HISTORY_ENTRY = 165;
 
 type LoreEvt = { tag: number; data?: Record<string, unknown> };
 
@@ -72,6 +75,82 @@ export async function sdkStatus(repoPath: string): Promise<SdkStatus | null> {
       }
     }
     return ok ? { branch, files } : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface SdkBranches {
+  current: string | null;
+  branches: { name: string; current: boolean }[];
+}
+
+/** Local branch list via the SDK (`offline` → skip the remote query). Skips archived (deleted)
+ *  branches. Returns null when unavailable/errored → CLI fallback. */
+export async function sdkBranches(repoPath: string): Promise<SdkBranches | null> {
+  const m = await sdk();
+  if (!m) return null;
+  try {
+    const events = (await m.lore
+      .branchList({ repositoryPath: repoPath, offline: true }, {})
+      .collectAsync()) as unknown as ReadonlyArray<LoreEvt>;
+    let ok = false;
+    let current: string | null = null;
+    const branches: SdkBranches["branches"] = [];
+    for (const e of events) {
+      const d = e.data ?? {};
+      if (e.tag === TAG_BRANCH_LIST_ENTRY) {
+        if (d.archived) continue;
+        const name = String(d.name ?? "");
+        if (!name) continue;
+        const isCurrent = Boolean(d.isCurrent);
+        if (isCurrent) current = name;
+        branches.push({ name, current: isCurrent });
+      } else if (e.tag === TAG_COMPLETE) {
+        ok = Number(d.status ?? 1) === 0;
+      }
+    }
+    return ok ? { current, branches } : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface SdkCommit {
+  hash: string;
+  subject: string;
+  authorName: string;
+  date: number;
+}
+
+/** Commit history via the SDK. Each `revisionHistoryEntry` is followed by `metadata` events
+ *  (message / timestamp / creator) that belong to it. Returns null when unavailable/errored. */
+export async function sdkLog(repoPath: string, limit: number): Promise<SdkCommit[] | null> {
+  const m = await sdk();
+  if (!m) return null;
+  try {
+    const events = (await m.lore
+      .revisionHistory({ repositoryPath: repoPath, offline: true }, { length: limit })
+      .collectAsync()) as unknown as ReadonlyArray<LoreEvt>;
+    let ok = false;
+    const commits: SdkCommit[] = [];
+    let cur: SdkCommit | null = null;
+    for (const e of events) {
+      const d = e.data ?? {};
+      if (e.tag === TAG_REVISION_HISTORY_ENTRY) {
+        cur = { hash: String(d.revision ?? ""), subject: "", authorName: "", date: 0 };
+        commits.push(cur);
+      } else if (e.tag === TAG_METADATA && cur) {
+        const key = String(d.key ?? "");
+        const val = (d.value as { data?: unknown } | undefined)?.data;
+        if (key === "message") cur.subject = String(val ?? "");
+        else if (key === "timestamp") cur.date = Number(val ?? 0);
+        else if ((key === "creator" || key === "committer") && !cur.authorName) cur.authorName = String(val ?? "");
+      } else if (e.tag === TAG_COMPLETE) {
+        ok = Number(d.status ?? 1) === 0;
+      }
+    }
+    return ok ? commits : null;
   } catch {
     return null;
   }

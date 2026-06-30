@@ -85,6 +85,13 @@ test.skipIf(!RUN)("lore parity: AI diff · content search · plan input · smart
     const hist = (await $`lore history 10`.cwd(proj).quiet()).stdout.toString();
     expect(hist).toContain("feat: alpha");
     expect(hist).toContain("feat: beta");
+
+    // ── SDK read paths for branches + log (structured, not CLI scrape) ──
+    const { sdkBranches, sdkLog } = await import("../src/vcs/lore-sdk.ts");
+    const br = await sdkBranches(proj);
+    expect(br?.branches.some((b) => b.name === "main")).toBe(true);
+    const log = await sdkLog(proj, 10);
+    expect((log ?? []).map((c) => c.subject)).toEqual(expect.arrayContaining(["feat: alpha", "feat: beta"]));
   } finally {
     stopWatching();
     rmSync(root, { recursive: true, force: true });

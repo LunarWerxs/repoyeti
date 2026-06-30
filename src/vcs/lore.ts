@@ -26,7 +26,7 @@
  *   git stash             → (none)                       → UNSUPPORTED
  */
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { sdkStatus } from "./lore-sdk.ts";
+import { sdkStatus, sdkBranches, sdkLog } from "./lore-sdk.ts";
 import { join } from "node:path";
 import type { Identity, RepoStatus } from "../db.ts";
 import type { ChangedFile } from "../status.ts";
@@ -357,6 +357,20 @@ async function loreDeleteBranch(absPath: string, name: string): Promise<ActionRe
 
 async function loreReadLog(absPath: string, limit = 50, _skip = 0): Promise<LogResult> {
   const cap = Math.max(1, Math.floor(limit));
+  // Prefer the structured SDK; fall back to scraping `lore history` text.
+  const s = await sdkLog(absPath, cap);
+  if (s) {
+    const commits = s.slice(0, cap).map((c) => ({
+      hash: c.hash,
+      shortHash: c.hash.slice(0, 12),
+      subject: c.subject,
+      authorName: c.authorName,
+      authorEmail: "",
+      date: c.date,
+      refs: "",
+    }));
+    return { ok: true, code: "OK", commits, hasMore: commits.length >= cap };
+  }
   const run = await runLore(absPath, ["history", String(cap)]);
   if (run.spawnError || run.code !== 0) {
     return {
@@ -374,6 +388,17 @@ async function loreReadLog(absPath: string, limit = 50, _skip = 0): Promise<LogR
 // ── branches: list ────────────────────────────────────────────────────────────────────
 
 async function loreListBranches(absPath: string): Promise<BranchList> {
+  // Prefer the structured SDK; fall back to scraping `lore branch list` text.
+  const s = await sdkBranches(absPath);
+  if (s) {
+    return {
+      ok: true,
+      code: "OK",
+      current: s.current,
+      detached: false,
+      branches: s.branches.map((b) => ({ name: b.name, current: b.current, upstream: null, ahead: 0, behind: 0, gone: false })),
+    };
+  }
   const run = await runLore(absPath, ["branch", "list"]);
   if (run.spawnError || run.code !== 0) {
     return {
