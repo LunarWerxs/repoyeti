@@ -8,26 +8,55 @@
 > 🟡 **Big deal** — needed for a polished public reputation (≈P1). 🟢 **Small deal** — polish /
 > nice-to-have (≈P2). 🧑 **Needs you** — a decision or secret only the owner can supply (some of these
 > also gate the release). 🤖 = an agent can do it. Each item keeps its original code (`A4`, `C1`, `D1`…)
-> so older cross-references still resolve. Status verified against the tree on **2026-06-29**.
+> so older cross-references still resolve. Status verified against the tree on **2026-06-30** (HEAD `fddae3b`).
 
-> **▶ RESUME HERE (fresh chat).** The frontend pass is mid-flight. Next agent-doable items, in order:
-> **per-file staging** (needs a `POST /api/repos/:id/commit-selected` route) → **`D1`** RepoCard split
-> (~1380 lines, biggest) → **`E6`** frontend test infra (Vitest + Playwright). _tunnel-URL UI is DONE —
-> commits `904856e` (backend) + `9bab202` (web)._ ⚠️ **Heads-up:** the working tree carries a
-> half-finished, **uncommitted** `src/` refactor (`src/{diffstat,inspect,status}.ts`→`src/read/` and
-> `service.ts`→`src/service/`) that currently breaks `tsc` (`src/service/core.ts` imports a missing
-> `./watch.ts`) — finish or discard it before the next `bun run check`/commit. **Constraints:** work **only on `main`** (never
-> branch); **never suggest pushing/tagging/branch-protecting `0.1.0`** (owner-only, don't raise it).
-> The gitignored `.env` already holds `CONNECTIONS_API_KEY` + the Groq key — don't re-ask. A dev env
-> may still be live (daemon `:7171`, Vite `:4319`, `loreserver`); **restart the daemon after backend
-> edits** so new routes are served. The pattern to copy: each feature = backend route + `VcsBackend`
-> method (git real, Lore graceful stub) + a test, then the web UI, then browser-verify via preview tools.
+> **▶ RESUME HERE (next session — use ONE chat).** Tree is **clean and `tsc`-green**; the big `src/`
+> reorg + agent surfaces have all **landed** (see the 2026-06-30 wave below). **Next agent-doable item:
+> the per-file-staging WEB UI** — the backend route `POST /api/repos/:id/commit-selected` already
+> exists (commit `fddae3b`, `commitSelectedRepo` + 3 tests + OpenAPI entry); what's left is the
+> dashboard: add per-file **selection** (checkboxes) to `ChangesTree.vue`, a "Commit selected (N)"
+> affordance in `RepoCard.vue`, the `store`/`api` wiring (`api.commitSelected`), then browser-verify.
+> After that: **`D1`** RepoCard split → **`E6`** frontend test infra.
+>
+> ⚠️ **Run ONE agent session at a time** (the owner's standing rule — item **G**): this cycle two
+> sessions on one tree collided (a refactor landed mid-edit and broke `tsc`); avoid that by working in
+> a single chat. **Constraints:** work **only on `main`** (never branch); **never** suggest
+> pushing/tagging/branch-protecting `0.1.0` (owner-only — don't raise it). The gitignored `.env` holds
+> `CONNECTIONS_API_KEY` + the Groq key — don't re-ask.
+>
+> 🗺️ **New backend layout (post-reorg — old `daemon.ts`/`service.ts` paths in this doc are stale):**
+> HTTP routes live in `src/http/routes/*` (registered via `register(app, deps)`; composition root
+> `src/http/app.ts`); the read layer is `src/read/{status,inspect,diffstat}.ts`; the orchestration
+> layer is `src/service/*` (barrel `src/service/index.ts`); CLI in `src/cli/`, MCP in `src/mcp/`. The
+> **pattern to copy for a new route:** schema in `src/schemas.ts` → service fn in `src/service/*` →
+> route in `src/http/routes/*` → **add it to the OpenAPI map in `src/http/openapi.ts`** (a drift-guard
+> test fails otherwise) → a route test. A dev daemon must be **restarted after backend edits** (or run
+> under `bun run dev`'s `--watch`); it's single-instance on `:7171`.
 
 ---
 
 ## ✅ Landed in the `0.1.0` burndown (2026-06-29 → 06-30, all on `main`)
 
-All verified green at each step (277 daemon tests + web build, `tsc`, `check:codes`/`check:boundaries`, lint).
+All verified green at each step (**318 daemon tests** + web build, `tsc`, `check:codes`/`check:boundaries`, lint).
+
+**🔧 Maintainability reorg + agent surfaces (2026-06-30) — DONE.** A run of commits landed on top of the
+frontend pass:
+- **3-part structural reorg** (`5b77e9b`/`e4eb817`/`00ee787`): read layer → `src/read/`, `service.ts`
+  split into `src/service/*`, `daemon.ts` split into `src/http/` (composition root + per-area route
+  modules), CLI entry → `src/cli/`. _Most `service.ts`/`daemon.ts` path references lower in this doc are
+  now stale — see the new-layout map in the RESUME banner._
+- **`feat(openapi)`** (`d240b96`): machine-readable OpenAPI 3.1 at `GET /api/openapi.json`, with a
+  drift-guard test asserting every `/api/*` route appears in `src/http/openapi.ts`.
+- **`feat(cli)`** (`ba2fa78`): git verbs that drive the running daemon over HTTP.
+- **`feat(mcp)`** (`c4483d0`): a hand-rolled MCP server (stdio + `/api/mcp`) exposing the git tools to AI
+  agents.
+- **`feat(auth)`** (`7a6db83`): an **opt-in** Bearer API token for remote/headless agents (off by default).
+- **`feat(log)`** (`e9640a9`): merge-commit detection (`parents` + `isMerge`) + a `?merges` filter.
+- **tunnel-URL UI** (`904856e` backend + `9bab202` web): Settings → Access "Stable address" card; redacted
+  `tunnel` on `/api/status` + keychain-backed `PUT /api/tunnel`, live tunnel restart when remote is on.
+- **per-file staging — BACKEND** (`fddae3b`): `POST /api/repos/:id/commit-selected` + `commitSelectedRepo`
+  (reuses the `commitGroups` primitive; stale-selection guard) + 3 route tests + OpenAPI entry. _The
+  dashboard UI to drive it is the next item — see 🟡 below._
 
 **🟡 Lore feature-parity port — DONE & verified end-to-end** against a live `loreserver` 0.8.4 (the
 `lore` CLI is now installed at `~/bin`). AI commit-diff, smart-commit (plan input + group staging via
@@ -56,7 +85,7 @@ with the daemon running (owner step). (Key is now stored in gitignored `.env` as
 preview tools). **DONE & browser-verified:** toast-undo (hide/pin/star → Undo restores) · AI-style picker
 (Settings → AI; change → daemon persists `style`) · **Lore servers UI** (Settings → "Lore servers" panel
 add/remove → daemon persists; Add-repo → "From Lore" tab cloned `clonetest` from a live server end-to-end).
-**`F6` a11y DONE** (header role=button + keyboard + chip aria-labels, verified). **commit-detail diff DONE** (tap a History commit → changed files + diff; new readCommit on VcsBackend + route, git verified, Lore degrades gracefully). **tunnel-URL UI DONE** (Settings → Access "Stable address" card: redacted `tunnel` on `/api/status` + a keychain-backed `PUT /api/tunnel`, live tunnel restart when remote is on; 6 route tests; commits `904856e` backend + `9bab202` web). Remaining: per-file staging (needs a route), then `D1` RepoCard split (biggest), and `E6` test infra.
+**`F6` a11y DONE** (header role=button + keyboard + chip aria-labels, verified). **commit-detail diff DONE** (tap a History commit → changed files + diff; new readCommit on VcsBackend + route, git verified, Lore degrades gracefully). **tunnel-URL UI DONE** (Settings → Access "Stable address" card: redacted `tunnel` on `/api/status` + a keychain-backed `PUT /api/tunnel`, live tunnel restart when remote is on; 6 route tests; commits `904856e` backend + `9bab202` web). Remaining: **per-file-staging WEB UI** (backend `fddae3b` done — see 🟡), then `D1` RepoCard split (biggest), and `E6` test infra.
 
 **Still open:**
 - **`E6`** frontend test infra (Vitest + Playwright) — adds dev-deps to the shared `bun.lock`.
@@ -77,59 +106,49 @@ diff` is real unified-diff content, not drift-prone status labels._
 
 ## 🔴 Vital — do now (blocks a public release / real bugs / active breakage)
 
-Agent-doable blockers first; `A6` needs you for two steps. The release **also** needs the owner-gated
-items under **🧑 Needs you** (version cut `A4`, README infra decision `A5`, branch protection).
+**No agent-doable blockers remain in this tier** (`C1`/`C2`/`E4` are done). The release is gated only by
+**owner** steps: `A6` (a live sign-in), plus the items under **🧑 Needs you** (version cut `A4`, README
+infra decision `A5`, branch protection).
 
-- [ ] **🧑+🤖 `A6` — deploy the renamed auth shim + re-register its redirect URI** *(the rename's only
-  loose end — remote sign-in is broken until done; local-only mode is unaffected)*. The GitMob→RepoYeti
-  rename repointed the OAuth shim to `repoyeti-auth.lunawerx.workers.dev`, but **that worker is not
-  deployed** (confirmed 404) and the old `gitmob-auth` URL is still what's registered at `connections.icu`.
-  Steps: **(1) 🧑** authenticate wrangler — `bunx wrangler login` (browser → Allow) *or* set
-  `CLOUDFLARE_API_TOKEN`; an agent **cannot** log in for you. **(2) 🤖** `cd shim && bunx wrangler deploy`,
-  then curl `…/cb` to confirm it's live. **(3) 🧑** in the `studio.connections.icu` developer app (clientId
-  `a790090c…`, unchanged), set/add redirect URI `https://repoyeti-auth.lunawerx.workers.dev/cb` (scopes
-  `openid profile email`) — **no API/connector exists**, it's a dashboard edit behind your login.
-  **(4) 🤖** fix the README + `shim/README.md` "✅ Deployed" wording (aspirational until step 2), then
-  delete the stale `gitmob-auth` worker. ⚠️ **Overlaps `A5`:** if `A5` chooses a neutral domain, deploy
-  *that* instead of `repoyeti-auth`.
-- [ ] **🤖 `C1` — `registerRepo` is git-only (real bug).** `service.ts` hardcodes an `existsSync('.git')`
-  check, so "Point to Folder" silently rejects valid **Lore** repos. Fix: use `detectVcs(p)` (exists in
-  `src/vcs/index.ts`); return `NOT_A_REPO` when null. *Real bug given the Lore pivot.*
-- [ ] **🤖 `C2` — finish the `VcsBackend` abstraction.** `service.ts` imports `loreFilePatch`/
-  `loreDiscardFile` directly from `vcs/lore.ts` and branches on `repo.vcs` in the viewer + `discardFile`.
-  Add `filePatch()` + `discardFile()` to the `VcsBackend` interface, implement in `git.ts` + `lore.ts`,
-  route through `backend.*`. (Also the cleanup half of the Lore feature-parity port below.)
-- [ ] **🤖 `E4` — tunnel toggle + watcher→SSE pipeline (test gap).** The cloudflared *resolver*
-  (`tunnel.test.ts`) and watcher *health* (`watcher.test.ts`) are covered, but the `PUT /api/mode`
-  start/stop toggle and the watcher→`broadcast`→SSE wiring are not. Mock the tunnel factory; write a file
-  and assert a `repo_state_changed` event reaches a subscriber. (`E1` detached-HEAD, `E2` push errors,
-  `E3` SSE/bus are **done**.)
+- [ ] **🧑 `A6` — auth shim RETIRED; only an owner live sign-in remains to verify.** Superseded: the
+  rotating-URL Worker shim is **gone** — `src/config.ts` + the IdP now use the daemon's own
+  `https://app.repoyeti.com/oauth/callback` (the stable named CF tunnel) + the loopback, so there's no
+  worker to deploy or re-register. Per the Connections finding below + project memory, redirect URIs were
+  set in AEGIS via the vault. **The single unproven step is a real owner sign-in** (open
+  `app.repoyeti.com` with the daemon running → "Sign in with Connections" → confirm the owner is claimed).
+  Agent can't do this — it needs your live Connections login. ⚠️ Still entangled with `A5` (the README/
+  config infra decision), below.
+- [x] **🤖 `C1` / `C2` / `E4` — ALL DONE** (see the Landed section): `C1` registerRepo→`detectVcs`;
+  `C2` `filePatch`/`discardFile` on `VcsBackend`; `E4` `PUT /api/mode` toggle + watcher→SSE delivery test.
+  No agent work remains in the 🔴 Vital tier — only the owner-gated `A6` below + the 🧑 release items.
 
 ## 🟡 Big deal — before a polished public launch (P1)
 
-- [ ] **🤖 `D1` — decompose `RepoCard.vue` (1,382 lines). The #1 maintainability win.** ~8 UI concerns in
-  one file. Extract `BranchPanel` / `StashPanel` / `LogPanel` / `TagPanel` / `RemoteManager` /
-  `FileViewerDrawer` siblings; `RepoCard` becomes a thin composer. Do incrementally, on its own branch.
-- [ ] **🤖 `E5` — secrets without a keychain (test gap).** 2 of 3 `secrets.test.ts` cases
-  `skipIf(!keychain)` → never run in CI. Add a stub so the migration path runs headlessly. **Also cover the
-  new legacy keychain-service fallback** (`getSecret()` reads the old `"gitmob"` service and re-homes the
-  value under `"repoyeti"` on first access — added by the rename, currently untested).
+- [ ] **🤖 `D1` — decompose `RepoCard.vue` (~1,382 lines). The #1 remaining maintainability win.** ~8 UI
+  concerns in one file. Extract `BranchPanel` / `StashPanel` / `LogPanel` / `TagPanel` / `RemoteManager` /
+  `FileViewerDrawer` siblings; `RepoCard` becomes a thin composer. Do it incrementally **on `main`** (the
+  owner's work-only-on-main rule; one session at a time). _Note: the **backend** reorg already happened
+  (`daemon.ts`→`src/http/`, `service.ts`→`src/service/*`); `D1` is now the **frontend** counterpart._
+- [x] **🤖 `E5` — DONE** (see Landed): headless in-memory keychain stub so the migration path runs in CI +
+  legacy `"gitmob"`-service rehome coverage.
 - [ ] **🤖 `E6` — frontend tests: currently zero.** Add **Vitest + @vue/test-utils** (pure-lib units, a
   store smoke test, a `SmartCommitPlan.vue` render) + one Playwright E2E of the SSE flow.
   ⛔ *Needs new dev-deps in the shared `bun.lock` — coordinate before adding.*
-- [ ] **🤖 `F2` — document the Cloudflare-header auth assumption (security clarity).** `isRemoteRequest()`
-  decides local-vs-remote purely from `cf-connecting-ip`/`x-forwarded-*`; behind a non-Cloudflare proxy
-  that omits them, *remote could be treated as local*. Add a loud code comment + a README deployment note.
-- [ ] **🤖 `F6` — accessibility / touch-target pass.** Card header is a `div` with `@click` (not a button);
-  status chips lack `aria-label`; check 44pt/48dp targets. CSS/markup pass before a public, phone-first
-  launch.
+- [x] **🤖 `F2` — DONE** (see Landed): loud `isRemoteRequest()` code comment + a README note on the
+  Cloudflare-header (local-vs-remote) auth assumption behind a non-Cloudflare proxy.
+- [x] **🤖 `F6` — DONE** (see Landed): card header → `role=button` + keyboard, status chips got
+  `aria-label`s, touch-target pass — verified.
 - [ ] **🤖 PAT / HTTPS auth.** Unblocks clone/fetch/push/tag-push for **private HTTPS** remotes (SSH-key
   auth doesn't help there). `pat_handle` column reserved; needs keychain + per-op `GIT_ASKPASS`. ⚠️ The
   network path can't be unit-verified without a real private repo + token — needs owner involvement to test.
-- [ ] **🤖 Per-file (file-level) staging for a normal commit.** Only stage-all exists today. (Smart Commit
-  already stages file-level internally; this exposes it for a single ordinary commit.)
+- [ ] **🤖 Per-file (file-level) staging — WEB UI remaining** *(this is the next item; backend DONE in
+  `fddae3b`)*. The route `POST /api/repos/:id/commit-selected` (+ `commitSelectedRepo`, stale-selection
+  guard, 3 tests, OpenAPI entry) already exists and is usable by the CLI/MCP today. What's left is the
+  dashboard: per-file **selection** (checkboxes) in `ChangesTree.vue` (currently only emits `discard`), a
+  "Commit selected (N)" affordance in `RepoCard.vue`, the `store`/`api.commitSelected` wiring, then a
+  browser pass.
 
-### Lore (the pivot — experimental, behind `REPOYETI_LORE=1`) — *your current focus*
+### Lore (the pivot — experimental, behind `REPOYETI_LORE=1`)
 
 The core is done + verified (see ✅ Already done). To reach git-parity:
 
@@ -138,49 +157,25 @@ The core is done + verified (see ✅ Already done). To reach git-parity:
   **smart-commit** group staging, and **content-search** are still git-only and are **hidden in the Lore
   UI** (the web `aiHere` + capability gates). Map them to `lore diff` / `lore stage <paths>`+`lore commit`
   / a JS content scan over changed files, then re-enable the gates. (Shares the `C2` cleanup above.)
-- [ ] **🤖 Lore servers web UI.** The backend is done + verified (`config.servers` +
-  `GET/POST/DELETE /api/servers` + `POST /api/servers/clone` → `cloneLoreRepo`), but **nothing in
-  `web/src` calls `/api/servers`** — there is no UI yet. Add a Settings → Servers panel (add/remove server
-  URLs) + a "Clone from a Lore server" path in the Add-repo dialog. ⚠️ Prefer an **IP literal over
-  `localhost`** in server URLs — a `localhost`→IPv6 QUIC handshake stalls ~30 s before IPv4 fallback (the
-  Lore backend caps each op at 120 s via `LORE_TIMEOUT_MS`). *(The CHANGELOG "Server registry" entry is
-  API-only until this lands.)*
+- [x] **🤖 Lore servers web UI — DONE** (see Landed): Settings → "Lore servers" panel (add/remove →
+  daemon persists) + an Add-repo "From Lore" tab; clone-from-server verified end-to-end against a live
+  `loreserver`. ⚠️ Reminder for any new server URL: prefer an **IP literal over `localhost`** — a
+  `localhost`→IPv6 QUIC handshake stalls ~30 s before IPv4 fallback (ops cap at 120 s via `LORE_TIMEOUT_MS`).
 
 ## 🟢 Small deal — polish / nice-to-have (P2)
 
-**Cleanup & dedup**
-- [ ] **🤖 `C5` — gate nesting.** `collectRepoDiff` / `planCommitInput` call `readStatus` (takes `readGate`)
-  *inside* an `enqueue` slot — no deadlock, but holds the op-queue while waiting on a read slot. Read before
-  `enqueue`, or add a comment that it's intentional.
-- [ ] **🤖 `D2` — `repoRoute()` wrapper.** `daemon.ts` repeats the id-parse/guard pattern ~19×. Extend the
-  existing `action()`/`repoFromPath()` factory pattern.
-- [ ] **🤖 `D3` — type duplication.** `CommitStyle` defined twice (config.ts + web types.ts);
-  `CommitPlanGroup` (backend) vs `CommitGroup` (frontend) name drift. Align names; extend the
-  `check-error-codes` drift guard to cover them.
-- [ ] **🤖 `D4` — residual dedup.** Confirm/remove any remaining `ok()` / `PATCH_CAP` duplication between
-  `git-actions.ts` and `vcs/lore.ts`; consider a shared `boundedDiffWithFallback()` (the unborn-HEAD diff
-  fallback is copy-pasted in ~3 collectors). (`src/paths.ts` + `asResult()` dedup already done.)
-- [ ] **🤖 `D5` — drop the dead `workspace_id` column.** The `repos` table still has `workspace_id` with no
-  SQL against it (the `workspaces`/`sessions` tables were already removed).
-
-**Tooling**
-- [ ] **🤖 `B4` — CI completeness.** Add a cross-platform OS matrix (the compiled binary is per-OS) + a
-  `bun audit` step. (Bun pinned + dep cache + the `check`/coverage/release workflows already in CI.)
-- [ ] **🤖 `B5` — broaden the pre-commit hook** to run lint + typecheck, not just `i18n:check` (lint already
-  runs in CI, so minor).
-- [ ] **🤖 `B7` — misc hygiene:** pin `@types/bun` (currently `latest`); set `build.chunkSizeWarningLimit`
-  for the Monaco chunk.
+**Cleanup & dedup + Tooling — ALL DONE** (see the "🟡/🟢 also done" line in Landed):
+- [x] `C5` gate-nesting comment · `D2` `requireId()` route-guard collapse · `D3` `CommitStyle` drift
+  guard (the `check:codes` test) · `D4` centralized `ok`/`fail`/`PATCH_CAP` · `D5` dropped `workspace_id`.
+- [x] `B4` CI OS matrix + `bun audit` · `B5` pre-commit lint+typecheck · `B7` pinned `@types/bun` + Monaco
+  `chunkSizeWarningLimit`.
+- [ ] *Tiny optional sliver of `D4` not pursued:* a shared `boundedDiffWithFallback()` (the unborn-HEAD
+  diff fallback is still copy-pasted across ~3 collectors). Low value; skip unless touching that code.
 
 **Features (occasional / niche)**
-- [ ] **🤖 Commit-detail diff from the log.** Tap a commit in History → see its changed files + diff
-  (multi-file `git show`; add `readCommit` to `VcsBackend` so it's VCS-agnostic).
-- [ ] **🤖 Toast "Undo" for hide / pin / star.** Pure frontend (vue-sonner action); zero server change.
-- [ ] **🤖 Stable named-tunnel URL surface.** `CF_TUNNEL_TOKEN` is supported in config; add a Settings UI
-  for it (no more re-scan on restart).
-- [ ] **🤖 AI commit-style picker in the UI** (Conventional / concise / detailed; currently config.json-only).
-- [ ] **🤖 Migrate Lore reads off CLI-scraping → `@lore-vcs/sdk`.** Status/branches/log are parsed from
-  `lore` text output (fixture-locked in `tests/lore-parse.test.ts`); the SDK returns structured data that
-  won't drift across Lore 0.x releases. Optional hardening.
+- [x] **DONE — commit-detail diff · toast "Undo" (hide/pin/star) · stable named-tunnel URL (the "Stable
+  address" Settings card) · AI commit-style picker · Lore SDK read-migration.** All landed (see the Landed
+  section + the 2026-06-30 wave); kept here only so old cross-refs resolve.
 - [ ] **🤖 Niche, someday:** git blame / per-file history · compare two refs · per-repo AI-provider override
   · cross-repo search · cross-repo activity feed · web-push notifications · commit signing (SSH/GPG).
 - *Workspace/grouping UI is intentionally deferred — the `workspaces` table was removed.*
@@ -190,12 +185,12 @@ The core is done + verified (see ✅ Already done). To reach git-parity:
 - [ ] **`A4` — cut version `0.1.0`** *(release-gating)*. Bump `package.json` (both) `0.0.1 → 0.1.0`, move
   CHANGELOG `[Unreleased]` into a dated `[0.1.0]` section, tag `v0.1.0`. You pick the number; the rest is
   mechanical.
-- [ ] **`A5` — README personal-infra decision** *(release-gating)*. The README + `src/config.ts` hardcode a
-  personal OAuth shim (`repoyeti-auth.lunawerx.workers.dev`) and a shared Connections `client_id`, and
-  assume `connections.icu` access — a forker would hit *your* shim. Decide: keep baked-in / move to a
-  neutral domain / require each deployer to register their own app. **Unblocked by your in-progress
-  Connections-MCP/DNS work.** Then a 1-line README/config edit. *(Deploy/re-register mechanics live in
-  `A6`; this is also the only remaining piece of `F4`.)*
+- [ ] **`A5` — README personal-infra decision** *(release-gating)*. The README + `src/config.ts` hardcode
+  *your* infra — the `https://app.repoyeti.com/oauth/callback` redirect (your named CF tunnel) + a shared
+  Connections `client_id` — and assume `connections.icu` access, so a forker would authenticate against
+  *your* setup. Decide: keep baked-in / move to a neutral domain / require each deployer to register their
+  own app. **Unblocked by your in-progress Connections-MCP/DNS work.** Then a 1-line README/config edit.
+  *(This is also the only remaining piece of `F4`.)*
 - [ ] **Branch-protect `main` at launch** *(release-gating)*. Require PRs + green CI; no direct pushes — a
   GitHub settings step once the repo is public.
 - [ ] **`F5` — relocate the root design doc.** `MARCHING_ORDERS.md` still sits at root; it holds durable
@@ -229,7 +224,8 @@ repo in an unsafe state on a phone, or contradicts the zero-infra positioning.
   `LunarWerxs/gitmob`→`LunarWerxs/repoyeti` (remote + package URLs repointed; old URL auto-redirects).
   Back-compat shipped: `config.ts migrateLegacyState()` (one-time dir + db move, default-home only) and
   `secrets.ts getSecret()` legacy-`"gitmob"`-keychain fallback (re-homes on first read). *The only remaining
-  rename work is the owner-gated shim deploy + redirect-URI re-register — tracked as `A6` above.*
+  rename loose-end is an owner live sign-in to confirm remote auth — tracked as `A6` above (the old Worker
+  shim was retired, not redeployed).*
 - **Guardrails:** Biome lint + `bun run check` + boundary guard + ApiErrorCode drift guard + 80% coverage
   gate, all in CI · `release.yml` (tag → cross-OS binary + GitHub Release) · pinned Bun + dep cache ·
   auto-enabled git hooks · `.editorconfig`.
