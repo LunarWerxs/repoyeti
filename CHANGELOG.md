@@ -8,6 +8,21 @@ All notable changes to RepoYeti are documented here. The format is based on
 
 ### Added
 
+- **Smart Commit (AI multi-commit splitter).** Turn a pile of unrelated working-tree changes into
+  an ordered set of small, scoped commits. The daemon proposes a plan (`POST /api/repos/:id/commit-plan`
+  → AI, with a deterministic heuristic fallback — nothing is committed), you review and edit it in a
+  dedicated editor (rename subjects, move files between commits, reorder/merge), then execute
+  (`POST /api/repos/:id/smart-commit`, which re-validates the edited plan against the live tree and
+  commits each group in isolation, file-level only). A **YOLO mode** (Settings → AI) skips the review
+  and commits the plan in one tap. Never auto-pushes.
+- **VCS-agnostic backend.** Repos now carry a `vcs` kind behind a pluggable `VcsBackend` interface
+  (`src/vcs/`). **git** is the default; **[Epic's Lore](https://dev.epicgames.com/documentation/en-us/lore)**
+  is supported experimentally behind `REPOYETI_LORE=1`.
+- **Server registry.** Register version-control servers (Settings → Servers) and clone repos from them
+  — `GET/POST/DELETE /api/servers` + `POST /api/servers/clone`.
+- **Background remote-sync.** An optional periodic check (`src/remote-sync.ts`) keeps each repo's
+  "behind" count fresh, with an opt-in **keep-in-sync** mode that auto fast-forwards safe (clean,
+  non-diverged) repos. Cadence + toggles live in Settings (`syncCheck` / `syncIntervalSecs` / `keepInSync`).
 - **Remote & tags management.** A per-repo "Remote & tags" dialog (repo card ⋮ menu) sets or
   updates the `origin` URL — a local config change, no network — so a repo you created with
   `git init` from the phone can finally be given a remote and pushed. The same dialog lists the
@@ -44,8 +59,8 @@ All notable changes to RepoYeti are documented here. The format is based on
 - **Discard a file.** Revert one changed file to its last-committed state directly from the
   changes tree (confirm-gated) — the inverse of the in-app editor. Path-confined and behind the
   per-repo op-queue, like every other mutation.
-- **Feature gap analysis.** `docs/FEATURE_GAP_ANALYSIS.md` — a rundown of the current feature set
-  plus a prioritized list of what to add next (and what stays out by design).
+- **Consolidated working backlog.** `docs/TODO.md` — the single prioritized list of remaining work
+  (release-readiness + feature backlog + what stays out by design).
 - **In-app file viewer.** Click any changed file in a repo's tree to open its contents in an
   inline Monaco (VS Code) editor — a right-side push-drawer on desktop (the page slides left
   and stays centred; drag the left edge to resize) or a bottom sheet on mobile. Read-only,
@@ -55,10 +70,10 @@ All notable changes to RepoYeti are documented here. The format is based on
   persisted). Backed by read-only, path-confined `GET /api/repos/:id/file` and `/diff`
   endpoints (binary, deleted-file, and oversized cases handled). Monaco is lazy-loaded and
   excluded from the PWA precache so it never bloats the initial app.
-- **Internationalisation (i18n).** The web UI is fully localised with `vue-i18n`. English
-  is the base locale; Spanish, French, German, and Simplified Chinese ship as
-  machine-translated drafts (pending human review), lazy-loaded on demand. A language
-  switcher lives in **Settings → Appearance** and the choice is persisted.
+- **Internationalisation scaffolding (i18n).** All UI copy runs through `vue-i18n` rather than
+  hardcoded strings, so locales can be added later. **Only English (`en.json`) ships today** —
+  the earlier machine-translated drafts and the language switcher were removed; `bun run i18n:check`
+  keeps the codebase translation-ready (no untranslated literals, no missing keys).
 - **`bun run i18n:check`** — a compliance script that fails CI on untranslated UI strings,
   missing translation keys, or locale key-parity drift (templates are parsed with the Vue
   compiler, not regex).

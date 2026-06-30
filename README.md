@@ -2,10 +2,13 @@
 
 A self-contained, **system-wide remote git manager**. A background daemon discovers all your
 git repos, tracks their state (branch / dirty / ahead / behind) event-driven, manages multiple
-git identities, and serves a mobile dashboard over a secure remote URL so you can safely
-fetch/pull/push from your phone.
+git identities, and serves a mobile dashboard over a secure remote URL so you can safely run git
+from your phone — fetch / pull / push, branches, stash, commit, tags, AI commit messages, and an
+AI multi-commit **Smart Commit** splitter. A pluggable VCS backend also supports
+[Epic's Lore](src/vcs/lore.ts) (experimental, behind `REPOYETI_LORE=1`).
 
-> Full design + build plan: **[MARCHING_ORDERS.md](MARCHING_ORDERS.md)** — the single source of truth.
+> Original design doc: **[MARCHING_ORDERS.md](MARCHING_ORDERS.md)** — the v1 build plan. The product
+> has since grown well beyond it; see **Dashboard features** below and the [CHANGELOG](CHANGELOG.md).
 
 ## Status
 
@@ -25,6 +28,12 @@ step for a live login round-trip is registering a "Sign in with Connections" app
 ² PAT/HTTPS-token auth + OS-keychain (keytar) remain intentionally deferred (SSH-key injection covers
 the common case); the named-tunnel stable-URL upgrade is documented.
 
+> **Beyond v1.** Those phases were the original build plan. RepoYeti has since grown a large feature
+> set on top — branches · commit log · stash · discard · clone-from-URL · tags · remote management ·
+> scan-folder management · bulk fetch-all · **Smart Commit** (AI multi-commit splitter) · an in-app
+> file viewer/editor · background remote-sync · a pluggable VCS backend (git + Lore) · a server
+> registry. See **Dashboard features** below and the [CHANGELOG](CHANGELOG.md) for the full surface.
+
 ## Stack
 
 **Daemon:** Bun · `bun:sqlite` (WAL) · `simple-git` · Hono · SSE down / REST up.
@@ -33,18 +42,23 @@ The daemon is the primary artifact; the CLI is its launcher; a future Tauri tray
 
 ## Dashboard features
 
-- **Live repo grid** — branch / dirty / ahead / behind per repo, pushed over SSE; drag to reorder, filter by name / identity / sync state. **Fetch all** with one tap.
-- **Safe git actions** — fetch / pull (fast-forward only) / push (no force) / stage-all + commit, each identity-attributed.
-- **Self-service setup** — add or remove scan folders from Settings (no CLI needed), **clone a repo from a URL** onto the machine, and "sign out everywhere" to invalidate every device's session at once.
+- **Live repo grid** — branch / dirty / ahead / behind per repo, pushed over SSE; drag to reorder, **pin / star / hide**, filter by name / identity / sync state. **Fetch all** with one tap.
+- **Safe git actions** — fetch / pull (fast-forward only) / push (no force) / stage-all + commit (with **amend**), each identity-attributed.
 - **Branches** — list local branches with ahead/behind, switch (clean-tree guarded), create (＋), and safe-delete (`-d` only; protected branches and the current branch are refused).
-- **Commit history** — a lazy, paginated read-only log per repo (hash · subject · author · relative time; tap a hash to copy).
-- **Stash** — stash all changes (incl. untracked) to escape the "dirty tree blocks pull" dead-end, then pop / drop from the phone. A conflicting pop keeps the stash and says "resolve at your desk" — never a silent half-merge.
+- **Commit history** — a lazy, paginated read-only log per repo (hash · subject · author · relative time; tap a hash to copy). The commit box also offers your **last few commit messages as one-tap chips**.
+- **Stash** — list, then stash all changes (incl. untracked) to escape the "dirty tree blocks pull" dead-end, and pop / drop from the phone. A conflicting pop keeps the stash and says "resolve at your desk" — never a silent half-merge.
 - **Discard a file** — revert one changed file to its last commit, straight from the changes tree (confirm-gated; the inverse of the in-app editor).
+- **Remote & tags** — set or update a repo's `origin` URL (so a `git init`-from-the-phone repo becomes pushable), list tags, and **create a tag** (annotated, optional push to origin) — all from a per-repo dialog.
 - **AI commit messages (BYOK)** — draft a message from the repo's diff via your own key (Groq · OpenRouter · Gemini · Claude · ChatGPT · DeepSeek). Keys stay on the daemon; nothing leaves the machine without an explicit generate.
-- **VS Code-style changes tree** — real `vscode-icons` file-type glyphs, resizable per repo (drag / ↑↓ / double-click reset) with a Small / Medium / Tall default.
+- **Smart Commit (AI)** — split a pile of working-tree changes into several clean, scoped commits: the daemon proposes a plan, you review/edit it (move files between commits, rename, reorder), then execute — or flip on **YOLO mode** to commit the plan in one tap.
+- **In-app file viewer & editor** — open any changed file in an inline Monaco editor (Content / Diff / word-level / split, all persisted), **search content** across changed files, and **edit + save** a file back to disk (path-confined; gated by a remote-editing toggle).
+- **Self-service setup** — add or remove scan folders from Settings (no CLI needed), **clone a repo from a URL** onto the machine, and "sign out everywhere" to invalidate every device's session at once.
+- **Background remote-sync** — an optional periodic check keeps "behind" counts fresh, with opt-in **keep-in-sync** auto fast-forward of safe repos.
+- **VCS-agnostic + servers** — repos carry a `vcs` kind (git today; **Lore** behind `REPOYETI_LORE=1`) via a pluggable backend, and a **server registry** lets you clone Lore repos from a registered server.
+- **VS Code-style changes tree** — real `vscode-icons` file-type glyphs, resizable per repo (drag / ↑↓ / double-click reset) with a Small / Medium / Tall default; optional per-file/per-repo **diff stats**.
 - **English UI** — copy runs through `vue-i18n` (the `t()` layer is kept so locales can be re-added), but only English ships today.
 
-## Run (Phase 1)
+## Run
 
 ```sh
 bun install
@@ -52,6 +66,9 @@ bun run src/index.ts add-root /path/to/your/code     # register a directory to s
 bun run src/index.ts start                            # boot the daemon (127.0.0.1:7171)
 bun run src/index.ts status                           # print configured roots + indexed repos
 ```
+
+> The curl examples below are a representative subset — the full API surface (branches, stash,
+> tags, remotes, smart-commit, servers, settings, …) lives in [`src/daemon.ts`](src/daemon.ts).
 
 Then:
 
@@ -86,7 +103,7 @@ curl -XPOST :7171/api/repos/<id>/discard  -d '{"path":"src/a.ts"}'      # revert
 ## Remote access (over the internet)
 
 ```sh
-repoyeti start --tunnel    # requires "oauth" configured in ~/.repoyeti/config.json (Sign in with Connections)
+repoyeti start --tunnel    # opens a tunnel; an owner must have signed in once (Sign in with Connections)
 ```
 
 Prints a `*.trycloudflare.com` URL + a QR to scan. The daemon refuses to open a tunnel unless auth is
@@ -119,7 +136,7 @@ Then `repoyeti start --tunnel` → scan the QR → Sign in with Connections → 
 ## Testing
 
 ```sh
-bun test        # discovery, op-queue, git-action guards, branch/stash/discard, auth gating, redirect shim
+bun test        # 38 test files — git actions/guards · branches/stash/discard · auth · AI · smart-commit · VCS backends · remote-sync · file viewer
 bun run typecheck
 ```
 
