@@ -11,12 +11,12 @@
 > so older cross-references still resolve. Status verified against the tree on **2026-06-30** (HEAD `fddae3b`).
 
 > **▶ RESUME HERE (next session — use ONE chat).** Tree is **clean and `tsc`-green**; the big `src/`
-> reorg + agent surfaces have all **landed** (see the 2026-06-30 wave below). **Next agent-doable item:
-> the per-file-staging WEB UI** — the backend route `POST /api/repos/:id/commit-selected` already
-> exists (commit `fddae3b`, `commitSelectedRepo` + 3 tests + OpenAPI entry); what's left is the
-> dashboard: add per-file **selection** (checkboxes) to `ChangesTree.vue`, a "Commit selected (N)"
-> affordance in `RepoCard.vue`, the `store`/`api` wiring (`api.commitSelected`), then browser-verify.
-> After that: **`D1`** RepoCard split → **`E6`** frontend test infra.
+> reorg + agent surfaces have all **landed** (see the 2026-06-30 wave below). **Per-file-staging WEB UI
+> is now DONE** (commit `876638a` — selection checkboxes in `ChangesTree.vue`, a "Commit selected (N)"
+> bar in `RepoCard.vue`, `api.commitSelected` + store action, a shared `changes-selection.ts` store;
+> verified end-to-end against a live daemon, `vue-tsc` + `i18n-check` green). **Next agent-doable item:
+> `D1`** — decompose `RepoCard.vue` (now ~1,476 lines) into sibling panels → then **`E6`** frontend
+> test infra (⚠️ needs new dev-deps in the shared `bun.lock` — get owner OK first).
 >
 > ⚠️ **Run ONE agent session at a time** (the owner's standing rule — item **G**): this cycle two
 > sessions on one tree collided (a refactor landed mid-edit and broke `tsc`); avoid that by working in
@@ -152,12 +152,12 @@ infra decision `A5`, branch protection).
 - [ ] **🤖 PAT / HTTPS auth.** Unblocks clone/fetch/push/tag-push for **private HTTPS** remotes (SSH-key
   auth doesn't help there). `pat_handle` column reserved; needs keychain + per-op `GIT_ASKPASS`. ⚠️ The
   network path can't be unit-verified without a real private repo + token — needs owner involvement to test.
-- [ ] **🤖 Per-file (file-level) staging — WEB UI remaining** *(this is the next item; backend DONE in
-  `fddae3b`)*. The route `POST /api/repos/:id/commit-selected` (+ `commitSelectedRepo`, stale-selection
-  guard, 3 tests, OpenAPI entry) already exists and is usable by the CLI/MCP today. What's left is the
-  dashboard: per-file **selection** (checkboxes) in `ChangesTree.vue` (currently only emits `discard`), a
-  "Commit selected (N)" affordance in `RepoCard.vue`, the `store`/`api.commitSelected` wiring, then a
-  browser pass.
+- [x] **🤖 Per-file (file-level) staging — WEB UI DONE** (`876638a`). Backend was `fddae3b`. Added
+  selection checkboxes to `ChangesTree.vue` (a shared provide/inject `changes-selection.ts` store,
+  mirroring `useTreeCollapse`, persisted per repo), a "Commit selected (N)" bar in `RepoCard.vue` (with a
+  prune watch that drops no-longer-pending paths so a stale path can't hit `PLAN_STALE`), and the
+  `api.commitSelected` + store action. Browser-verified end-to-end: selecting 2 of 4 changed files
+  committed exactly those 2 and left the rest pending; `vue-tsc` + `i18n-check` green.
 
 ### Lore (the pivot — experimental, behind `REPOYETI_LORE=1`)
 
@@ -204,11 +204,8 @@ The core is done + verified (see ✅ Already done). To reach git-parity:
   *(This is also the only remaining piece of `F4`.)*
 - [ ] **Branch-protect `main` at launch** *(release-gating)*. Require PRs + green CI; no direct pushes — a
   GitHub settings step once the repo is public.
-- [ ] **`F5` — relocate the root design doc.** `MARCHING_ORDERS.md` still sits at root; it holds durable
-  spec (the §7 security model, secrets/identity protocol, §10 acceptance criteria) and is live-linked from
-  `README.md`, `shim/README.md`, and `docs/SMART_COMMIT.md`. Promote its durable architecture into an
-  `ARCHITECTURE.md`, **or** move it to `docs/archive/` and fix those three links. (The three input briefs —
-  `gem.md`, `gpt.md`, `git-orchestrator-brief-v2.md` — were already deleted.)
+- [x] **`F5` — DONE** (was double-listed). `MARCHING_ORDERS.md` was promoted to a root `ARCHITECTURE.md`
+  and all refs repointed (see the Landed section); the old file is gone. This line was stale.
 - [ ] **Confirm the `MIT` license** is the intended one (package.json + `LICENSE` already say MIT).
 - [ ] **Adopt "one branch/worktree per agent session"** (G) as the standing process (you run multiple
   agents on one tree; this avoids the cross-session contention seen this cycle).
