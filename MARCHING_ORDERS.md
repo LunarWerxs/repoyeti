@@ -1,11 +1,11 @@
 # RepoYeti — Marching Orders (Minimal-but-Functional v1)
 
-> **What this file is.** The three briefs in this folder (`git-orchestrator-brief-v2.md`,
-> `gpt.md`, `gem.md`) describe the *same* product from three angles — a hard-constraints
-> architecture brief, an opinion prompt, and a Gemini response with a "winning stack." This
-> document distills them into a single, decisive build spec for the **smallest version that
-> actually works end-to-end on a phone**. Decisions below are made, not surveyed. Where the
-> briefs left something OPEN, it is now closed. Where they over-scoped, it is now cut.
+> **What this file is.** The single, decisive build spec for the **smallest version that
+> actually works end-to-end on a phone**. It distilled three earlier input briefs — a
+> hard-constraints architecture brief, an opinion prompt, and a Gemini "winning stack"
+> response — into one source of truth; those briefs were removed once their content was
+> fully absorbed here. Decisions below are made, not surveyed. Where the briefs left
+> something OPEN, it is now closed. Where they over-scoped, it is now cut.
 >
 > Method note: this spec was produced by running three independent minimal-MVP designs
 > (speed lens / security-first lens / simplest-stack lens) and adversarially synthesizing them.
