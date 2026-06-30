@@ -33,6 +33,17 @@
 > test fails otherwise) → a route test. A dev daemon must be **restarted after backend edits** (or run
 > under `bun run dev`'s `--watch`); it's single-instance on `:7171`.
 
+> **📌 Checkpoint — 2026-06-30 (this chat archived here).** The agent/CLI-surfaces wave is fully
+> landed and committed on `main`, and independently verified at the end of the session: full daemon
+> suite green (**315 pass / 1 skip / 0 fail** at the wave; ~318 now incl. the per-file-staging
+> backend), `tsc` clean, `check:boundaries` + `check:codes` pass. **Binary runtime-checked:**
+> `repoyeti mcp` returns the MCP handshake + all **14 tools** (read + MUTATES-tagged), and the CLI
+> verbs hit the daemon over HTTP (friendly "daemon isn't running" path confirmed when none is live).
+> The only uncommitted files in the tree are the *other* session's branding WIP (icons / logos /
+> `SignIn.vue`) — nothing from this wave is left unstaged. **Resume per the ▶ banner above** (per-file
+> staging WEB UI is the next agent-doable item). The lone `mode-events` SSE test is a known
+> pre-existing Windows timing flake — not from this work.
+
 ---
 
 ## ✅ Landed in the `0.1.0` burndown (2026-06-29 → 06-30, all on `main`)
