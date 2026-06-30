@@ -8,6 +8,24 @@
  */
 import { VERSION } from "../config.ts";
 import { start, addRootCmd, statusCmd } from "./lifecycle.ts";
+import { runGitVerb } from "./git.ts";
+
+/** Verbs that drive a running daemon over HTTP (src/cli/git.ts). `status` is handled separately
+ *  because of the name clash with the daemon-config summary (see the switch below). */
+const GIT_VERBS = new Set([
+  "repos",
+  "log",
+  "branches",
+  "branch",
+  "checkout",
+  "commit",
+  "diff",
+  "drift",
+  "stash",
+  "push",
+  "pull",
+  "fetch",
+]);
 
 export async function main(argv: string[]): Promise<void> {
   const cmd = argv[0] ?? "start";
@@ -20,7 +38,10 @@ export async function main(argv: string[]): Promise<void> {
       addRootCmd(argv[1]);
       break;
     case "status":
-      statusCmd();
+      // Name clash: bare `status` is the daemon-config summary (lifecycle); `status <repo>` is the
+      // git verb that asks the running daemon for that repo's state.
+      if (argv[1]) await runGitVerb("status", argv.slice(1));
+      else statusCmd();
       break;
     case "-h":
     case "--help":
@@ -28,6 +49,10 @@ export async function main(argv: string[]): Promise<void> {
       printHelp();
       break;
     default:
+      if (GIT_VERBS.has(cmd)) {
+        await runGitVerb(cmd, argv.slice(1));
+        break;
+      }
       console.error(`Unknown command: ${cmd}\n`);
       printHelp();
       process.exit(1);
@@ -41,5 +66,18 @@ Usage:
   repoyeti start [--root <path>] [--port <n>] [--tunnel]   Boot the daemon
   repoyeti add-root <path>                                  Register a directory to scan
   repoyeti status                                           Show config + discovered repos
+
+Drive a running daemon:
+  repoyeti repos                                            List repos (branch / dirty / drift / vcs)
+  repoyeti status <repo>                                    One repo's status block
+  repoyeti log <repo> [--limit N] [--merges only|exclude]  Commit history
+  repoyeti branches <repo>                                  List branches (ahead/behind/upstream)
+  repoyeti branch <repo> <name> [--switch]                 Create a branch (optionally switch to it)
+  repoyeti checkout <repo> <branch>                         Switch branch
+  repoyeti commit <repo> -m <msg> [--amend]                Commit staged changes
+  repoyeti diff <repo> <path>                               Show a file's diff
+  repoyeti drift                                            List repos ahead/behind their remote
+  repoyeti stash <repo> [list|pop|drop]                    Stash (no sub = save)
+  repoyeti push|pull|fetch <repo>                          Sync with the remote
 `);
 }

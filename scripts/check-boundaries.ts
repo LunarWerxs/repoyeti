@@ -61,6 +61,19 @@ const walkHttp = (dir: string): void => {
 };
 walkHttp(join(ROOT, "src/http"));
 
+// CLI verbs (src/cli/**) drive the daemon over HTTP — they must NOT import the in-process
+// service/read/git-actions/vcs layers. lifecycle.ts IS the daemon boot (it legitimately wires
+// those layers up), and main.ts only dispatches, so both are exempt.
+const CLI_FORBID = /from\s+"[^"]*\/(service|read|git-actions|vcs)(\/|\.ts|")/g;
+const CLI_WHY = "CLI verbs must drive the daemon over HTTP, not import the service/git layers in-process";
+const CLI_EXEMPT = new Set(["lifecycle.ts", "main.ts"]);
+for (const name of readdirSync(join(ROOT, "src/cli")).filter((n) => n.endsWith(".ts"))) {
+  if (CLI_EXEMPT.has(name)) continue;
+  for (const m of read(`src/cli/${name}`).matchAll(CLI_FORBID)) {
+    violations.push(`src/cli/${name}: forbidden import \`${m[0]}\` — ${CLI_WHY}`);
+  }
+}
+
 // VCS backends must not import the service layer (would create a cycle).
 for (const f of readdirSync(join(ROOT, "src/vcs")).filter((n) => n.endsWith(".ts"))) {
   for (const m of read(`src/vcs/${f}`).matchAll(/from\s+"(\.\.\/)+service(\.ts|\/|")/g)) {
