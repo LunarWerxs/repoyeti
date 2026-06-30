@@ -165,11 +165,14 @@ infra decision `A5`, branch protection).
 
 The core is done + verified (see ✅ Already done). To reach git-parity:
 
-- [ ] **🤖 Port the remaining git-only features to Lore.** Diff + discard are ported (`lore diff` /
-  `lore reset --purge`, verified); **AI commit-diff** (`collectRepoDiff`/`collectRepoPathsDiff`),
-  **smart-commit** group staging, and **content-search** are still git-only and are **hidden in the Lore
-  UI** (the web `aiHere` + capability gates). Map them to `lore diff` / `lore stage <paths>`+`lore commit`
-  / a JS content scan over changed files, then re-enable the gates. (Shares the `C2` cleanup above.)
+- [x] **🤖 Port the remaining git-only features to Lore — DONE** (was a stale double-listing, like `F5`;
+  superseded by the DONE banner in the Landed section). All three are implemented on `loreBackend`
+  (`src/vcs/lore.ts`) and wired in: **AI commit-diff** → `loreCollectDiff` (`lore status --scan` +
+  `lore diff [paths]`), **smart-commit group staging** → `loreCommitGroups` (`lore stage <paths>` +
+  `lore commit` per group), **content-search** → `loreSearchContent` (a JS scan over changed files). The
+  frontend `aiHere` gate (`RepoCard.vue:103`) is `store.aiEnabled` with **no VCS check**, so AI/smart-
+  commit show for Lore too. **Re-verified at runtime 2026-06-30**: `tests/lore-parity.test.ts` passes
+  (1 pass / 21 assertions) against a live `loreserver` 0.8.4.
 - [x] **🤖 Lore servers web UI — DONE** (see Landed): Settings → "Lore servers" panel (add/remove →
   daemon persists) + an Add-repo "From Lore" tab; clone-from-server verified end-to-end against a live
   `loreserver`. ⚠️ Reminder for any new server URL: prefer an **IP literal over `localhost`** — a
