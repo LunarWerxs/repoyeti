@@ -40,7 +40,6 @@ interface RepoRow {
   name: string;
   source: RepoSource;
   vcs: string;
-  workspace_id: string | null;
   identity_id: string | null;
   is_submodule: number;
   hidden: number;
@@ -110,7 +109,6 @@ export function initDb(): Database {
       name          TEXT NOT NULL,
       source        TEXT NOT NULL DEFAULT 'auto',
       vcs           TEXT NOT NULL DEFAULT 'git',
-      workspace_id  TEXT,
       identity_id   TEXT,
       is_submodule  INTEGER NOT NULL DEFAULT 0,
       hidden        INTEGER NOT NULL DEFAULT 0,

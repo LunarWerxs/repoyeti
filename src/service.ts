@@ -17,7 +17,7 @@ import { getRepo, getRepos, getWatchableRepos, getIdentity, setRepoStatus, upser
 import { discoverStream } from "./discovery.ts";
 import { resolveRepoIdentity } from "./identity.ts";
 import { gitFor } from "./git.ts";
-import { backendFor } from "./vcs/index.ts";
+import { backendFor, detectVcs } from "./vcs/index.ts";
 import { loreFilePatch, loreDiscardFile, loreClone } from "./vcs/lore.ts";
 import type { VcsBackend } from "./vcs/types.ts";
 import {
@@ -334,11 +334,15 @@ export interface RepoMutation {
 export async function registerRepo(inputPath: string): Promise<RepoMutation> {
   const p = resolve(inputPath);
   if (!existsSync(p)) return { ok: false, code: "NOT_FOUND", message: "that path does not exist" };
-  if (!existsSync(join(p, ".git"))) {
-    return { ok: false, code: "NOT_A_REPO", message: "that folder is not a git repository" };
+  // Detect the VCS instead of hardcoding a `.git` check — a valid Lore repo (`.lore`, when
+  // Lore is enabled) would otherwise be silently rejected. detectVcs returns null for neither.
+  const vcs = detectVcs(p);
+  if (!vcs) {
+    return { ok: false, code: "NOT_A_REPO", message: "that folder is not a git or Lore repository" };
   }
-  const gitEntry = join(p, ".git");
-  const id = upsertRepo(p, basename(p) || p, "pinned", lstatSync(gitEntry).isFile());
+  // Only a git worktree has the `.git`-as-file submodule marker; Lore has no submodule concept.
+  const isSubmodule = vcs === "git" && lstatSync(join(p, ".git")).isFile();
+  const id = upsertRepo(p, basename(p) || p, "pinned", isSubmodule, vcs);
   watchOne(id, p);
   await refreshRepo(id, p);
   return { ok: true, code: "OK", message: "registered", repo: getRepo(id) ?? undefined };
@@ -927,6 +931,9 @@ export async function collectRepoDiff(repoId: string): Promise<DiffResult> {
   if (!repo) return { ok: false, code: "NOT_FOUND", message: "repo not found" };
   if (repo.isSubmodule) return { ok: false, code: "ERROR", message: "submodule worktree is not actionable" };
   return enqueue(repoId, async () => {
+    // C5: readStatus takes the read-gate but is NOT itself enqueued (it's a bare git read), so
+    // calling it inside this op-queue slot cannot deadlock. It does hold the op slot while
+    // awaiting a read slot — intentional, so the status check + diff are one consistent snapshot.
     const st = await readStatus(repo.absPath);
     if (st.error) return { ok: false, code: "ERROR" as const, message: st.error };
     if (st.dirty === 0) return { ok: false, code: "NOTHING_TO_COMMIT" as const, message: "nothing to commit" };
@@ -970,6 +977,9 @@ export async function planCommitInput(repoId: string): Promise<PlanInputResult> 
   if (!repo) return { ok: false, code: "NOT_FOUND", message: "repo not found" };
   if (repo.isSubmodule) return { ok: false, code: "ERROR", message: "submodule worktree is not actionable" };
   return enqueue(repoId, async () => {
+    // C5: readStatus takes the read-gate but is NOT itself enqueued (bare git read), so calling it
+    // inside this op-queue slot can't deadlock. It holds the op slot while awaiting a read slot —
+    // intentional, so the status check + plan input are one consistent snapshot.
     const st = await readStatus(repo.absPath);
     if (st.error) return { ok: false, code: "ERROR" as const, message: st.error };
     if (st.dirty === 0) return { ok: false, code: "NOTHING_TO_COMMIT" as const, message: "nothing to commit" };
