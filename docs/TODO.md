@@ -14,23 +14,34 @@
 
 ## ✅ Landed in the `0.1.0` burndown (2026-06-29, branch `wrap-up/todo-burndown`)
 
-This pass cleared the release-prep + quick-win wave (all verified: 268 tests, `tsc`, `check:codes`/
-`check:boundaries`, lint green). **Done:** `C1` (registerRepo → `detectVcs`), `C5` (gate-nesting
-comment), `D5` (drop `workspace_id`), `D3` (CommitStyle drift guard), `D4` (centralize
-`ok`/`fail`/`PATCH_CAP`), `A4` (version cut `0.1.0` — **tag not pushed**, owner pulls that trigger),
-`A5` (baked-in OAuth documented as intentional + override path), `A6` (shim retired — docs corrected;
-no deploy needed, see below), `F2` (CF-header auth comment + README proxy note), `B5` (pre-commit
+All verified green at each step (275 tests, `tsc`, `check:codes`/`check:boundaries`, lint).
+
+**🔴 Vital — ALL DONE:** `C1` (registerRepo → `detectVcs`), `C2` (file diff + discard routed through
+`VcsBackend` — `filePatch`/`discardFile` + `fileModels` capability), `E4` (PUT /api/mode toggle +
+watcher→SSE delivery tests), `A6` (shim retired — docs corrected, no deploy needed; see finding below).
+
+**🟡/🟢 also done:** `A4` (version cut `0.1.0` — **tag not pushed**, owner pulls that trigger), `A5`
+(baked-in OAuth documented as intentional + override path), `F2` (CF-header auth comment + README proxy
+note), `E5` (headless in-memory keychain stub + legacy-rehome coverage), `C5` (gate-nesting comment),
+`D2` (`requireId()` collapses ~20 route guards), `D3` (CommitStyle drift guard), `D4` (centralize
+`ok`/`fail`/`PATCH_CAP`), `D5` (drop `workspace_id`), `B4` (CI OS matrix + `bun audit`), `B5` (pre-commit
 lint+typecheck), `B7` (pin `@types/bun`, Monaco chunk limit).
 
 **Connections / A6 owner-step finding:** the `cnx_live_…` key is valid with `apps:write`, but the
 RepoYeti app (`a790090c…`) is an **AEGIS-direct registration** with no Studio filing-queue row, so the
 `studio.connections.icu` API can't see/PATCH it. Per `docs/REMOTE_ACCESS.md` the redirect URIs were
 already set in AEGIS via the vault. No write was made; the only unproven step is a **live sign-in**
-with the daemon running (owner step).
+with the daemon running (owner step). (Key is now stored in gitignored `.env` as `CONNECTIONS_API_KEY`.)
 
-**Still open** (the big items): `C2`, `E4`, `D1`, `E5`, `E6`, `F6`, PAT, per-file staging, Lore
-parity port, Lore servers UI, `D2`, `B4`, the feature UIs, and the 🧑 owner decisions (`F5`,
-branch-protect, MIT confirm, process `G`, push the `v0.1.0` tag).
+**Still open** — all need something I can't safely do solo here:
+- **Frontend** (`D1` RepoCard split, `F6` a11y, Lore servers UI, toast-undo, tunnel UI, AI-style picker,
+  + the UI halves of per-file staging & commit-detail diff): code is doable, but runtime verification
+  needs a running daemon + dev server, which collides with the single-instance rule — needs owner OK.
+- **Lore parity port:** implementable but **not runtime-verifiable without the `lore` CLI** installed.
+- **`E6`** frontend test infra: needs new dev-deps in the shared `bun.lock` (coordinate first).
+- **PAT/HTTPS:** the network path can't be unit-verified without a real private repo + token (owner).
+- **🧑 owner:** `F5` (promote vs archive `MARCHING_ORDERS.md`), branch-protect `main`, confirm MIT,
+  adopt process `G`, push the `v0.1.0` tag, the live sign-in.
 
 ---
 
