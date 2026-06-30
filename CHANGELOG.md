@@ -18,8 +18,9 @@ All notable changes to RepoYeti are documented here. The format is based on
 - **VCS-agnostic backend.** Repos now carry a `vcs` kind behind a pluggable `VcsBackend` interface
   (`src/vcs/`). **git** is the default; **[Epic's Lore](https://dev.epicgames.com/documentation/en-us/lore)**
   is supported experimentally behind `REPOYETI_LORE=1`.
-- **Server registry.** Register version-control servers (Settings → Servers) and clone repos from them
-  — `GET/POST/DELETE /api/servers` + `POST /api/servers/clone`.
+- **Server registry (API).** Register version-control servers and clone repos from them via
+  `GET/POST/DELETE /api/servers` + `POST /api/servers/clone` (→ `cloneLoreRepo`). _Backend + routes
+  only for now — the Settings → Servers UI is still pending (see `docs/TODO.md` §6)._
 - **Background remote-sync.** An optional periodic check (`src/remote-sync.ts`) keeps each repo's
   "behind" count fresh, with an opt-in **keep-in-sync** mode that auto fast-forwards safe (clean,
   non-diverged) repos. Cadence + toggles live in Settings (`syncCheck` / `syncIntervalSecs` / `keepInSync`).

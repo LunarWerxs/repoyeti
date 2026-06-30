@@ -14,7 +14,8 @@
 
 - [x] **🧑 Groq key — DECIDED: do not rotate** (A1). Owner directive (do not re-raise): the built-in `gsk_…` is a free-tier throwaway (6000 TPM, graceful heuristic fallback when exceeded) and **may be shipped publicly for the first few testers on purpose** — so it is explicitly **not** a release blocker. The only invariant: the real key stays in the gitignored `.env` as `GITMOB_BUILTIN_GROQ_KEY`; `src/config.ts` keeps only the placeholder. No rotation, no code change.
 - [ ] **🧑+🤖 Cut version `0.1.0`** (A4). Bump `package.json` (both) `0.0.1 → 0.1.0`, move CHANGELOG `[Unreleased]` into a dated `[0.1.0]` section, tag `v0.1.0`. (Owner picks the number; the rest is mechanical.)
-- [ ] **🧑 README personal-infra decision** (A5). The README + `src/config.ts` hardcode a personal OAuth shim (`repoyeti-auth.lunawerx.workers.dev`) and a shared Connections `client_id`, and assume `connections.icu` access — a forker would hit *your* shim. Decide: keep baked-in / move to a neutral domain / require each deployer to register their own app. **Unblocked by your in-progress Connections-MCP/DNS work.** Then a 1-line README/config edit.
+- [ ] **🧑 README personal-infra decision** (A5). The README + `src/config.ts` hardcode a personal OAuth shim (`repoyeti-auth.lunawerx.workers.dev`) and a shared Connections `client_id`, and assume `connections.icu` access — a forker would hit *your* shim. Decide: keep baked-in / move to a neutral domain / require each deployer to register their own app. **Unblocked by your in-progress Connections-MCP/DNS work.** Then a 1-line README/config edit. *(Deploy/re-register mechanics live in A6.)*
+- [ ] **🧑+🤖 Deploy the renamed auth shim + re-register its redirect URI** (A6 — *new, the rename's only loose end*). The GitMob→RepoYeti rename repointed the OAuth shim to `repoyeti-auth.lunawerx.workers.dev`, but **that worker is not deployed** (confirmed 404) and the old `gitmob-auth` URL is still what's registered at `connections.icu`. **Until both land, remote sign-in is broken** (local-only mode is unaffected). Steps: **(1) 🧑** authenticate wrangler — `bunx wrangler login` (browser → Allow) *or* set `CLOUDFLARE_API_TOKEN`; an agent **cannot** log in for you. **(2) 🤖** `cd shim && bunx wrangler deploy`, then curl `…/cb` to confirm it's live. **(3) 🧑** in the `studio.connections.icu` developer app (clientId `a790090c…`, unchanged), set/add redirect URI `https://repoyeti-auth.lunawerx.workers.dev/cb` (scopes `openid profile email`) — **no API/connector exists**, it's a dashboard edit behind your login. **(4) 🤖** fix the README + `shim/README.md` "✅ Deployed" wording (it's aspirational until step 2). Then delete the stale `gitmob-auth` worker. ⚠️ **Overlaps A5:** if A5 chooses a neutral domain, deploy *that* instead of `repoyeti-auth`.
 - [ ] **🤖 Close the P1 architecture gaps** (C1, C2) and **the P1 test gap** (E4) — the public-release gate requires C1 + C2 + E1–E4 closed (E1–E3 are already done).
 - [ ] **🧑 Branch-protect `main`** at launch (require PRs + green CI; no direct pushes) — a GitHub settings step once the repo is public.
 
@@ -35,7 +36,7 @@
 ## 4. Tests (P1)
 
 - [ ] **🤖 P1 — tunnel toggle + watcher→SSE pipeline** (E4). The cloudflared *resolver* (`tunnel.test.ts`) and watcher *health* (`watcher.test.ts`) are covered, but the `PUT /api/mode` start/stop toggle and the watcher→`broadcast`→SSE wiring are not. Mock the tunnel factory; write a file and assert a `repo_state_changed` event reaches a subscriber. (E1 detached-HEAD, E2 push errors, E3 SSE/bus are **done**.)
-- [ ] **🤖 P1 — secrets without a keychain** (E5). 2 of 3 `secrets.test.ts` cases `skipIf(!keychain)` → never run in CI. Add a stub so the migration path runs headlessly.
+- [ ] **🤖 P1 — secrets without a keychain** (E5). 2 of 3 `secrets.test.ts` cases `skipIf(!keychain)` → never run in CI. Add a stub so the migration path runs headlessly. **Now also cover the new legacy keychain-service fallback** (`getSecret()` reads the old `"gitmob"` service and re-homes the value under `"repoyeti"` on first access — added by the rename, currently untested).
 - [ ] **🤖 P1 — frontend tests: zero** (E6). Add **Vitest + @vue/test-utils** (pure-lib units, a store smoke test, a `SmartCommitPlan.vue` render) + one Playwright E2E of the SSE flow. ⛔ *Needs new dev-deps in the shared `bun.lock` — coordinate before adding.*
 
 ## 5. Tooling & docs polish (P1–P2)
@@ -51,6 +52,12 @@
 ## 6. Feature backlog (Tier-2 — none are blockers)
 
 Highest value first.
+
+**Lore (the pivot — experimental, behind `REPOYETI_LORE=1`):** the core is done + verified (see §9). Remaining:
+
+- [ ] **🤖 P2 — Lore servers web UI.** The backend is done + verified (`config.servers` + `GET/POST/DELETE /api/servers` + `POST /api/servers/clone` → `cloneLoreRepo`), but **nothing in `web/src` calls `/api/servers`** — there is no UI yet. Add a Settings → Servers panel (add/remove server URLs) + a "Clone from a Lore server" path in the Add-repo dialog. ⚠️ Prefer an **IP literal over `localhost`** in server URLs — a `localhost`→IPv6 QUIC handshake stalls ~30 s before IPv4 fallback (the Lore backend caps each op at 120 s via `LORE_TIMEOUT_MS`). *(The CHANGELOG "Server registry" entry is API-only until this lands.)*
+- [ ] **🤖 P2 — port the remaining git-only features to Lore.** Diff + discard are ported (`lore diff` / `lore reset --purge`, verified); **AI commit-diff** (`collectRepoDiff`/`collectRepoPathsDiff`), **smart-commit** group staging, and **content-search** are still git-only and are **hidden in the Lore UI** (the web `aiHere` + capability gates). Map them to `lore diff` / `lore stage <paths>`+`lore commit` / a JS content scan over changed files, then re-enable the gates. (Related cleanup is `C2`: fold `filePatch`/`discardFile` into the `VcsBackend` interface instead of branching on `repo.vcs` in `service.ts`.)
+- [ ] **🤖 P2 — migrate Lore reads off CLI-scraping → `@lore-vcs/sdk`.** Status/branches/log are parsed from `lore` text output (fixture-locked in `tests/lore-parse.test.ts`); the SDK returns structured data that won't drift across Lore 0.x releases. Optional hardening.
 
 - [ ] **P1 — PAT / HTTPS auth.** Unblocks clone/fetch/push/tag-push for **private HTTPS** remotes (SSH-key auth doesn't help there). `pat_handle` column reserved; needs keychain + per-op `GIT_ASKPASS`. ⚠️ The network path can't be unit-verified without a real private repo + token — needs owner involvement to test.
 - [ ] **P1 — per-file (file-level) staging.** Only stage-all exists for a normal commit. (Smart Commit already stages file-level internally; this exposes it for a single ordinary commit.)
@@ -74,6 +81,15 @@ the repo in an unsafe state on a phone, or contradicts the zero-infra positionin
 
 ## 9. Already done (so it isn't re-done)
 
+**Rename (commit `7fd3d39`, 2026-06-29):** the full **GitMob→RepoYeti** rename landed tree-wide and is
+verified (bun test 258/258, `tsc` clean, `check:codes`/`check:boundaries`, web build all green) — package +
+`bin` + CLI, `GITMOB_*`→`REPOYETI_*` env (incl. `REPOYETI_LORE`), `~/.gitmob`→`~/.repoyeti` & `gitmob.db`→
+`repoyeti.db`, keychain service + health/single-instance identity, the `misc/GitMob.*` files, and the
+**GitHub repo** `LunarWerxs/gitmob`→`LunarWerxs/repoyeti` (remote + package URLs repointed; old URL auto-redirects).
+Back-compat shipped: `config.ts migrateLegacyState()` (one-time dir + db move, default-home only) and
+`secrets.ts getSecret()` legacy-`"gitmob"`-keychain fallback (re-homes on first read). *The only remaining
+rename work is the owner-gated shim deploy + redirect-URI re-register — tracked as §1 A6.*
+
 Guardrails: Biome lint + `bun run check` + boundary guard + ApiErrorCode drift guard + 80% coverage
 gate, all in CI · `release.yml` (tag → cross-OS binary + GitHub Release) · pinned Bun + dep cache ·
 auto-enabled git hooks · `.editorconfig`. Architecture: `ActionResult`/`ActionCode` in `contract.ts`;
@@ -81,3 +97,10 @@ auto-enabled git hooks · `.editorconfig`. Architecture: `ActionResult`/`ActionC
 removed. Tests: detached-HEAD (E1), push errors (E2), SSE/bus (E3). Docs/community: `LICENSE`,
 `SECURITY.md`, `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, issue/PR templates, `dependabot.yml`;
 `package.json` metadata (license/repo/author/keywords/engines). README accuracy pass (this session).
+**Lore (experimental, `REPOYETI_LORE=1`):** web card adapts to `repo.vcs` (a `lore` badge · hides
+fetch/stash/remotes/tags · relabels pull→"Sync"); **file diff + discard ported** (`lore diff` /
+`lore reset --purge`); **servers-registry backend + `cloneLoreRepo`**; **server round-trip
+(commit/push/sync) + clone-from-server verified** against a live local `loreserver`. The Lore CLI
+command surface + the status/branches/log output parsers were verified against **lore 0.8.4**
+(parsers fixture-locked in `tests/lore-parse.test.ts`); the ~30 s `localhost`-QUIC stall is dodged
+by using an IP literal in the server URL.
