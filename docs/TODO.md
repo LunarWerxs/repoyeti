@@ -39,12 +39,18 @@ RepoYeti app (`a790090c…`) is an **AEGIS-direct registration** with no Studio 
 already set in AEGIS via the vault. No write was made; the only unproven step is a **live sign-in**
 with the daemon running (owner step). (Key is now stored in gitignored `.env` as `CONNECTIONS_API_KEY`.)
 
-**Still open** (owner cleared the dev-server + `lore`-install blockers, so the frontend pass is next):
-- **Frontend pass** (verify with a dev server): toast-undo, AI-style picker, tunnel-URL UI, Lore servers
-  UI, `F6` a11y, then `D1` RepoCard split (biggest), + the UI halves of per-file staging & commit-detail diff.
+**Frontend pass — in progress** (dev env stood up: daemon on `:7171` + Vite + `loreserver`, verified via
+browser preview tools). **toast-undo DONE & verified** (hide/pin/star → Undo action restores). Remaining:
+AI-style picker, tunnel-URL UI, Lore servers UI, `F6` a11y, then `D1` RepoCard split (biggest), + the UI
+halves of per-file staging & commit-detail diff.
+
+**Still open:**
 - **`E6`** frontend test infra (Vitest + Playwright) — adds dev-deps to the shared `bun.lock`.
 - **PAT/HTTPS:** the network path can't be unit-verified without a real private repo + token (owner).
-- **SDK migration:** decision pending (owner asked for a TL;DR — given below in chat).
+- **SDK migration — ⚠️ reconsider.** `@lore-vcs/sdk` is a **koffi native-FFI binding** (not pure JS), so it
+  adds a native dependency that breaks the zero-native-dep `bun --compile` single binary (and its postinstall
+  is blocked by Bun's security). Recommendation: keep the verified CLI path; adopt the SDK later only as an
+  *optional* fast-path with CLI fallback (so the single binary still ships), or when a pure-JS/WASM binding exists.
 - **🧑 owner:** branch-protect `main`, confirm MIT, push the `v0.1.0` tag, the live sign-in.
 
 ---
