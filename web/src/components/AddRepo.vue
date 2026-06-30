@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { FolderGit2, FolderPlus, DownloadCloud, Loader2 } from "@lucide/vue";
+import { FolderGit2, FolderPlus, DownloadCloud, Server, Loader2 } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { useStore } from "../store";
 import { cn } from "@/lib/utils";
@@ -28,7 +28,7 @@ const { t } = useI18n();
 const open = defineModel<boolean>("open", { required: true });
 const store = useStore();
 
-type Mode = "register" | "create" | "clone";
+type Mode = "register" | "create" | "clone" | "lore";
 const mode = ref<Mode>("register");
 const path = ref(""); // register / create
 
@@ -38,16 +38,35 @@ const cloneParent = ref("");
 const cloneName = ref("");
 const cloneIdentity = ref("none"); // "none" sentinel → null on submit
 
+// lore fields (clone from a registered Lore server)
+const loreServerUrl = ref(""); // selected server's URL
+const loreRepoPath = ref(""); // repo path on the server, appended to the server URL
+const loreName = ref("");
+const loreParent = ref("");
+
 const busy = ref(false);
 
 // Load scan roots when the dialog opens so the clone destination can default to one.
 watch(open, (isOpen) => {
-  if (isOpen && !store.roots.length) void store.loadRoots();
+  if (isOpen) {
+    if (!store.roots.length) void store.loadRoots();
+    if (!store.servers.length) void store.loadServers();
+  }
 });
 watch(
   () => store.roots,
   (rs) => {
-    if (!cloneParent.value && rs.length) cloneParent.value = rs[0]!;
+    if (rs.length) {
+      if (!cloneParent.value) cloneParent.value = rs[0]!;
+      if (!loreParent.value) loreParent.value = rs[0]!;
+    }
+  },
+  { immediate: true },
+);
+watch(
+  () => store.servers,
+  (ss) => {
+    if (!loreServerUrl.value && ss.length) loreServerUrl.value = ss[0]!.url;
   },
   { immediate: true },
 );
@@ -55,6 +74,8 @@ watch(
 const canSubmit = computed(() => {
   if (busy.value) return false;
   if (mode.value === "clone") return cloneUrl.value.trim().length > 0 && cloneParent.value.trim().length > 0;
+  if (mode.value === "lore")
+    return loreServerUrl.value.length > 0 && loreRepoPath.value.trim().length > 0 && loreParent.value.trim().length > 0;
   return path.value.trim().length > 0;
 });
 
@@ -80,6 +101,17 @@ async function submit(): Promise<void> {
       toast.success(t("addRepo.toastCloned", { name: repo.name }));
       cloneUrl.value = "";
       cloneName.value = "";
+    } else if (mode.value === "lore") {
+      const base = loreServerUrl.value.replace(/\/+$/, "");
+      const url = `${base}/${loreRepoPath.value.trim().replace(/^\/+/, "")}`;
+      const repo = await store.cloneFromServer({
+        url,
+        parentPath: loreParent.value.trim(),
+        name: loreName.value.trim() || undefined,
+      });
+      toast.success(t("addRepo.toastLoreCloned", { name: repo.name }));
+      loreRepoPath.value = "";
+      loreName.value = "";
     } else {
       const repo = await store.addRepo(mode.value, path.value.trim());
       toast.success(
@@ -106,7 +138,7 @@ async function submit(): Promise<void> {
         <DialogDescription>{{ $t("addRepo.description") }}</DialogDescription>
       </DialogHeader>
 
-      <div class="grid grid-cols-3 gap-1 rounded-lg bg-secondary p-1">
+      <div class="grid grid-cols-2 gap-1 rounded-lg bg-secondary p-1">
         <button :class="seg(mode === 'register')" :aria-pressed="mode === 'register'" @click="mode = 'register'">
           <FolderGit2 :size="14" /> {{ $t("addRepo.modeRegister") }}
         </button>
@@ -116,10 +148,13 @@ async function submit(): Promise<void> {
         <button :class="seg(mode === 'clone')" :aria-pressed="mode === 'clone'" @click="mode = 'clone'">
           <DownloadCloud :size="14" /> {{ $t("addRepo.modeClone") }}
         </button>
+        <button :class="seg(mode === 'lore')" :aria-pressed="mode === 'lore'" @click="mode = 'lore'">
+          <Server :size="14" /> {{ $t("addRepo.modeLore") }}
+        </button>
       </div>
 
       <!-- register / create: a single path -->
-      <template v-if="mode !== 'clone'">
+      <template v-if="mode === 'register' || mode === 'create'">
         <p class="text-[12.5px] text-muted-foreground">
           <template v-if="mode === 'register'">{{ $t("addRepo.hintRegister") }}</template>
           <template v-else>{{ $t("addRepo.hintCreateBefore") }}<code class="mono">git init</code>{{ $t("addRepo.hintCreateAfter") }}</template>
@@ -133,7 +168,7 @@ async function submit(): Promise<void> {
       </template>
 
       <!-- clone: url + destination folder + optional name + identity -->
-      <template v-else>
+      <template v-else-if="mode === 'clone'">
         <p class="text-[12.5px] text-muted-foreground">{{ $t("addRepo.hintClone") }}</p>
         <div class="flex flex-col gap-1.5">
           <label class="text-[12px] text-muted-foreground">{{ $t("addRepo.labelUrl") }}</label>
@@ -159,11 +194,38 @@ async function submit(): Promise<void> {
         </div>
       </template>
 
+      <!-- lore: clone from a registered Lore server -->
+      <template v-else-if="mode === 'lore'">
+        <p class="text-[12.5px] text-muted-foreground">{{ $t("addRepo.hintLore") }}</p>
+        <div v-if="store.servers.length" class="flex flex-col gap-1.5">
+          <label class="text-[12px] text-muted-foreground">{{ $t("addRepo.labelServer") }}</label>
+          <Select v-model="loreServerUrl">
+            <SelectTrigger class="w-full" :aria-label="$t('addRepo.labelServer')"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem v-for="s in store.servers" :key="s.id" :value="s.url">{{ s.name }}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <p v-else class="text-[12.5px] text-muted-foreground">{{ $t("addRepo.loreNoServers") }}</p>
+        <div class="flex flex-col gap-1.5">
+          <label class="text-[12px] text-muted-foreground">{{ $t("addRepo.labelLoreRepo") }}</label>
+          <Input v-model="loreRepoPath" class="mono" :placeholder="$t('addRepo.placeholderLoreRepo')" @keyup.enter="submit" />
+        </div>
+        <div class="flex flex-col gap-1.5">
+          <label class="text-[12px] text-muted-foreground">{{ $t("addRepo.labelParent") }}</label>
+          <Input v-model="loreParent" class="mono" :placeholder="$t('addRepo.placeholderParent')" />
+        </div>
+        <div class="flex flex-col gap-1.5">
+          <label class="text-[12px] text-muted-foreground">{{ $t("addRepo.labelName") }}</label>
+          <Input v-model="loreName" class="mono" :placeholder="$t('addRepo.placeholderName')" @keyup.enter="submit" />
+        </div>
+      </template>
+
       <DialogFooter>
         <Button variant="ghost" @click="open = false">{{ $t("addRepo.cancel") }}</Button>
         <Button :disabled="!canSubmit" @click="submit">
           <Loader2 v-if="busy" class="animate-spin" />
-          {{ mode === "create" ? $t("addRepo.submitCreate") : mode === "clone" ? $t("addRepo.submitClone") : $t("addRepo.submitAdd") }}
+          {{ mode === "create" ? $t("addRepo.submitCreate") : mode === "clone" ? $t("addRepo.submitClone") : mode === "lore" ? $t("addRepo.submitLore") : $t("addRepo.submitAdd") }}
         </Button>
       </DialogFooter>
     </DialogContent>
