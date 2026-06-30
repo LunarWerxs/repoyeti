@@ -18,7 +18,7 @@ split across two commits.**
 
 Why not line/hunk level (the "even smarter" option)?
 
-- RepoYeti's **central, non-negotiable invariant** (MARCHING_ORDERS.md §7, gap-analysis
+- RepoYeti's **central, non-negotiable invariant** (ARCHITECTURE.md §7, gap-analysis
   header): *"the daemon never leaves a repo in an unsafe / half-merged state."* Hunk-level
   staging means programmatically applying a **subset of a file's hunks** to the index
   (`git apply --cached` of a partial patch). That can fail/conflict and leave a file

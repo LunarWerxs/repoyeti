@@ -7,8 +7,8 @@ from your phone — fetch / pull / push, branches, stash, commit, tags, AI commi
 AI multi-commit **Smart Commit** splitter. A pluggable VCS backend also supports
 [Epic's Lore](src/vcs/lore.ts) (experimental, behind `REPOYETI_LORE=1`).
 
-> Original design doc: **[MARCHING_ORDERS.md](MARCHING_ORDERS.md)** — the v1 build plan. The product
-> has since grown well beyond it; see **Dashboard features** below and the [CHANGELOG](CHANGELOG.md).
+> Architecture & build spec: **[ARCHITECTURE.md](ARCHITECTURE.md)** — the durable design doc (was the
+> v1 "marching orders"). The product has grown beyond v1; see **Dashboard features** below and the [CHANGELOG](CHANGELOG.md).
 
 ## Status
 

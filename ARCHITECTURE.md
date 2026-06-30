@@ -1,5 +1,8 @@
-# RepoYeti — Marching Orders (Minimal-but-Functional v1)
+# RepoYeti — Architecture & Build Spec
 
+> _(Formerly `MARCHING_ORDERS.md` — promoted to the durable architecture doc; the §-numbered
+> security model, secrets/identity protocol, and acceptance criteria below remain the source of truth.)_
+>
 > **What this file is.** The single, decisive build spec for the **smallest version that
 > actually works end-to-end on a phone**. It distilled three earlier input briefs — a
 > hard-constraints architecture brief, an opinion prompt, and a Gemini "winning stack"

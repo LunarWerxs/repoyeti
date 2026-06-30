@@ -134,7 +134,7 @@ async function start(rest: string[]): Promise<void> {
   if (tunnelProblem === "auth") {
     console.error(
       "Refusing to open a tunnel without auth.\n" +
-        "Configure \"oauth\" in ~/.repoyeti/config.json first (see MARCHING_ORDERS §13),\n" +
+        "Configure \"oauth\" in ~/.repoyeti/config.json first (see ARCHITECTURE.md §13),\n" +
         "so only you — signed in with Connections — can reach the daemon over the network.",
     );
     process.exit(1);

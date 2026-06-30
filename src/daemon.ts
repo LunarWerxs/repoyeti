@@ -4,7 +4,7 @@
  * Phase 1: read API + SSE. Phase 3 adds identity CRUD, repo-identity assignment,
  * and the safe git actions (fetch/pull/push) with first-class error codes. There
  * is still NO auth here — that's Phase 2's single middleware in front of /api/*
- * (MARCHING_ORDERS §7). The daemon binds to 127.0.0.1 only (see index.ts).
+ * (ARCHITECTURE.md §7). The daemon binds to 127.0.0.1 only (see index.ts).
  */
 import { join, normalize, dirname, resolve } from "node:path";
 import { pathWithin } from "./paths.ts";

@@ -1,5 +1,5 @@
 /**
- * "Sign in with Connections" — public OIDC relying party (MARCHING_ORDERS §7).
+ * "Sign in with Connections" — public OIDC relying party (ARCHITECTURE.md §7).
  *
  * Stand-alone: RepoYeti only ever calls the IdP's PUBLIC OAuth URLs (discovered from
  * `<issuer>/.well-known/openid-configuration`) and verifies the returned id_token

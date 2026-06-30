@@ -29,7 +29,7 @@ const CONFIG_PATH = join(CONFIG_DIR, "config.json");
 /**
  * "Sign in with Connections" (public OIDC) config. Present → auth is ENFORCED on
  * every /api/* route (and required before any tunnel is exposed). Absent → the
- * daemon is local-only (127.0.0.1) with no auth. See MARCHING_ORDERS §7/§13.
+ * daemon is local-only (127.0.0.1) with no auth. See ARCHITECTURE.md §7/§13.
  */
 export interface OAuthConfig {
   /** IdP issuer origin, e.g. https://accounts.connections.icu */
