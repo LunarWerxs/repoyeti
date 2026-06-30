@@ -167,6 +167,29 @@ export interface LogResult {
   hasMore: boolean;
 }
 
+/** One changed file in a commit. */
+export interface CommitFile {
+  status: string; // A / M / D / R / C
+  path: string;
+  from?: string;
+}
+
+/** Full detail for one commit (the History tap-to-expand view). Mirrors src/inspect.ts. */
+export interface CommitDetail {
+  ok: boolean;
+  code: ApiCode;
+  message?: string;
+  hash: string;
+  shortHash: string;
+  subject: string;
+  authorName: string;
+  authorEmail: string;
+  date: number;
+  files: CommitFile[];
+  diff: string;
+  truncated: boolean;
+}
+
 export interface StashEntry {
   index: number;
   message: string;

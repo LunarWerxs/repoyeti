@@ -79,7 +79,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { VCS_CAPABILITIES } from "../types";
-import type { Repo, TreeNode } from "../types";
+import type { Repo, TreeNode, CommitDetail } from "../types";
 
 const props = withDefaults(defineProps<{ repo: Repo; draggable?: boolean }>(), {
   draggable: true,
@@ -612,6 +612,35 @@ async function copyHash(hash: string): Promise<void> {
     toast.success(t("repo.history.copied"));
   } catch {
     /* clipboard blocked — non-critical */
+  }
+}
+
+// Per-commit detail (changed files + diff), lazy-loaded + cached when a commit is tapped.
+const expandedCommit = ref<string | null>(null);
+const commitCache = ref<Record<string, CommitDetail>>({});
+const loadingCommit = ref<string | null>(null);
+async function toggleCommit(hash: string): Promise<void> {
+  if (expandedCommit.value === hash) {
+    expandedCommit.value = null;
+    return;
+  }
+  expandedCommit.value = hash;
+  if (commitCache.value[hash]) return;
+  loadingCommit.value = hash;
+  try {
+    commitCache.value = { ...commitCache.value, [hash]: await api.commitDetail(props.repo.id, hash) };
+  } catch (e) {
+    const message = e instanceof ApiError ? friendly(e.code) || e.message : t("repo.history.detailUnavailable");
+    commitCache.value = {
+      ...commitCache.value,
+      [hash]: {
+        ok: false, code: "ERROR", message,
+        hash, shortHash: hash.slice(0, 12), subject: "", authorName: "", authorEmail: "", date: 0,
+        files: [], diff: "", truncated: false,
+      },
+    };
+  } finally {
+    loadingCommit.value = null;
   }
 }
 
@@ -1340,24 +1369,64 @@ async function confirmDiscard(): Promise<void> {
               {{ $t("repo.history.empty") }}
             </div>
             <template v-else>
-              <div
-                v-for="cmt in logResult?.commits ?? []"
-                :key="cmt.hash"
-                class="group/c flex items-start gap-2 rounded-md px-1.5 py-1 hover:bg-accent/40"
-              >
-                <button
-                  type="button"
-                  class="mono mt-0.5 shrink-0 text-[11px] text-info/80 outline-none hover:underline focus-visible:underline"
-                  :title="$t('repo.history.copyHash')"
-                  :aria-label="$t('repo.history.copyHash')"
-                  @click="copyHash(cmt.hash)"
+              <div v-for="cmt in logResult?.commits ?? []" :key="cmt.hash">
+                <div class="group/c flex items-start gap-2 rounded-md px-1.5 py-1 hover:bg-accent/40">
+                  <button
+                    type="button"
+                    class="mono mt-0.5 shrink-0 text-[11px] text-info/80 outline-none hover:underline focus-visible:underline"
+                    :title="$t('repo.history.copyHash')"
+                    :aria-label="$t('repo.history.copyHash')"
+                    @click="copyHash(cmt.hash)"
+                  >
+                    {{ cmt.shortHash }}
+                  </button>
+                  <button
+                    type="button"
+                    class="min-w-0 flex-1 text-left outline-none"
+                    :aria-expanded="expandedCommit === cmt.hash"
+                    :aria-label="$t('repo.history.viewChanges')"
+                    @click="toggleCommit(cmt.hash)"
+                  >
+                    <div class="truncate text-[12.5px] text-foreground group-hover/c:underline" :title="cmt.subject">
+                      {{ cmt.subject }}
+                    </div>
+                    <div class="truncate text-[11px] text-muted-foreground">
+                      {{ $t("repo.history.by", { author: cmt.authorName }) }} · {{ fromNow(cmt.date) }}
+                    </div>
+                  </button>
+                  <ChevronDown
+                    :size="13"
+                    :class="
+                      cn('mt-1 shrink-0 text-muted-foreground transition-transform', expandedCommit === cmt.hash && 'rotate-180')
+                    "
+                  />
+                </div>
+                <!-- tap-to-expand: the commit's changed files + bounded diff -->
+                <div
+                  v-if="expandedCommit === cmt.hash"
+                  class="mt-0.5 mb-1 ml-1.5 rounded-md border border-border/50 bg-secondary/20 p-2"
                 >
-                  {{ cmt.shortHash }}
-                </button>
-                <div class="min-w-0 flex-1">
-                  <div class="truncate text-[12.5px] text-foreground" :title="cmt.subject">{{ cmt.subject }}</div>
-                  <div class="truncate text-[11px] text-muted-foreground">
-                    {{ $t("repo.history.by", { author: cmt.authorName }) }} · {{ fromNow(cmt.date) }}
+                  <div v-if="loadingCommit === cmt.hash" class="flex items-center gap-2 text-[12px] text-muted-foreground">
+                    <Loader2 :size="13" class="animate-spin" />{{ $t("repo.history.loading") }}
+                  </div>
+                  <template v-else-if="commitCache[cmt.hash]?.ok">
+                    <div class="mb-1.5 flex flex-wrap gap-1">
+                      <span
+                        v-for="f in commitCache[cmt.hash].files"
+                        :key="f.path"
+                        class="mono inline-flex max-w-full items-center gap-1 rounded bg-secondary px-1.5 py-0.5 text-[11px]"
+                      >
+                        <span class="font-semibold text-muted-foreground">{{ f.status }}</span>
+                        <span class="truncate" :title="f.path">{{ f.path }}</span>
+                      </span>
+                    </div>
+                    <pre class="mono max-h-64 overflow-auto rounded bg-background/60 p-2 text-[11px] leading-snug">{{ commitCache[cmt.hash].diff || $t("repo.history.noDiff") }}</pre>
+                    <p v-if="commitCache[cmt.hash].truncated" class="mt-1 text-[11px] text-muted-foreground">
+                      {{ $t("repo.history.diffTruncated") }}
+                    </p>
+                  </template>
+                  <div v-else class="text-[12px] text-muted-foreground">
+                    {{ commitCache[cmt.hash]?.message || $t("repo.history.detailUnavailable") }}
                   </div>
                 </div>
               </div>

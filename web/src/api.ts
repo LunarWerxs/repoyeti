@@ -15,6 +15,7 @@ import type {
   FileDiff,
   Identity,
   LogResult,
+  CommitDetail,
   LoreServer,
   Repo,
   SmartCommitResult,
@@ -203,6 +204,8 @@ export const api = {
   /** Commit history of the current branch, newest first. Paginate with `skip`. */
   log: (id: string, limit = 50, skip = 0) =>
     req<LogResult>("GET", `/api/repos/${id}/log?limit=${limit}&skip=${skip}`),
+  commitDetail: (id: string, hash: string) =>
+    req<CommitDetail>("GET", `/api/repos/${id}/commit/${encodeURIComponent(hash)}`),
   stashes: (id: string) => req<StashList>("GET", `/api/repos/${id}/stashes`),
   stashSave: (id: string, message?: string) =>
     req<ActionResult>("POST", `/api/repos/${id}/stash`, message ? { message } : {}),

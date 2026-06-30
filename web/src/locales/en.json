@@ -299,7 +299,11 @@
       "loadMore": "Load more",
       "by": "by {author}",
       "copyHash": "Copy commit hash",
-      "copied": "Commit hash copied"
+      "copied": "Commit hash copied",
+      "viewChanges": "Show this commit's changes",
+      "noDiff": "(no textual diff)",
+      "diffTruncated": "Diff truncated — open the repo to see the rest.",
+      "detailUnavailable": "Commit detail isn't available for this repository."
     },
     "stash": {
       "stash": "Stash",
