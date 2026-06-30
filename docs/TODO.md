@@ -11,9 +11,12 @@
 > so older cross-references still resolve. Status verified against the tree on **2026-06-29**.
 
 > **▶ RESUME HERE (fresh chat).** The frontend pass is mid-flight. Next agent-doable items, in order:
-> **tunnel-URL UI** (needs a `PUT /api/tunnel` route) → **per-file staging** (needs a
-> `POST /api/repos/:id/commit-selected` route) → **`D1`** RepoCard split (~1380 lines, biggest) →
-> **`E6`** frontend test infra (Vitest + Playwright). **Constraints:** work **only on `main`** (never
+> **per-file staging** (needs a `POST /api/repos/:id/commit-selected` route) → **`D1`** RepoCard split
+> (~1380 lines, biggest) → **`E6`** frontend test infra (Vitest + Playwright). _tunnel-URL UI is DONE —
+> commits `904856e` (backend) + `9bab202` (web)._ ⚠️ **Heads-up:** the working tree carries a
+> half-finished, **uncommitted** `src/` refactor (`src/{diffstat,inspect,status}.ts`→`src/read/` and
+> `service.ts`→`src/service/`) that currently breaks `tsc` (`src/service/core.ts` imports a missing
+> `./watch.ts`) — finish or discard it before the next `bun run check`/commit. **Constraints:** work **only on `main`** (never
 > branch); **never suggest pushing/tagging/branch-protecting `0.1.0`** (owner-only, don't raise it).
 > The gitignored `.env` already holds `CONNECTIONS_API_KEY` + the Groq key — don't re-ask. A dev env
 > may still be live (daemon `:7171`, Vite `:4319`, `loreserver`); **restart the daemon after backend
@@ -53,7 +56,7 @@ with the daemon running (owner step). (Key is now stored in gitignored `.env` as
 preview tools). **DONE & browser-verified:** toast-undo (hide/pin/star → Undo restores) · AI-style picker
 (Settings → AI; change → daemon persists `style`) · **Lore servers UI** (Settings → "Lore servers" panel
 add/remove → daemon persists; Add-repo → "From Lore" tab cloned `clonetest` from a live server end-to-end).
-**`F6` a11y DONE** (header role=button + keyboard + chip aria-labels, verified). **commit-detail diff DONE** (tap a History commit → changed files + diff; new readCommit on VcsBackend + route, git verified, Lore degrades gracefully). Remaining: tunnel-URL UI (needs PUT /api/tunnel), per-file staging (needs a route), then `D1` RepoCard split (biggest), and `E6` test infra.
+**`F6` a11y DONE** (header role=button + keyboard + chip aria-labels, verified). **commit-detail diff DONE** (tap a History commit → changed files + diff; new readCommit on VcsBackend + route, git verified, Lore degrades gracefully). **tunnel-URL UI DONE** (Settings → Access "Stable address" card: redacted `tunnel` on `/api/status` + a keychain-backed `PUT /api/tunnel`, live tunnel restart when remote is on; 6 route tests; commits `904856e` backend + `9bab202` web). Remaining: per-file staging (needs a route), then `D1` RepoCard split (biggest), and `E6` test infra.
 
 **Still open:**
 - **`E6`** frontend test infra (Vitest + Playwright) — adds dev-deps to the shared `bun.lock`.
