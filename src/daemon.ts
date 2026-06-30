@@ -24,6 +24,7 @@ import {
   resolveApiKey,
   resolveModel,
   effectiveDefaultProvider,
+  redactTunnel,
   type RepoYetiConfig,
   type AiProviderId,
 } from "./config.ts";
@@ -111,7 +112,7 @@ import {
   SYNC_INTERVAL_DEFAULT_S,
 } from "./remote-sync.ts";
 import { jsonError, statusForCode, type ApiErrorCode } from "./contract.ts";
-import { setSecret, deleteSecret, aiKeyName } from "./secrets.ts";
+import { setSecret, deleteSecret, aiKeyName, TUNNEL_TOKEN } from "./secrets.ts";
 import {
   parseBody,
   IdentityCreateSchema,
@@ -130,6 +131,7 @@ import {
   StashSaveSchema,
   StashRefSchema,
   DiscardSchema,
+  TunnelSettingsSchema,
   RemoteSetSchema,
   RemoteDeleteSchema,
   TagCreateSchema,
@@ -175,6 +177,9 @@ export function createApp(cfg: RepoYetiConfig): Hono {
       mode: accessMode(cfg),
       tunnelActive: tunnelActive(),
       tunnelUrl: getTunnelUrl(),
+      // Redacted named-tunnel config (hostname + token-presence flags) so the Settings UI can show
+      // the stable-address state on first load. NEVER the token bytes — see redactTunnel().
+      tunnel: redactTunnel(cfg),
       diffStats: diffStatsEnabled(),
       remoteEditing: cfg.remoteEditing !== false,
       // Large-file Diff threshold (bytes) — owner setting; the viewer compares file size to it.
@@ -303,6 +308,49 @@ export function createApp(cfg: RepoYetiConfig): Hono {
       stopManagedTunnel();
     }
     return c.json({ ok: true, mode: cfg.mode, tunnelActive: tunnelActive(), tunnelUrl: getTunnelUrl() });
+  });
+
+  // Configure the STABLE named tunnel (hostname + connector token) so the remote URL stops rotating
+  // on every restart. The token is a secret → stored in the OS keychain, stripped from config.json,
+  // and never echoed back (only redactTunnel's presence flags are). Each field is write-only:
+  // undefined = leave unchanged · "" = clear · a value = set. Saving while remote is live rebuilds
+  // the tunnel so the new stable host (or the fallback to quick) takes effect immediately.
+  app.put("/api/tunnel", async (c) => {
+    const p = await parseBody(c, TunnelSettingsSchema);
+    if (!p.ok) return p.res;
+    const t = (cfg.tunnel ??= {});
+    if (p.data.hostname !== undefined) {
+      const h = p.data.hostname.trim();
+      if (h) t.hostname = h;
+      else delete t.hostname;
+    }
+    if (p.data.token !== undefined) {
+      const tok = p.data.token.trim();
+      if (tok) {
+        t.token = tok;
+        await setSecret(TUNNEL_TOKEN, tok); // keychain holds the bytes; saveConfig strips them from disk
+      } else {
+        delete t.token;
+        await deleteSecret(TUNNEL_TOKEN);
+      }
+    }
+    // A fully-configured stable address means the owner wants it — clear any leftover force-quick override.
+    if (t.hostname && t.token) delete t.provider;
+    // Collapse an emptied-out block so config.json doesn't keep a bare `"tunnel": {}`.
+    if (!t.hostname && !t.token && !t.provider) delete cfg.tunnel;
+    saveConfig(cfg);
+    // Apply live when remote is on: tear down + restart so the new config (named↔quick / new host) takes effect.
+    if (accessMode(cfg) === "remote") {
+      stopManagedTunnel();
+      startManagedTunnel(cfg);
+    }
+    broadcast("settings_changed", { tunnel: redactTunnel(cfg) });
+    return c.json({
+      ok: true,
+      tunnel: redactTunnel(cfg),
+      tunnelActive: tunnelActive(),
+      tunnelUrl: getTunnelUrl(),
+    });
   });
 
   // OIDC dance (only meaningful when configured).

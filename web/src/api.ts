@@ -51,6 +51,26 @@ async function req<T>(method: string, path: string, body?: unknown, signal?: Abo
 
 export type AccessMode = "local" | "remote";
 
+/** Redacted named-tunnel config (mirrors src/config.ts redactTunnel) — never carries the token. */
+export interface TunnelStatus {
+  /** Stable hostname for a named tunnel (e.g. "app.repoyeti.com"), or null. */
+  hostname: string | null;
+  /** A connector token is available (from config OR the CF_TUNNEL_TOKEN env). */
+  hasToken: boolean;
+  /** The token is supplied by CF_TUNNEL_TOKEN (read-only — the UI can't edit it). */
+  tokenFromEnv: boolean;
+  /** A stable named tunnel is fully configured (what the daemon's namedTunnel() resolves). */
+  named: boolean;
+}
+
+/** Result of PUT /api/tunnel — the redacted config plus the live tunnel state. */
+export interface TunnelResult {
+  ok: boolean;
+  tunnel: TunnelStatus;
+  tunnelActive: boolean;
+  tunnelUrl: string | null;
+}
+
 export interface AuthStatus {
   authEnforced: boolean;
   mode: AccessMode;
@@ -71,6 +91,8 @@ export interface RuntimeStatus {
   tunnelActive: boolean;
   /** Public cloudflared tunnel URL, or null when no tunnel is running. */
   tunnelUrl: string | null;
+  /** Redacted named-tunnel config (stable hostname + token-presence flags; never the token). */
+  tunnel: TunnelStatus;
   /** Whether per-file/per-repo diff statistics are enabled (owner setting). */
   diffStats: boolean;
   /** Min query length before "search content" greps — server-owned, so the UI can't drift. */
@@ -124,6 +146,11 @@ export const api = {
   status: () => req<RuntimeStatus>("GET", "/api/status"),
   /** Flip local ↔ remote. Throws ApiError "NEEDS_OWNER" if remote needs a sign-in first. */
   setMode: (mode: AccessMode) => req<ModeResult>("PUT", "/api/mode", { mode }),
+  /** Configure the stable named tunnel (hostname + connector token). Token is write-only — pass
+   *  "" to clear a field, omit it to keep the saved one. The daemon persists + (if remote is on)
+   *  restarts the tunnel so the new stable host takes effect immediately. */
+  setTunnel: (input: { hostname?: string; token?: string }) =>
+    req<TunnelResult>("PUT", "/api/tunnel", input),
   /** Toggle per-file/per-repo diff statistics (owner setting; persisted in config). */
   setDiffStats: (enabled: boolean) =>
     req<{ ok: boolean; diffStats: boolean }>("PUT", "/api/settings", { diffStats: enabled }),

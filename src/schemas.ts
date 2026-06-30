@@ -105,6 +105,22 @@ export const TagCreateSchema = z.object({
   push: z.boolean().optional(),
 });
 
+// ── remote-access named tunnel (stable host + connector token) ────────────────────
+// Both fields follow the write-only-secret convention: undefined = leave unchanged · "" = clear ·
+// a value = set it. `hostname` must be a bare host like "app.repoyeti.com" (no scheme/path); the
+// `token` is the opaque cloudflared connector secret (kept in the keychain, never echoed back).
+export const TunnelSettingsSchema = z.object({
+  hostname: z
+    .string()
+    .trim()
+    .refine(
+      (s) => s === "" || /^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$/.test(s),
+      "must be a bare hostname, e.g. app.repoyeti.com",
+    )
+    .optional(),
+  token: z.string().optional(),
+});
+
 // ── AI ──────────────────────────────────────────────────────────────────────────
 export const ConnectSchema = z.object({ apiKey: z.string().optional() }); // NO_KEY stays in handler
 

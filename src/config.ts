@@ -382,6 +382,30 @@ export function namedTunnel(cfg: RepoYetiConfig): { hostname: string; token: str
   return hostname && token ? { hostname, token } : null;
 }
 
+/** Key-free projection of the tunnel config, safe to send to any client (the Settings UI reads it
+ *  from GET /api/status). NEVER carries the token bytes — only whether one is present. */
+export interface RedactedTunnelConfig {
+  /** The stable hostname a named tunnel serves (e.g. "app.repoyeti.com"), or null. Non-secret. */
+  hostname: string | null;
+  /** A connector token is available — from config OR the CF_TUNNEL_TOKEN env. Never the bytes. */
+  hasToken: boolean;
+  /** The token is supplied by the CF_TUNNEL_TOKEN env (read-only — the Settings UI can't edit it). */
+  tokenFromEnv: boolean;
+  /** A stable named tunnel is fully configured and not force-quick — exactly what namedTunnel() resolves. */
+  named: boolean;
+}
+
+/** Redact the tunnel config for the API: hostname + token-presence flags, never the token itself. */
+export function redactTunnel(cfg: RepoYetiConfig): RedactedTunnelConfig {
+  const envToken = (process.env.CF_TUNNEL_TOKEN ?? "").trim();
+  return {
+    hostname: cfg.tunnel?.hostname?.trim() || null,
+    hasToken: !!(envToken || cfg.tunnel?.token?.trim()),
+    tokenFromEnv: !!envToken,
+    named: namedTunnel(cfg) !== null,
+  };
+}
+
 /**
  * One-time migration of pre-rename state (back when RepoYeti was "GitMob"): move
  * ~/.gitmob → ~/.repoyeti and rename the gitmob.db files inside. Only runs for the

@@ -2,7 +2,7 @@ import { defineStore } from "pinia";
 import { ref, reactive, computed, watch } from "vue";
 import { useEventSource } from "@vueuse/core";
 import { toast } from "vue-sonner";
-import { api, ApiError, type AccessMode } from "./api";
+import { api, ApiError, type AccessMode, type TunnelStatus } from "./api";
 import { t } from "./i18n";
 import type {
   ActionName,
@@ -122,6 +122,15 @@ export const useStore = defineStore("repoyeti", () => {
   // Surfaced in the connection panel so the owner can open RepoYeti on their phone.
   const tunnelUrl = ref<string | null>(null);
   const tunnelActive = ref(false);
+  // Redacted named-tunnel config (stable hostname + token-presence flags; never the token).
+  // From /api/status, kept live via the `settings_changed` SSE event. Drives the Settings
+  // "Stable address" editor.
+  const tunnelConfig = ref<TunnelStatus>({
+    hostname: null,
+    hasToken: false,
+    tokenFromEnv: false,
+    named: false,
+  });
 
   // Owner setting: show added/removed line + char counts per file and per repo. Sourced
   // from /api/status and kept live via the `settings_changed` SSE event. Off by default.
@@ -257,6 +266,14 @@ export const useStore = defineStore("repoyeti", () => {
     tunnelActive.value = r.tunnelActive;
     tunnelUrl.value = r.tunnelUrl;
   }
+  /** Configure the stable named tunnel (hostname + connector token). Token is write-only — pass
+   *  "" to clear a field, omit it to keep the saved one. Throws ApiError → the caller toasts. */
+  async function setTunnel(input: { hostname?: string; token?: string }): Promise<void> {
+    const r = await api.setTunnel(input);
+    tunnelConfig.value = r.tunnel;
+    tunnelActive.value = r.tunnelActive;
+    tunnelUrl.value = r.tunnelUrl;
+  }
   async function logout(): Promise<void> {
     await api.logout();
     location.reload();
@@ -286,6 +303,7 @@ export const useStore = defineStore("repoyeti", () => {
       mode.value = s.mode;
       tunnelActive.value = s.tunnelActive;
       tunnelUrl.value = s.tunnelUrl;
+      if (s.tunnel) tunnelConfig.value = s.tunnel;
       diffStatsEnabled.value = s.diffStats;
       remoteEditing.value = s.remoteEditing;
       diffPatchBytes.value = s.diffPatchBytes ?? 512 * 1024;
@@ -601,6 +619,7 @@ export const useStore = defineStore("repoyeti", () => {
           if (typeof payload.diffPatchEnabled === "boolean") diffPatchEnabled.value = payload.diffPatchEnabled;
           if (typeof payload.syncCheck === "boolean") syncCheckEnabled.value = payload.syncCheck;
           if (typeof payload.syncIntervalSecs === "number") syncIntervalSecs.value = payload.syncIntervalSecs;
+          if (payload.tunnel) tunnelConfig.value = payload.tunnel as TunnelStatus;
         }
       } catch {
         /* ignore malformed frame */
@@ -1047,9 +1066,11 @@ export const useStore = defineStore("repoyeti", () => {
     localBypass,
     continueLocal,
     setMode,
+    setTunnel,
     identityById,
     tunnelUrl,
     tunnelActive,
+    tunnelConfig,
     diffStatsEnabled,
     contentSearchMin,
     setDiffStats,
