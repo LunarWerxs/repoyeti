@@ -95,7 +95,7 @@ async function removeBranch(name: string): Promise<void> {
           </button>
           <button
             type="button"
-            class="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 outline-none transition group-hover/br:opacity-100 hover:bg-destructive/15 hover:text-destructive focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/40"
+            class="flex size-8 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 pointer-coarse:opacity-100 outline-none transition group-hover/br:opacity-100 hover:bg-destructive/15 hover:text-destructive focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/40"
             :title="$t('repo.branches.deleteTooltip')"
             :aria-label="$t('repo.branches.deleteTooltip')"
             @click="removeBranch(b.name)"

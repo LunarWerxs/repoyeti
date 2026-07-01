@@ -212,8 +212,8 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
           tabindex="-1"
           :aria-checked="selection.isSelected(n.path)"
           :aria-label="$t('repo.changes.select', { name: n.name })"
-          class="absolute top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded outline-none transition focus-visible:ring-2 focus-visible:ring-ring/40"
-          :style="{ left: (depth ?? 0) * 14 + 5 + 'px' }"
+          class="absolute top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded outline-none transition focus-visible:ring-2 focus-visible:ring-ring/40"
+          :style="{ left: (depth ?? 0) * 14 + 3 + 'px' }"
           @click.stop="selection.toggle(n.path)"
         >
           <span
@@ -227,11 +227,13 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
             <Check v-if="selection.isSelected(n.path)" :size="11" />
           </span>
         </button>
-        <!-- discard this file's working-tree changes (RepoCard confirms first) -->
+        <!-- discard this file's working-tree changes (RepoCard confirms first). Hidden-until-hover on
+             pointer devices, but always visible on touch (pointer-coarse) — phones have no :hover, so
+             hover-only reveal would make discard unreachable on the primary surface. -->
         <button
           type="button"
           tabindex="-1"
-          class="absolute top-1/2 right-1 flex size-5 -translate-y-1/2 items-center justify-center rounded bg-card/80 text-muted-foreground opacity-0 outline-none transition group-hover/file:opacity-100 hover:bg-destructive/15 hover:text-destructive focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/40"
+          class="absolute top-1/2 right-1 flex size-6 -translate-y-1/2 items-center justify-center rounded bg-card/80 text-muted-foreground opacity-0 pointer-coarse:opacity-70 outline-none transition group-hover/file:opacity-100 hover:bg-destructive/15 hover:text-destructive focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/40"
           :title="$t('repo.discard.action')"
           :aria-label="$t('repo.discard.action')"
           @click.stop="emit('discard', n.path)"

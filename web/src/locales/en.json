@@ -197,6 +197,7 @@
       "amended": "Amended",
       "clearSelection": "Clear selection",
       "commit": "Commit",
+      "commitAll": "Commit all",
       "commitPush": "Commit & Push",
       "commitSelected": "Commit selected ({n})",
       "commitSync": "Commit & Sync",

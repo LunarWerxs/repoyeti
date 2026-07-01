@@ -72,7 +72,7 @@ async function stashDrop(index: number): Promise<void> {
         <span class="min-w-0 flex-1 truncate text-[12px]" :title="s.message">{{ s.message }}</span>
         <button
           type="button"
-          class="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground outline-none transition hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50"
+          class="flex size-8 shrink-0 items-center justify-center rounded text-muted-foreground outline-none transition hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50"
           :disabled="!!gitBusy"
           :title="$t('repo.stash.popTooltip')"
           :aria-label="$t('repo.stash.pop')"
@@ -82,7 +82,7 @@ async function stashDrop(index: number): Promise<void> {
         </button>
         <button
           type="button"
-          class="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground outline-none transition hover:bg-destructive/15 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50"
+          class="flex size-8 shrink-0 items-center justify-center rounded text-muted-foreground outline-none transition hover:bg-destructive/15 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50"
           :disabled="!!gitBusy"
           :title="$t('repo.stash.dropTooltip')"
           :aria-label="$t('repo.stash.drop')"

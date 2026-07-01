@@ -477,6 +477,7 @@ async function doCommit(mode: CommitMode = "commit"): Promise<void> {
         sync: t("repo.commit.synced"),
       }[mode],
     );
+    void loadRecentMsgs(); // the commit history changed — refresh the one-tap "recent" chips (matches doCommitSelected / smart-commit)
   } finally {
     committing.value = false;
   }
@@ -852,7 +853,7 @@ async function confirmDiscard(): Promise<void> {
                 type="button"
                 :aria-label="$t('repo.changes.searchClear')"
                 :title="$t('repo.changes.searchClear')"
-                class="absolute top-1/2 right-1 flex size-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+                class="absolute top-1/2 right-1 flex size-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
                 @click="treeQuery = ''"
               >
                 <X :size="12" />
@@ -879,7 +880,7 @@ async function confirmDiscard(): Promise<void> {
             <button
               v-if="dirPaths.length && !searching"
               type="button"
-              class="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+              class="flex size-7 shrink-0 items-center justify-center rounded text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
               :aria-label="allCollapsed ? $t('repo.changes.expandAll') : $t('repo.changes.collapseAll')"
               :title="allCollapsed ? $t('repo.changes.expandAll') : $t('repo.changes.collapseAll')"
               @click="toggleCollapseAll"
@@ -925,7 +926,7 @@ async function confirmDiscard(): Promise<void> {
             type="button"
             :aria-label="resized ? $t('repo.changes.gripAriaResized') : $t('repo.changes.gripAria')"
             :title="resized ? $t('repo.changes.gripTitleResized') : $t('repo.changes.gripTitle')"
-            class="group/grip flex h-3 w-full cursor-ns-resize touch-none items-center justify-center border-t border-border/40 outline-none transition-colors hover:bg-accent/40 focus-visible:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring/40"
+            class="group/grip flex h-5 w-full cursor-ns-resize touch-none items-center justify-center border-t border-border/40 outline-none transition-colors hover:bg-accent/40 focus-visible:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring/40"
             @pointerdown="onGripDown"
             @dblclick="resetTreeHeight"
             @keydown.up.prevent="gripKey(() => nudgeHeight(-24))"
@@ -998,7 +999,9 @@ async function confirmDiscard(): Promise<void> {
             >
               <Loader2 v-if="committing" class="animate-spin" />
               <GitCommitHorizontal v-else />
-              <span>{{ $t("repo.commit.commit") }}</span>
+              <!-- when a per-file selection is active, say "Commit all" so this button is clearly
+                   distinct from the "Commit selected (N)" bar below (both share the message box). -->
+              <span>{{ selectedCount > 0 ? $t("repo.commit.commitAll") : $t("repo.commit.commit") }}</span>
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger as-child>
