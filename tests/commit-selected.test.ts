@@ -105,3 +105,65 @@ test("commit-selected rejects a path that is no longer pending (PLAN_STALE, 409)
     rmrf(dir);
   }
 });
+
+// #7 — selecting a renamed file must stage BOTH sides (the rename's old path is auto-added), so the
+// commit lands as a clean rename rather than a stray delete+add or a half-applied change.
+test("commit-selected stages both sides of a rename when the new path is selected", async () => {
+  const dir = await seededRepo();
+  try {
+    // `git mv` stages the rename; identical content → git detects it as a rename.
+    await $`git -C ${dir} mv a.txt b.txt`.quiet();
+    const id = upsertRepo(dir, "sel-rename", "auto", false);
+    const res = await createApp(localCfg()).request(
+      `/api/repos/${id}/commit-selected`,
+      J({ message: "refactor: rename a to b", paths: ["b.txt"] }),
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).ok).toBe(true);
+    // The rename landed cleanly: nothing left pending, b.txt tracked, a.txt gone, recorded as R.
+    expect(await logSubjects(dir)).toContain("refactor: rename a to b");
+    expect(await porcelain(dir)).toEqual([]);
+    const nameStatus = (await $`git -C ${dir} show --name-status --format= HEAD`.text()).trim();
+    expect(nameStatus.startsWith("R")).toBe(true); // a rename, not a delete+add pair
+  } finally {
+    stopWatching();
+    rmrf(dir);
+  }
+});
+
+// #8 — the schema guards an empty selection (paths.min(1) → 400) before it can reach the service's
+// NOTHING_TO_COMMIT branch; a duplicated path is silently deduped into one clean commit (no double git add).
+test("commit-selected rejects an empty paths array at the schema (400)", async () => {
+  const dir = await seededRepo();
+  try {
+    writeFileSync(join(dir, "a.txt"), "a1\n");
+    const id = upsertRepo(dir, "sel-empty", "auto", false);
+    const res = await createApp(localCfg()).request(
+      `/api/repos/${id}/commit-selected`,
+      J({ message: "x", paths: [] }),
+    );
+    expect(res.status).toBe(400);
+  } finally {
+    stopWatching();
+    rmrf(dir);
+  }
+});
+
+test("commit-selected dedupes a duplicated path into one clean commit", async () => {
+  const dir = await seededRepo();
+  try {
+    writeFileSync(join(dir, "a.txt"), "a1\n");
+    const id = upsertRepo(dir, "sel-dup", "auto", false);
+    const res = await createApp(localCfg()).request(
+      `/api/repos/${id}/commit-selected`,
+      J({ message: "feat: dedup", paths: ["a.txt", "a.txt"] }),
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).ok).toBe(true);
+    expect(await logSubjects(dir)).toContain("feat: dedup");
+    expect(await porcelain(dir)).toEqual([]); // a.txt committed once, nothing left pending
+  } finally {
+    stopWatching();
+    rmrf(dir);
+  }
+});
