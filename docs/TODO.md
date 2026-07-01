@@ -53,6 +53,13 @@
 
 All verified green at each step (**318 daemon tests** + web build, `tsc`, `check:codes`/`check:boundaries`, lint).
 
+**🔎 Post-stable audit sweep + fixes (2026-06-30) — DONE.** After the backlog was cleared, a multi-agent
+audit (bugs / dead-code / mobile UX / test-gaps, each finding adversarially verified) surfaced 22 confirmed
+issues; **all 22 fixed** across `115651e`→`9b148d1` (backend correctness incl. a real smart-commit
+push-after-failed-pull bug + a log-history-wipe; a phone-first touch-target/hover pass; dedup; ~20 new
+tests). Then a lint sweep took **Biome from 57 warnings → 0** (`2431fc9`). Tree is `tsc`/`vue-tsc` clean,
+backend **321 pass / 1 skip**, web **41 pass**.
+
 **🔧 Maintainability reorg + agent surfaces (2026-06-30) — DONE.** A run of commits landed on top of the
 frontend pass:
 - **3-part structural reorg** (`5b77e9b`/`e4eb817`/`00ee787`): read layer → `src/read/`, `service.ts`
