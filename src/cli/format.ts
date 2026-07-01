@@ -24,7 +24,7 @@ export const cyan = wrap(36);
 
 /** Visible length of a string, ignoring ANSI escape sequences (so colour never skews padding). */
 function visibleLen(s: string): number {
-  // eslint-disable-next-line no-control-regex
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: matching the ANSI CSI escape (\x1b[…m) is the whole point — strip color codes so padding isn't skewed by invisible bytes.
   return s.replace(/\x1b\[[0-9;]*m/g, "").length;
 }
 

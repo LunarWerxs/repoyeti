@@ -183,7 +183,7 @@ test("listModels parses a 200 body and maps 401 to AI_AUTH_FAILED", async () => 
 
 test("generateCommitMessage sends the model + returns a cleaned message", async () => {
   let sentUrl = "";
-  let sentBody: any = null;
+  let sentBody: { model?: string; messages?: Array<{ role?: string; content?: unknown }> } | null = null;
   const f = fakeFetch(200, { choices: [{ message: { content: "```\nfeat: add x\n```" } }] }, (url, init) => {
     sentUrl = url;
     sentBody = init?.body ? JSON.parse(String(init.body)) : null;
@@ -191,8 +191,8 @@ test("generateCommitMessage sends the model + returns a cleaned message", async 
   const msg = await generateCommitMessage("openai", "sk-x", "gpt-4o", "DIFF", "conventional", f);
   expect(msg).toBe("feat: add x");
   expect(sentUrl).toContain("/chat/completions");
-  expect(sentBody.model).toBe("gpt-4o");
-  expect(sentBody.messages.some((m: any) => m.role === "user" && String(m.content).includes("DIFF"))).toBe(true);
+  expect(sentBody!.model).toBe("gpt-4o");
+  expect(sentBody!.messages?.some((m) => m.role === "user" && String(m.content).includes("DIFF"))).toBe(true);
 });
 
 test("generateCommitMessage throws on an empty model reply", async () => {

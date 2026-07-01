@@ -226,14 +226,16 @@ export function parseHistory(stdout: string, cap: number): LogResult["commits"] 
       continue;
     }
     if (!open) continue;
-    let m: RegExpExecArray | null;
-    if ((m = /^Signature\s*:\s*(\w+)/.exec(raw))) {
-      hash = m[1] ?? "";
-    } else if ((m = /^Date\s*:\s*(.+)$/.exec(raw))) {
-      const t = Date.parse((m[1] ?? "").trim());
+    const sig = /^Signature\s*:\s*(\w+)/.exec(raw);
+    const dateM = /^Date\s*:\s*(.+)$/.exec(raw);
+    const creator = /^Creator\s*:\s*(.+)$/.exec(raw) ?? /^Committer\s*:\s*(.+)$/.exec(raw);
+    if (sig) {
+      hash = sig[1] ?? "";
+    } else if (dateM) {
+      const t = Date.parse((dateM[1] ?? "").trim());
       date = Number.isNaN(t) ? 0 : t;
-    } else if ((m = /^Creator\s*:\s*(.+)$/.exec(raw)) ?? /^Committer\s*:\s*(.+)$/.exec(raw)) {
-      if (!author) author = (m?.[1] ?? "").trim();
+    } else if (creator) {
+      if (!author) author = (creator[1] ?? "").trim();
     } else if (/^\s+\S/.test(raw) && !subject) {
       subject = raw.trim();
     }
@@ -494,7 +496,7 @@ export async function loreCollectDiff(absPath: string, paths?: string[]): Promis
   const statusRun = await runLore(absPath, ["status", "--scan"]);
   const files = statusRun.code === 0 ? parseChangedLines(statusRun.stdout) : [];
   const status = files.length ? files.map((f) => `${f.status} ${f.path}`).join("\n") : "(clean)";
-  const diffRun = await runLore(absPath, paths && paths.length ? ["diff", ...paths] : ["diff"]);
+  const diffRun = await runLore(absPath, paths?.length ? ["diff", ...paths] : ["diff"]);
   const diff = diffRun.code === 0 ? diffRun.stdout.trim() : "";
   let combined = `# lore status\n${status}\n\n# lore diff\n${diff || "(no textual diff — new/untracked files only)"}`;
   if (combined.length > LORE_DIFF_CAP) combined = `${combined.slice(0, LORE_DIFF_CAP)}\n…[truncated]`;

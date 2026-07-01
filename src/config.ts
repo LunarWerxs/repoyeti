@@ -367,7 +367,7 @@ export function accessMode(cfg: RepoYetiConfig): AccessMode {
  *  baked-in Connections client this is true for every real install; only bare test configs
  *  (no `oauth`) are unauthenticated/local-open. The middleware layers `mode` on top. */
 export function authEnforced(cfg: RepoYetiConfig): boolean {
-  return !!(cfg.oauth && cfg.oauth.issuer && cfg.oauth.clientId && cfg.oauth.redirectUri);
+  return !!(cfg.oauth?.issuer && cfg.oauth.clientId && cfg.oauth.redirectUri);
 }
 
 export function ownerConfigured(cfg: RepoYetiConfig): boolean {

@@ -27,7 +27,7 @@ async function sourceRepo(): Promise<string> {
 /** A cross-platform file:// URL (file:///C:/x on Windows, file:///tmp/x on POSIX). */
 function fileUrl(p: string): string {
   const norm = p.replace(/\\/g, "/");
-  return "file://" + (norm.startsWith("/") ? "" : "/") + norm;
+  return `file://${norm.startsWith("/") ? "" : "/"}${norm}`;
 }
 
 test("cloneRepo clones a repo and indexes it", async () => {

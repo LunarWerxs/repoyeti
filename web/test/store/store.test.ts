@@ -68,8 +68,8 @@ describe("store.loadLog pagination", () => {
     const store = useStore();
     await store.loadLog("r"); // first page
     await store.loadLog("r", 50, 2); // "load more"
-    expect(store.logByRepo["r"].commits.map((c) => c.hash)).toEqual(["aaa", "bbb", "ccc"]);
-    expect(store.logByRepo["r"].hasMore).toBe(false);
+    expect(store.logByRepo.r.commits.map((c) => c.hash)).toEqual(["aaa", "bbb", "ccc"]);
+    expect(store.logByRepo.r.hasMore).toBe(false);
   });
 
   it("keeps already-loaded commits when a paginated 'load more' fails", async () => {
@@ -79,14 +79,14 @@ describe("store.loadLog pagination", () => {
     const store = useStore();
     await store.loadLog("r"); // first page ok
     await store.loadLog("r", 50, 2); // load-more fails
-    expect(store.logByRepo["r"].commits.map((c) => c.hash)).toEqual(["aaa", "bbb"]); // preserved
+    expect(store.logByRepo.r.commits.map((c) => c.hash)).toEqual(["aaa", "bbb"]); // preserved
   });
 
   it("surfaces the empty/error state on a first-page failure", async () => {
     vi.spyOn(api, "log").mockRejectedValueOnce(new Error("network blip"));
     const store = useStore();
     await store.loadLog("r");
-    expect(store.logByRepo["r"].commits).toEqual([]);
-    expect(store.logByRepo["r"].ok).toBe(false);
+    expect(store.logByRepo.r.commits).toEqual([]);
+    expect(store.logByRepo.r.ok).toBe(false);
   });
 });

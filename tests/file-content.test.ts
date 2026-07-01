@@ -99,11 +99,11 @@ test("a large modified file comes back as a compact patch, not both whole sides"
   // Comfortably over DIFF_PATCH_BYTES (512 KB) so readFileDiff takes the patch path.
   const filler = "x".repeat(60);
   const lines = Array.from({ length: 12_000 }, (_, i) => `line ${i} ${filler}`);
-  writeFileSync(join(dir, "big.txt"), lines.join("\n") + "\n");
+  writeFileSync(join(dir, "big.txt"), `${lines.join("\n")}\n`);
   await $`git -C ${dir} add big.txt`.quiet();
   await $`git -C ${dir} -c user.name=Seed -c user.email=s@s.io commit -q -m add`.quiet();
   lines[5] = `line 5 CHANGED ${filler}`;
-  writeFileSync(join(dir, "big.txt"), lines.join("\n") + "\n");
+  writeFileSync(join(dir, "big.txt"), `${lines.join("\n")}\n`);
   const id = upsertRepo(dir, "repo-big-diff", "auto", false);
 
   const res = await readFileDiff(id, "big.txt");
@@ -121,11 +121,11 @@ test("the diff-patch threshold is configurable — raising it sends a 'large' fi
   const dir = await gitRepo();
   const filler = "x".repeat(60);
   const lines = Array.from({ length: 12_000 }, (_, i) => `line ${i} ${filler}`); // ~0.8 MB
-  writeFileSync(join(dir, "big.txt"), lines.join("\n") + "\n");
+  writeFileSync(join(dir, "big.txt"), `${lines.join("\n")}\n`);
   await $`git -C ${dir} add big.txt`.quiet();
   await $`git -C ${dir} -c user.name=Seed -c user.email=s@s.io commit -q -m add`.quiet();
   lines[5] = `line 5 CHANGED ${filler}`;
-  writeFileSync(join(dir, "big.txt"), lines.join("\n") + "\n");
+  writeFileSync(join(dir, "big.txt"), `${lines.join("\n")}\n`);
   const id = upsertRepo(dir, "repo-thresh", "auto", false);
 
   const prev = getDiffPatchBytes();
@@ -143,11 +143,11 @@ test("turning compact diff off forces a large modified file back to side-by-side
   const dir = await gitRepo();
   const filler = "x".repeat(60);
   const lines = Array.from({ length: 12_000 }, (_, i) => `line ${i} ${filler}`); // ~0.8 MB
-  writeFileSync(join(dir, "big.txt"), lines.join("\n") + "\n");
+  writeFileSync(join(dir, "big.txt"), `${lines.join("\n")}\n`);
   await $`git -C ${dir} add big.txt`.quiet();
   await $`git -C ${dir} -c user.name=Seed -c user.email=s@s.io commit -q -m add`.quiet();
   lines[5] = `line 5 CHANGED ${filler}`;
-  writeFileSync(join(dir, "big.txt"), lines.join("\n") + "\n");
+  writeFileSync(join(dir, "big.txt"), `${lines.join("\n")}\n`);
   const id = upsertRepo(dir, "repo-nopatch", "auto", false);
 
   const prev = getDiffPatchEnabled();
@@ -164,7 +164,7 @@ test("turning compact diff off forces a large modified file back to side-by-side
 test("a large ADDED file stays on the model path (the diff IS the whole file)", async () => {
   const dir = await gitRepo();
   const filler = "y".repeat(60);
-  const big = Array.from({ length: 12_000 }, (_, i) => `row ${i} ${filler}`).join("\n") + "\n";
+  const big = `${Array.from({ length: 12_000 }, (_, i) => `row ${i} ${filler}`).join("\n")}\n`;
   writeFileSync(join(dir, "fresh.txt"), big); // untracked, never committed
   const id = upsertRepo(dir, "repo-big-add", "auto", false);
 

@@ -68,7 +68,7 @@ test("parseCommitPlan parses a clean plan and assigns every path once", () => {
 });
 
 test("parseCommitPlan tolerates code fences and surrounding prose", () => {
-  const text = "Here is your plan:\n```json\n" + JSON.stringify({ groups: [{ type: "fix", subject: "y", files: ["y.ts"] }] }) + "\n```";
+  const text = `Here is your plan:\n\`\`\`json\n${JSON.stringify({ groups: [{ type: "fix", subject: "y", files: ["y.ts"] }] })}\n\`\`\``;
   const plan = parseCommitPlan(text, ["y.ts"]);
   expect(plan!.groups[0]!.subject).toBe("y");
 });

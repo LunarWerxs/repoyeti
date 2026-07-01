@@ -48,4 +48,4 @@ if (existsSync(vendor)) {
 }
 
 console.log(`\n✓ Built ${outBin}`);
-console.log("  Run it:  " + (isWin ? "dist\\repoyeti.exe start" : "./dist/repoyeti start"));
+console.log(`  Run it:  ${isWin ? "dist\\repoyeti.exe start" : "./dist/repoyeti start"}`);

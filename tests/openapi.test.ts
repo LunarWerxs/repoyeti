@@ -51,7 +51,7 @@ test("DRIFT GUARD: every real /api/* route appears in the spec's paths", async (
     const openApiPath = toOpenApiPath(r.path);
     const verb = r.method.toLowerCase();
     const entry = doc.paths[openApiPath];
-    if (!entry || !entry[verb]) missing.push(`${r.method} ${r.path}`);
+    if (!entry?.[verb]) missing.push(`${r.method} ${r.path}`);
   }
   expect(missing).toEqual([]);
 });

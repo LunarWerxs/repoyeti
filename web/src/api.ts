@@ -324,7 +324,7 @@ export const api = {
       req<{ ok: boolean; message: string; provider: AiProviderId; model: string }>(
         "POST",
         `/api/repos/${repoId}/commit-message`,
-        { ...(provider ? { provider } : {}), ...(paths && paths.length ? { paths } : {}) },
+        { ...(provider ? { provider } : {}), ...(paths?.length ? { paths } : {}) },
       ),
     /** Propose a multi-commit plan from the repo's working tree (commits nothing). */
     commitPlan: (repoId: string, provider?: AiProviderId) =>

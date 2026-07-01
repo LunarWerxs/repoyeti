@@ -145,7 +145,7 @@ test("readLog returns commits newest-first with author + subject", async () => {
 test("readLog paginates with skip and reports hasMore", async () => {
   const dir = await repo();
   for (let i = 0; i < 3; i++) {
-    await $`git -C ${dir} -c user.name=S -c user.email=s@s.io commit -q --allow-empty -m ${"c" + i}`.quiet();
+    await $`git -C ${dir} -c user.name=S -c user.email=s@s.io commit -q --allow-empty -m ${`c${i}`}`.quiet();
   }
   const page1 = await readLog(dir, 2, 0);
   expect(page1.commits.length).toBe(2);

@@ -158,7 +158,7 @@ export function register(app: Hono, { cfg }: Deps): void {
     // With `paths`, draft from only those files (smart-commit per-group regenerate); else the
     // whole working tree (the normal "✨ Generate" button).
     const collected =
-      p.data.paths && p.data.paths.length
+      p.data.paths?.length
         ? await collectRepoPathsDiff(id, p.data.paths)
         : await collectRepoDiff(id);
     if (!collected.ok) {

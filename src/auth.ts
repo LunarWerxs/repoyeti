@@ -380,7 +380,7 @@ export function handleLogoutAll(c: Context): Response {
  */
 export function validBearerToken(c: Context, cfg: RepoYetiConfig): boolean {
   const header = c.req.header("authorization");
-  if (!header || !header.startsWith("Bearer ")) return false;
+  if (!header?.startsWith("Bearer ")) return false;
   const presented = header.slice("Bearer ".length);
   // UNSET ⇒ never matches ⇒ no behavior change.
   if (!cfg.apiToken) return false;
@@ -398,6 +398,7 @@ export function validBearerToken(c: Context, cfg: RepoYetiConfig): boolean {
  *    owner session, the local bypass ("Continue local for now"), or a valid API Bearer token.
  *  Public endpoints (health + the status probes the gate itself relies on) always pass. */
 export function authMiddleware(cfg: RepoYetiConfig) {
+  // biome-ignore lint/suspicious/noConfusingVoidType: `void` is load-bearing — the pass-through branches `return next()` (Promise<void>); narrowing to `undefined` breaks that.
   return async (c: Context, next: () => Promise<void>): Promise<Response | void> => {
     if (!authEnforced(cfg)) return next();
     const path = new URL(c.req.url).pathname;

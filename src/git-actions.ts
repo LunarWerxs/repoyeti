@@ -305,7 +305,7 @@ export async function collectCommitDiff(absPath: string): Promise<string> {
   const diff = await boundedDiff(absPath, null, [], DIFF_CAP);
   let combined =
     `# git status --porcelain\n${status || "(clean)"}\n\n# git diff\n${diff || "(no textual diff — new/untracked files only)"}`;
-  if (combined.length > DIFF_CAP) combined = combined.slice(0, DIFF_CAP) + "\n…[truncated]";
+  if (combined.length > DIFF_CAP) combined = `${combined.slice(0, DIFF_CAP)}\n…[truncated]`;
   return combined;
 }
 
@@ -326,7 +326,7 @@ export async function collectPathsDiff(absPath: string, paths: string[]): Promis
   const diff = await boundedDiff(absPath, paths, [], DIFF_CAP);
   let combined =
     `# git status --porcelain\n${status || "(clean)"}\n\n# git diff\n${diff || "(no textual diff — new/untracked files only)"}`;
-  if (combined.length > DIFF_CAP) combined = combined.slice(0, DIFF_CAP) + "\n…[truncated]";
+  if (combined.length > DIFF_CAP) combined = `${combined.slice(0, DIFF_CAP)}\n…[truncated]`;
   return combined;
 }
 
@@ -375,7 +375,7 @@ export async function collectCommitPlanInput(absPath: string): Promise<CommitPla
     ? await boundedDiff(absPath, diffPaths, ["-U0", "--no-color", "-M"], PLAN_DIFF_CAP + 1)
     : "";
   const truncated = diff.length > PLAN_DIFF_CAP;
-  if (truncated) diff = diff.slice(0, PLAN_DIFF_CAP) + "\n…[truncated]";
+  if (truncated) diff = `${diff.slice(0, PLAN_DIFF_CAP)}\n…[truncated]`;
 
   // Best-effort binary flag: git prints "Binary files <a> and b/<p> differ". Match the b-side
   // path so both modified ("a/x and b/x") and newly-added ("/dev/null and b/x") binaries flag.
@@ -632,7 +632,7 @@ const PROTECTED_BRANCHES = new Set(["main", "master", "develop", "trunk"]);
  */
 export function isValidBranchName(name: string): boolean {
   if (!name || name.length > 255) return false;
-  // eslint-disable-next-line no-control-regex
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: git ref rules forbid control chars (\x00-\x1f, \x7f) in branch names — rejecting them here is intentional validation.
   if (/[\s~^:?*[\\\x00-\x1f\x7f]/.test(name)) return false;
   if (name.includes("..") || name.includes("@{")) return false;
   if (name.startsWith("/") || name.endsWith("/") || name.includes("//")) return false;

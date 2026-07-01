@@ -43,10 +43,13 @@ export function createSemaphore(max: number): Semaphore {
       return queue.length;
     },
     run<T>(fn: () => Promise<T>): Promise<T> {
-      const slot =
-        active < max
-          ? ((active++), Promise.resolve())
-          : new Promise<void>((res) => queue.push(res));
+      let slot: Promise<void>;
+      if (active < max) {
+        active++;
+        slot = Promise.resolve();
+      } else {
+        slot = new Promise<void>((res) => queue.push(res));
+      }
       return slot.then(async () => {
         try {
           return await fn();

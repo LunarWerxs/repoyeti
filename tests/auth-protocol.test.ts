@@ -126,7 +126,7 @@ test("[1g] unsign of a token missing the MAC segment returns null", () => {
 // checking that handleComplete rejects a missing nonce.
 
 test("[2a] a valid signed state whose nonce is NOT in txs yields 400 (expired link)", async () => {
-  const nonce = "expired-nonce-" + Date.now();
+  const nonce = `expired-nonce-${Date.now()}`;
   // Do NOT insert into txs — simulate an already-expired or never-issued nonce.
   const statePayload = JSON.stringify({ n: nonce, o: "https://example.com" });
   const state = sign(statePayload);
@@ -152,7 +152,7 @@ test("[2a] a valid signed state whose nonce is NOT in txs yields 400 (expired li
 });
 
 test("[2b] a valid signed state whose nonce IS in txs passes the nonce check (reaches token exchange)", async () => {
-  const nonce = "valid-nonce-" + Date.now();
+  const nonce = `valid-nonce-${Date.now()}`;
   // Pre-insert a valid PKCE transaction.
   txs.set(nonce, { verifier: "test-verifier", ts: Date.now() });
 

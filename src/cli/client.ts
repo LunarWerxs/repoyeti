@@ -48,7 +48,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${base}${path}`, { ...init, headers });
   // 204 / empty body → nothing to parse; treat a 2xx as success.
   const text = await res.text();
-  let body: unknown = undefined;
+  let body: unknown ;
   if (text) {
     try {
       body = JSON.parse(text);

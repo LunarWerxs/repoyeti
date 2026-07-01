@@ -37,8 +37,7 @@ export async function runStdioMcp(): Promise<void> {
 
   /** Flush every complete line currently in the buffer (keeps any trailing partial line). */
   const drain = async (): Promise<void> => {
-    let nl: number;
-    while ((nl = buffer.indexOf("\n")) !== -1) {
+    for (let nl = buffer.indexOf("\n"); nl !== -1; nl = buffer.indexOf("\n")) {
       const line = buffer.slice(0, nl);
       buffer = buffer.slice(nl + 1);
       try {
@@ -62,7 +61,7 @@ export async function runStdioMcp(): Promise<void> {
   // Stream closed: flush any final line that lacked a trailing newline.
   if (buffer.trim() !== "") {
     const out = await processLine(buffer);
-    if (out !== null) process.stdout.write(out + "\n");
+    if (out !== null) process.stdout.write(`${out}\n`);
     buffer = "";
   }
 }

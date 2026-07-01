@@ -14,7 +14,10 @@ export function buildChangeTree(files: ChangedFile[]): TreeNode[] {
   const childIndex = new Map<TreeNode, Map<string, TreeNode>>();
   const indexFor = (n: TreeNode): Map<string, TreeNode> => {
     let m = childIndex.get(n);
-    if (!m) childIndex.set(n, (m = new Map()));
+    if (!m) {
+      m = new Map();
+      childIndex.set(n, m);
+    }
     return m;
   };
 
@@ -43,9 +46,9 @@ export function buildChangeTree(files: ChangedFile[]): TreeNode[] {
     n.children = n.children.map(compress);
     while (n.type === "dir") {
       const kids: TreeNode[] | undefined = n.children;
-      if (!kids || kids.length !== 1) break;
+      if (kids?.length !== 1) break;
       const only: TreeNode | undefined = kids[0];
-      if (!only || only.type !== "dir") break;
+      if (only?.type !== "dir") break;
       n.name = n.name ? `${n.name}/${only.name}` : only.name;
       n.path = only.path;
       n.children = only.children;

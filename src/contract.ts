@@ -173,8 +173,6 @@ export function statusForCode(code: ApiCode): ContentfulStatusCode {
     case "SSH_PASSPHRASE_REQUIRED":
     case "AI_UNREACHABLE":
       return 504;
-    case "DISCARD_FAILED":
-    case "ERROR":
     default:
       return 500;
   }

@@ -99,8 +99,15 @@ const chatBody = (model: string, system: string, user: string): unknown => ({
 });
 
 const chatExtract = (json: unknown): string => {
-  const j = json as Record<string, any>;
-  return j?.choices?.[0]?.message?.content ?? "";
+  const content = (json as { choices?: Array<{ message?: { content?: unknown } }> })
+    ?.choices?.[0]?.message?.content;
+  return typeof content === "string" ? content : "";
+};
+
+/** Pull the text out of one content "part" of an Anthropic/Gemini response array (defensive). */
+const partText = (p: unknown): string => {
+  const t = (p as { text?: unknown })?.text;
+  return typeof t === "string" ? t : "";
 };
 
 // ── per-provider adapters ─────────────────────────────────────────────────────────
@@ -179,8 +186,8 @@ const AI_ADAPTERS: Record<AiProviderId, AiAdapter> = {
       messages: [{ role: "user", content: user }],
     }),
     extractCompletion: (json) => {
-      const parts = Array.isArray((json as any)?.content) ? (json as any).content : [];
-      return parts.map((p: any) => (typeof p?.text === "string" ? p.text : "")).join("");
+      const content = (json as { content?: unknown })?.content;
+      return (Array.isArray(content) ? content : []).map(partText).join("");
     },
   },
 
@@ -191,7 +198,8 @@ const AI_ADAPTERS: Record<AiProviderId, AiAdapter> = {
       `${GEMINI_BASE}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
     headers: () => ({ "content-type": "application/json" }),
     models: (json) => {
-      const models = Array.isArray((json as any)?.models) ? ((json as any).models as Array<Record<string, unknown>>) : [];
+      const raw = (json as { models?: unknown })?.models;
+      const models: Array<Record<string, unknown>> = Array.isArray(raw) ? raw : [];
       return models
         .filter((m) => {
           const methods = m.supportedGenerationMethods;
@@ -215,9 +223,9 @@ const AI_ADAPTERS: Record<AiProviderId, AiAdapter> = {
       generationConfig: { maxOutputTokens: PLAN_MAX_TOKENS, responseMimeType: "application/json" },
     }),
     extractCompletion: (json) => {
-      const cand = (json as any)?.candidates?.[0];
-      const parts = cand?.content?.parts ?? [];
-      return parts.map((p: any) => (typeof p?.text === "string" ? p.text : "")).join("");
+      const parts = (json as { candidates?: Array<{ content?: { parts?: unknown } }> })
+        ?.candidates?.[0]?.content?.parts;
+      return (Array.isArray(parts) ? parts : []).map(partText).join("");
     },
   },
 
@@ -275,7 +283,6 @@ export function systemPromptFor(style: CommitStyle): string {
         " Write an imperative subject line of at most 72 characters, then a blank line, then a " +
         "concise body (a few sentences or bullet points) explaining what changed and why."
       );
-    case "concise":
     default:
       return (
         BASE_SYSTEM +
@@ -303,8 +310,9 @@ export function cleanCommitMessage(text: string): string {
 // ── HTTP plumbing ─────────────────────────────────────────────────────────────
 
 function extractErrMessage(json: unknown, fallback: string): string {
-  const j = json as Record<string, any> | null;
-  const msg = j?.error?.message ?? j?.message ?? j?.error ?? fallback;
+  const j = json as { error?: { message?: unknown } | string; message?: unknown } | null;
+  const err = j?.error;
+  const msg = (err && typeof err === "object" ? err.message : undefined) ?? j?.message ?? err ?? fallback;
   return String(typeof msg === "string" ? msg : fallback)
     .split("\n")[0]!
     .slice(0, 280);
@@ -533,9 +541,9 @@ function extractJsonObject(text: string): string | null {
 export function parseCommitPlan(text: string, knownPaths: string[]): CommitPlan | null {
   const jsonStr = extractJsonObject(text ?? "");
   if (!jsonStr) return null;
-  let raw: any;
+  let raw: { groups?: unknown } | null;
   try {
-    raw = JSON.parse(jsonStr);
+    raw = JSON.parse(jsonStr) as { groups?: unknown } | null;
   } catch {
     return null;
   }
@@ -543,21 +551,23 @@ export function parseCommitPlan(text: string, knownPaths: string[]): CommitPlan 
   const seen = new Set<string>();
   const groups: CommitPlanGroup[] = [];
 
-  const rawGroups = Array.isArray(raw?.groups) ? raw.groups : [];
-  for (const g of rawGroups) {
-    const subject = String(g?.subject ?? "").trim();
-    const rawFiles = Array.isArray(g?.files) ? g.files : [];
+  const groupsVal = raw?.groups;
+  const rawGroups = Array.isArray(groupsVal) ? groupsVal : [];
+  for (const g0 of rawGroups) {
+    const g = (g0 ?? {}) as Record<string, unknown>;
+    const subject = String(g.subject ?? "").trim();
+    const rawFiles = Array.isArray(g.files) ? g.files : [];
     // Keep only real, not-yet-claimed paths (drops hallucinations + dedupes across groups).
     const files = rawFiles
       .map((p: unknown) => String(p ?? "").replace(/\\/g, "/").trim())
       .filter((p: string) => known.has(p) && !seen.has(p));
     if (!subject || files.length === 0) continue;
     for (const p of files) seen.add(p);
-    const scope = String(g?.scope ?? "").trim();
-    const body = String(g?.body ?? "").trim();
-    const rationale = String(g?.rationale ?? "").trim();
+    const scope = String(g.scope ?? "").trim();
+    const body = String(g.body ?? "").trim();
+    const rationale = String(g.rationale ?? "").trim();
     groups.push({
-      type: coerceType(g?.type),
+      type: coerceType(g.type),
       ...(scope ? { scope } : {}),
       subject,
       ...(body ? { body } : {}),

@@ -46,7 +46,7 @@ export function discover(roots: string[], maxDepth: number, maxRepos: number): F
   const visit = (dir: string, depth: number): void => {
     if (found.length >= maxRepos) return;
 
-    let entries;
+    let entries: import("node:fs").Dirent[];
     try {
       entries = readdirSync(dir, { withFileTypes: true });
     } catch {
@@ -104,7 +104,7 @@ export async function discoverStream(
 
   const visit = async (dir: string, depth: number): Promise<void> => {
     if (count >= maxRepos) return;
-    let entries;
+    let entries: import("node:fs").Dirent[];
     try {
       entries = await readdir(dir, { withFileTypes: true });
     } catch {

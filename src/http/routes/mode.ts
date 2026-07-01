@@ -47,7 +47,8 @@ export function register(app: Hono, { cfg }: Deps): void {
   app.put("/api/tunnel", async (c) => {
     const p = await parseBody(c, TunnelSettingsSchema);
     if (!p.ok) return p.res;
-    const t = (cfg.tunnel ??= {});
+    cfg.tunnel ??= {};
+    const t = cfg.tunnel;
     if (p.data.hostname !== undefined) {
       const h = p.data.hostname.trim();
       if (h) t.hostname = h;

@@ -278,7 +278,12 @@ export function buildOpenApiDoc(app: Hono): object {
       };
     }
 
-    (paths[openApiPath] ??= {})[verb] = operation;
+    let entry = paths[openApiPath];
+    if (!entry) {
+      entry = {};
+      paths[openApiPath] = entry;
+    }
+    entry[verb] = operation;
   }
 
   return {

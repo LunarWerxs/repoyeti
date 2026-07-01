@@ -242,7 +242,9 @@ export function setRepoOrder(orderedIds: string[]): void {
   const upd = d.query(`UPDATE repos SET sort_order = ? WHERE id = ?`);
   const tx = d.transaction((ids: string[]) => {
     clear.run();
-    ids.forEach((id, i) => upd.run(i, id));
+    ids.forEach((id, i) => {
+      upd.run(i, id);
+    });
   });
   tx(orderedIds);
 }
@@ -258,7 +260,9 @@ export function deleteRepos(ids: string[]): void {
   if (ids.length === 0) return;
   const d = getDb();
   const stmt = d.query(`DELETE FROM repos WHERE id = ?`);
-  const tx = d.transaction((xs: string[]) => xs.forEach((id) => stmt.run(id)));
+  const tx = d.transaction((xs: string[]) => {
+    for (const id of xs) stmt.run(id);
+  });
   tx(ids);
 }
 
