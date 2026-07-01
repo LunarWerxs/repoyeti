@@ -7,17 +7,19 @@
 > **Tiers.** 🔴 **Vital / do now** — blocks a public release, or is a real bug / active breakage (≈P0).
 > 🟡 **Big deal** — needed for a polished public reputation (≈P1). 🟢 **Small deal** — polish /
 > nice-to-have (≈P2). 🧑 **Needs you** — a decision or secret only the owner can supply (some of these
-> also gate the release). 🤖 = an agent can do it. Each item keeps its original code (`A4`, `C1`, `D1`…)
+> also gate the release). 🤖 = an agent can do it. Each item keeps its original code (`A6`, `C1`, `D1`…)
 > so older cross-references still resolve. Status verified against the tree on **2026-06-30** (HEAD `fddae3b`).
 
 > **▶ RESUME HERE (next session — use ONE chat).** Tree is **clean, `tsc`-green, web build + tests
-> green**. **All agent-doable items are now DONE** — the four that landed this session:
-> **per-file-staging WEB UI** (`876638a`), **`D1` RepoCard split** (`9e36113`), **Lore feature-parity**
-> (was already done — re-verified at runtime, `535c66b`), and **`E6` frontend tests** (`f300e7c`:
-> Vitest 23 tests + 1 Playwright SSE E2E, Vitest wired into CI). **What remains is OWNER-ONLY** (nothing
-> an agent can finish): `A6` live sign-in · `A4` cut `0.1.0` · `A5` README infra decision · branch-protect
-> `main` · confirm MIT · PAT/HTTPS (needs a real private repo + token to test). The "niche / someday"
-> features (git blame, compare-refs, cross-repo search, web-push, commit signing…) are deferred by choice.
+> green**. **All agent-doable items are DONE.** Landed: **per-file-staging WEB UI** (`876638a`), **`D1`
+> RepoCard split** (`9e36113`), **Lore feature-parity** (already done — re-verified, `535c66b`), **`E6`
+> frontend tests** (`f300e7c`). Also this cycle: **`A5` decided** (baked-in OAuth default + documented
+> fork-override — ratified as-is) and **`A6` verified to the credential wall** (`/oauth/login` builds the
+> correct live-IdP redirect; `handleComplete` unit-tested — only the owner's own password entry remains).
+> **What's left is OWNER-ONLY:** the `A6` live login (type your Connections password once), branch-protect
+> `main`, confirm MIT, and PAT/HTTPS (needs a real private repo + token). The "niche / someday" features
+> (git blame, compare-refs, cross-repo search, web-push, commit signing…) are deferred by choice.
+> **Do NOT raise version-cutting / tagging — owner does releases when ready (standing rule).**
 >
 > ⚠️ **Run ONE agent session at a time** (the owner's standing rule — item **G**): this cycle two
 > sessions on one tree collided (a refactor landed mid-edit and broke `tsc`); avoid that by working in
@@ -80,9 +82,9 @@ promoted to `ARCHITECTURE.md`, all refs repointed.
 `VcsBackend` — `filePatch`/`discardFile` + `fileModels` capability), `E4` (PUT /api/mode toggle +
 watcher→SSE delivery tests), `A6` (shim retired — docs corrected, no deploy needed; see finding below).
 
-**🟡/🟢 also done:** `A4` (version cut `0.1.0` — **tag not pushed**, owner pulls that trigger), `A5`
-(baked-in OAuth documented as intentional + override path), `F2` (CF-header auth comment + README proxy
-note), `E5` (headless in-memory keychain stub + legacy-rehome coverage), `C5` (gate-nesting comment),
+**🟡/🟢 also done:** `A5` (baked-in OAuth kept as the zero-config default + a documented fork-override —
+see 🧑 Needs you), `F2` (CF-header auth comment + README proxy note), `E5` (headless in-memory keychain
+stub + legacy-rehome coverage), `C5` (gate-nesting comment),
 `D2` (`requireId()` collapses ~20 route guards), `D3` (CommitStyle drift guard), `D4` (centralize
 `ok`/`fail`/`PATCH_CAP`), `D5` (drop `workspace_id`), `B4` (CI OS matrix + `bun audit`), `B5` (pre-commit
 lint+typecheck), `B7` (pin `@types/bun`, Monaco chunk limit).
@@ -118,18 +120,21 @@ diff` is real unified-diff content, not drift-prone status labels._
 
 ## 🔴 Vital — do now (blocks a public release / real bugs / active breakage)
 
-**No agent-doable blockers remain in this tier** (`C1`/`C2`/`E4` are done). The release is gated only by
-**owner** steps: `A6` (a live sign-in), plus the items under **🧑 Needs you** (version cut `A4`, README
-infra decision `A5`, branch protection).
+**No agent-doable blockers remain in this tier** (`C1`/`C2`/`E4` are done). The sign-in path (`A6`) is
+now **verified to the credential wall** (see below); the remaining owner-only steps are branch
+protection and confirming MIT (both under **🧑 Needs you**).
 
-- [ ] **🧑 `A6` — auth shim RETIRED; only an owner live sign-in remains to verify.** Superseded: the
-  rotating-URL Worker shim is **gone** — `src/config.ts` + the IdP now use the daemon's own
-  `https://app.repoyeti.com/oauth/callback` (the stable named CF tunnel) + the loopback, so there's no
-  worker to deploy or re-register. Per the Connections finding below + project memory, redirect URIs were
-  set in AEGIS via the vault. **The single unproven step is a real owner sign-in** (open
-  `app.repoyeti.com` with the daemon running → "Sign in with Connections" → confirm the owner is claimed).
-  Agent can't do this — it needs your live Connections login. ⚠️ Still entangled with `A5` (the README/
-  config infra decision), below.
+- [x] **`A6` — sign-in VERIFIED except the owner's own password entry** *(2026-06-30)*. The shim is
+  retired; `src/config.ts` + the IdP use the daemon's own `<origin>/oauth/callback` (loopback +
+  `app.repoyeti.com`). **Tested live:** `GET /oauth/login` 302-redirects to the real IdP
+  `https://accounts.connections.icu/oauth/authorize` (built from live OIDC discovery) with the correct
+  `client_id=a790090c…`, `redirect_uri=http://127.0.0.1:7171/oauth/callback`, `scope=openid profile
+  email`, PKCE `S256`, and a signed `state`; `GET /oauth/callback` (no code) → wired 400. **Completion
+  unit-tested & passing:** `tests/auth-oidc-verify.test.ts` drives `handleComplete` with a mock IdP —
+  valid id_token → 302 owner-claim success; wrong iss/aud/exp → rejected (46 auth tests green). The one
+  step no agent can do is the owner typing their Connections password at `accounts.connections.icu` (that
+  first verified login is what claims the daemon). Everything up to and after that credential entry is
+  proven working.
 - [x] **🤖 `C1` / `C2` / `E4` — ALL DONE** (see the Landed section): `C1` registerRepo→`detectVcs`;
   `C2` `filePatch`/`discardFile` on `VcsBackend`; `E4` `PUT /api/mode` toggle + watcher→SSE delivery test.
   No agent work remains in the 🔴 Vital tier — only the owner-gated `A6` below + the 🧑 release items.
@@ -204,17 +209,15 @@ The core is done + verified (see ✅ Already done). To reach git-parity:
 
 ## 🧑 Needs you (decisions & secrets — collect answers, then an agent can act)
 
-- [ ] **`A4` — cut version `0.1.0`** *(release-gating)*. Bump `package.json` (both) `0.0.1 → 0.1.0`, move
-  CHANGELOG `[Unreleased]` into a dated `[0.1.0]` section, tag `v0.1.0`. You pick the number; the rest is
-  mechanical.
-- [ ] **`A5` — README personal-infra decision** *(release-gating)*. The README + `src/config.ts` hardcode
-  *your* infra — the `https://app.repoyeti.com/oauth/callback` redirect (your named CF tunnel) + a shared
-  Connections `client_id` — and assume `connections.icu` access, so a forker would authenticate against
-  *your* setup. Decide: keep baked-in / move to a neutral domain / require each deployer to register their
-  own app. **Unblocked by your in-progress Connections-MCP/DNS work.** Then a 1-line README/config edit.
-  *(This is also the only remaining piece of `F4`.)*
-- [ ] **Branch-protect `main` at launch** *(release-gating)*. Require PRs + green CI; no direct pushes — a
-  GitHub settings step once the repo is public.
+- [x] **`A5` — DECIDED: keep the baked-in default + documented fork-override** *(2026-06-30, owner
+  delegated the call)*. The public PKCE `client_id` (no secret) + `<origin>/oauth/callback` stay baked in
+  so early testers get zero-config "Sign in with Connections" over `app.repoyeti.com`; a forker who wants
+  their own client registers one at `studio.connections.icu` and overrides the `oauth` block in
+  `~/.repoyeti/config.json`. This is **already implemented + documented** — README §"Sign in with
+  Connections — baked in (override optional)" + `src/config.ts` `CONNECTIONS_OAUTH`. Consistent with the
+  `A1` "ship the built-in key for the first testers on purpose" stance. No code change needed; ratified as-is.
+- [ ] **Branch-protect `main` at launch** *(GitHub settings step once public — owner only)*. Require PRs +
+  green CI; no direct pushes.
 - [x] **`F5` — DONE** (was double-listed). `MARCHING_ORDERS.md` was promoted to a root `ARCHITECTURE.md`
   and all refs repointed (see the Landed section); the old file is gone. This line was stale.
 - [ ] **Confirm the `MIT` license** is the intended one (package.json + `LICENSE` already say MIT).
