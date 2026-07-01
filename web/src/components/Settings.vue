@@ -30,7 +30,6 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -41,6 +40,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import IdentityManager from "./IdentityManager.vue";
+import SettingsSection from "./SettingsSection.vue";
 import type { AiCatalogEntry, AiModel, AiProviderId, CommitStyle } from "../types";
 
 const open = defineModel<boolean>("open", { required: true });
@@ -439,23 +439,34 @@ async function remove(id: AiProviderId): Promise<void> {
         <SheetTitle class="flex items-center gap-2">
           <SettingsIcon :size="17" class="text-muted-foreground" /> {{ $t("settings.title") }}
         </SheetTitle>
-        <SheetDescription>
-          {{ $t("settings.description") }}
-        </SheetDescription>
+        <!-- Kept for dialog accessibility (screen-reader description) but visually hidden — the
+             blurb was redundant clutter above the sections. -->
+        <SheetDescription class="sr-only">{{ $t("settings.description") }}</SheetDescription>
       </SheetHeader>
 
       <div class="scroll-slim flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
-        <!-- Identities ─────────────────────────────────────────────────── -->
+        <!-- Signed-in account (the daemon owner). Its own row above the sections — it's the
+             Connections account, NOT a git identity, so it no longer lives inside Identities.
+             Shown only when actually signed in (store.owner). -->
+        <div
+          v-if="store.owner"
+          class="flex shrink-0 items-center justify-between gap-2 rounded-xl border border-primary/20 bg-primary/10 px-3 py-2.5"
+        >
+          <div class="min-w-0">
+            <div class="text-[11px] text-primary/80">{{ $t("identity.signedInWith") }}</div>
+            <div class="mono truncate text-[13px] text-foreground/90">{{ store.owner }}</div>
+          </div>
+          <Button variant="ghost" size="sm" @click="store.logout()">
+            <LogOut />
+            {{ $t("identity.signOut") }}
+          </Button>
+        </div>
+
+        <!-- Identities (git author identities) ────────────────────────────── -->
         <IdentityManager />
 
         <!-- Access (local ↔ remote) ───────────────────────────────────── -->
-        <Card class="gap-3 border-border bg-secondary/20 py-4 shadow-none">
-          <CardHeader class="gap-1 px-4">
-            <CardTitle class="flex items-center gap-2 text-[13px]">
-              <Cloud :size="15" class="text-muted-foreground" /> {{ $t("settings.cardAccess") }}
-            </CardTitle>
-          </CardHeader>
-          <CardContent class="flex flex-col gap-4 px-4">
+        <SettingsSection section-id="access" :icon="Cloud" :title="$t('settings.cardAccess')">
             <label class="flex cursor-pointer items-center justify-between gap-3">
               <span class="flex flex-col gap-0.5">
                 <span class="text-[12.5px] font-medium text-foreground">{{ $t("settings.accessMode") }}</span>
@@ -536,18 +547,16 @@ async function remove(id: AiProviderId): Promise<void> {
                 {{ confirmSignOutAll ? $t("settings.signOutAllConfirm") : $t("settings.signOutAll") }}
               </Button>
             </div>
-          </CardContent>
-        </Card>
+        </SettingsSection>
 
         <!-- Scan folders (discovery roots) ───────────────────────────────── -->
-        <Card class="gap-3 border-border bg-secondary/20 py-4 shadow-none">
-          <CardHeader class="gap-1 px-4">
-            <CardTitle class="flex items-center gap-2 text-[13px]">
-              <FolderSearch :size="15" class="text-muted-foreground" /> {{ $t("settings.cardRoots") }}
-            </CardTitle>
-            <CardDescription class="text-[12px]">{{ $t("settings.rootsHint") }}</CardDescription>
-          </CardHeader>
-          <CardContent class="flex flex-col gap-2.5 px-4">
+        <SettingsSection
+          section-id="roots"
+          :icon="FolderSearch"
+          :title="$t('settings.cardRoots')"
+          :description="$t('settings.rootsHint')"
+          body-class="flex flex-col gap-2.5"
+        >
             <p v-if="!store.roots.length" class="text-[12.5px] text-muted-foreground">
               {{ $t("settings.rootsEmpty") }}
             </p>
@@ -582,18 +591,16 @@ async function remove(id: AiProviderId): Promise<void> {
                 {{ $t("settings.rootsAdd") }}
               </Button>
             </form>
-          </CardContent>
-        </Card>
+        </SettingsSection>
 
         <!-- Lore servers (clone-from-server registry) ─────────────────────────── -->
-        <Card class="gap-3 border-border bg-secondary/20 py-4 shadow-none">
-          <CardHeader class="gap-1 px-4">
-            <CardTitle class="flex items-center gap-2 text-[13px]">
-              <Server :size="15" class="text-muted-foreground" /> {{ $t("settings.cardServers") }}
-            </CardTitle>
-            <CardDescription class="text-[12px]">{{ $t("settings.serversHint") }}</CardDescription>
-          </CardHeader>
-          <CardContent class="flex flex-col gap-2.5 px-4">
+        <SettingsSection
+          section-id="servers"
+          :icon="Server"
+          :title="$t('settings.cardServers')"
+          :description="$t('settings.serversHint')"
+          body-class="flex flex-col gap-2.5"
+        >
             <p v-if="!store.servers.length" class="text-[12.5px] text-muted-foreground">
               {{ $t("settings.serversEmpty") }}
             </p>
@@ -640,17 +647,15 @@ async function remove(id: AiProviderId): Promise<void> {
               </div>
               <p class="text-[11.5px] text-muted-foreground">{{ $t("settings.serversIpHint") }}</p>
             </form>
-          </CardContent>
-        </Card>
+        </SettingsSection>
 
         <!-- Appearance ───────────────────────────────────────────────── -->
-        <Card class="gap-3 border-border bg-secondary/20 py-4 shadow-none">
-          <CardHeader class="gap-1 px-4">
-            <CardTitle class="flex items-center gap-2 text-[13px]">
-              <Palette :size="15" class="text-muted-foreground" /> {{ $t("settings.cardAppearance") }}
-            </CardTitle>
-          </CardHeader>
-          <CardContent class="flex flex-col gap-4 px-4">
+        <SettingsSection
+          section-id="appearance"
+          :icon="Palette"
+          :title="$t('settings.cardAppearance')"
+          :default-open="true"
+        >
             <div class="flex flex-col gap-1.5">
               <span class="text-[12px] text-muted-foreground">{{ $t("settings.theme") }}</span>
               <Select v-model="theme">
@@ -716,18 +721,15 @@ async function remove(id: AiProviderId): Promise<void> {
                 {{ $t("settings.diffPatchThresholdHint") }}
               </span>
             </div>
-          </CardContent>
-        </Card>
+        </SettingsSection>
 
         <!-- Background sync ─────────────────────────────────────────────── -->
-        <Card class="gap-3 border-border bg-secondary/20 py-4 shadow-none">
-          <CardHeader class="gap-1 px-4">
-            <CardTitle class="flex items-center gap-2 text-[13px]">
-              <RefreshCw :size="15" class="text-muted-foreground" /> {{ $t("settings.cardSync") }}
-            </CardTitle>
-            <CardDescription class="text-[12px]">{{ $t("settings.syncDescription") }}</CardDescription>
-          </CardHeader>
-          <CardContent class="flex flex-col gap-4 px-4">
+        <SettingsSection
+          section-id="sync"
+          :icon="RefreshCw"
+          :title="$t('settings.cardSync')"
+          :description="$t('settings.syncDescription')"
+        >
             <label class="flex cursor-pointer items-center justify-between gap-3">
               <span class="flex flex-col gap-0.5">
                 <span class="text-[12.5px] font-medium text-foreground">{{ $t("settings.syncCheck") }}</span>
@@ -790,17 +792,10 @@ async function remove(id: AiProviderId): Promise<void> {
             <p v-if="store.notifyPermission === 'denied'" class="text-[11px] text-warning">
               {{ $t("settings.desktopNotifyBlocked") }}
             </p>
-          </CardContent>
-        </Card>
+        </SettingsSection>
 
         <!-- Keyboard shortcuts ───────────────────────────────────────── -->
-        <Card class="gap-3 border-border bg-secondary/20 py-4 shadow-none">
-          <CardHeader class="gap-1 px-4">
-            <CardTitle class="flex items-center gap-2 text-[13px]">
-              <Keyboard :size="15" class="text-muted-foreground" /> {{ $t("settings.cardHotkeys") }}
-            </CardTitle>
-          </CardHeader>
-          <CardContent class="flex flex-col gap-4 px-4">
+        <SettingsSection section-id="hotkeys" :icon="Keyboard" :title="$t('settings.cardHotkeys')">
             <label class="flex cursor-pointer items-center justify-between gap-3">
               <span class="flex flex-col gap-0.5">
                 <span class="text-[12.5px] font-medium text-foreground">{{ $t("settings.hotkeysEnable") }}</span>
@@ -844,21 +839,17 @@ async function remove(id: AiProviderId): Promise<void> {
                 </li>
               </ul>
             </div>
-          </CardContent>
-        </Card>
+        </SettingsSection>
 
         <!-- AI commit messages ──────────────────────────────────────── -->
-        <Card class="gap-4 border-border bg-secondary/20 py-4 shadow-none">
-          <CardHeader class="gap-1.5 px-4">
-            <CardTitle class="flex items-center gap-2 text-[13px]">
-              <Sparkles :size="15" class="text-violet-300" /> {{ $t("settings.cardAi") }}
-            </CardTitle>
-            <CardDescription class="text-[12px] leading-relaxed">
-              {{ $t("settings.aiDescription") }}
-            </CardDescription>
-          </CardHeader>
-
-          <CardContent class="flex flex-col gap-4 px-4">
+        <SettingsSection
+          section-id="ai"
+          :icon="Sparkles"
+          icon-class="text-violet-300"
+          :title="$t('settings.cardAi')"
+          :description="$t('settings.aiDescription')"
+          :default-open="true"
+        >
             <!-- Providers -->
             <div class="flex flex-col gap-1.5">
               <span class="text-[12px] text-muted-foreground">{{ $t("settings.providers") }}</span>
@@ -1083,8 +1074,7 @@ async function remove(id: AiProviderId): Promise<void> {
                 <option value="detailed">{{ $t("settings.aiStyleDetailed") }}</option>
               </select>
             </label>
-          </CardContent>
-        </Card>
+        </SettingsSection>
       </div>
     </SheetContent>
   </Sheet>

@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { reactive, ref, computed } from "vue";
-import { Plus, Pencil, Trash2, KeyRound, Save, X, LogOut, Check, Users } from "@lucide/vue";
+import { Plus, Pencil, Trash2, KeyRound, Save, X, Check, Users } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { useI18n } from "vue-i18n";
 import { useStore } from "../store";
 import { cn } from "@/lib/utils";
 import { identityInitials, identityTint } from "@/lib/identity-display";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import SettingsSection from "./SettingsSection.vue";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { Identity } from "../types";
@@ -88,32 +88,14 @@ async function remove(id: string): Promise<void> {
 </script>
 
 <template>
-  <Card class="gap-4 border-border bg-secondary/20 py-4 shadow-none">
-    <CardHeader class="gap-1.5 px-4">
-      <CardTitle class="flex items-center gap-2 text-[13px]">
-        <Users :size="15" class="text-muted-foreground" /> {{ $t("identity.title") }}
-      </CardTitle>
-      <CardDescription class="text-[12px] leading-relaxed">
-        {{ $t("identity.description") }}
-      </CardDescription>
-    </CardHeader>
-
-    <CardContent class="flex flex-col gap-3 px-4">
-        <!-- signed-in account -->
-        <div
-          v-if="store.authEnforced"
-          class="flex items-center justify-between gap-2 rounded-xl border border-primary/20 bg-primary/10 px-3 py-2.5"
-        >
-          <div class="min-w-0">
-            <div class="text-[11px] text-primary/80">{{ $t("identity.signedInWith") }}</div>
-            <div class="mono truncate text-[13px] text-foreground/90">{{ store.owner }}</div>
-          </div>
-          <Button variant="ghost" size="sm" @click="store.logout()">
-            <LogOut />
-            {{ $t("identity.signOut") }}
-          </Button>
-        </div>
-
+  <SettingsSection
+    section-id="identities"
+    :icon="Users"
+    :title="$t('identity.title')"
+    :description="$t('identity.description')"
+    :default-open="true"
+  >
+    <div class="flex flex-col gap-3">
         <!-- identity list -->
         <div v-if="store.identities.length" v-auto-animate class="flex flex-col gap-2">
           <div
@@ -204,6 +186,6 @@ async function remove(id: string): Promise<void> {
           <Plus />
           {{ $t("identity.action.add") }}
         </Button>
-    </CardContent>
-  </Card>
+    </div>
+  </SettingsSection>
 </template>
