@@ -4,14 +4,6 @@
 @import "./styles/kit-base.css";
 @import "./styles/kit-accent.css";
 
-/* Green brand glow behind the app shell (applied inline in AppShell.vue). */
-:root {
-  --brand-glow: radial-gradient(120% 120% at 50% 0%, rgba(61, 220, 132, 0.08), transparent 60%);
-}
-.dark {
-  --brand-glow: radial-gradient(120% 120% at 50% 0%, rgba(61, 220, 132, 0.1), transparent 60%);
-}
-
 /* File viewer — when "word-level diff" is toggled off, suppress the inner
    character highlight (Monaco) so only the whole-line background shows. */
 .gm-line-level-diff .char-insert,

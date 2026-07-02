@@ -45,10 +45,10 @@ function openSettings(): void {
             <li
               v-for="r in store.roots"
               :key="r"
-              class="mono flex items-center gap-2 rounded-md border border-border/60 bg-secondary/40 px-2.5 py-1.5 text-[12.5px]"
+              class="mono flex min-w-0 items-center gap-2 rounded-md border border-border/60 bg-secondary/40 px-2.5 py-1.5 text-[12.5px]"
             >
               <FolderGit2 :size="14" class="shrink-0 text-muted-foreground" />
-              <span class="truncate">{{ r }}</span>
+              <span class="min-w-0 truncate" :title="r">{{ r }}</span>
             </li>
           </ul>
           <p class="text-[11.5px] text-muted-foreground">{{ $t("scan.manageHint") }}</p>

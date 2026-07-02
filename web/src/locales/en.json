@@ -66,6 +66,29 @@
     "scanButton": "Scan for projects",
     "scanHint": "Already have repos on disk? Scan your folders to find them."
   },
+  "accounts": {
+    "active": "Active",
+    "commitIdentityLabel": "Commits authored as",
+    "commitIdentityNone": "No global git author set",
+    "commitIdentityNote": "By default switching changes authentication only. Link an account to a saved identity below and switching to it also sets the commit author (name + email) to match.",
+    "description": "Switch the active GitHub account on this machine. The active account is what push, pull, and any tool using git's GitHub CLI credential helper — including AI agents — authenticate as. Managed through the GitHub CLI (gh).",
+    "empty": "No GitHub accounts are logged in. Run gh auth login to add one.",
+    "linkEmpty": "Add an identity above to link one",
+    "linkLabel": "Commit identity",
+    "linkNone": "Don't change author",
+    "refresh": "Refresh accounts",
+    "switch": "Switch",
+    "title": "GitHub accounts",
+    "toast": {
+      "linkFailed": "Couldn't update the commit-identity link",
+      "linked": "Linked a commit identity to {login}",
+      "switchFailed": "Couldn't switch account",
+      "switched": "Switched to {login}",
+      "unlinked": "Unlinked the commit identity from {login}"
+    },
+    "unavailableBody": "Install the GitHub CLI (gh) and run gh auth login to switch accounts here.",
+    "unavailableTitle": "GitHub CLI not found"
+  },
   "app": {
     "name": "RepoYeti"
   },
@@ -107,6 +130,9 @@
     "repoCount": "{count} repo | {count} repos",
     "actions": "Actions",
     "moreActions": "More actions",
+    "accounts": "GitHub accounts",
+    "switchAccount": "Switch GitHub account",
+    "accountsManage": "Manage in Settings",
     "settings": "Settings",
     "scanProjects": "Scan for projects",
     "fetchAll": "Fetch all",
@@ -252,7 +278,7 @@
       "useRecentTitle": "Use this message"
     },
     "smartCommit": {
-      "button": "Smart commit",
+      "button": "Auto",
       "buttonTitle": "Let AI split your changes into separate, scoped commits",
       "buttonTitleYolo": "YOLO: split and commit immediately, no review",
       "yoloTag": "YOLO",
@@ -292,7 +318,7 @@
       "execFailed": "Smart commit stopped: {message}"
     },
     "dragToReorder": "Drag to reorder",
-    "hide": "Hide repository",
+    "hide": "Hide",
     "moreActions": "More actions",
     "pin": "Pin",
     "unpin": "Unpin",
@@ -307,7 +333,7 @@
     "toastUnstarred": "Repository unstarred",
     "toastFavFailed": "Could not update repository",
     "undo": "Undo",
-    "unhide": "Show repository",
+    "unhide": "Show",
     "err": {
       "detachedHead": "Detached HEAD — resolve at your desk.",
       "dirtyWorkingTree": "Uncommitted changes — resolve at your desk.",

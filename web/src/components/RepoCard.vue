@@ -600,7 +600,6 @@ async function confirmDiscard(): Promise<void> {
       cn(
         'overflow-hidden rounded-md border border-border bg-card transition-colors',
         expanded && 'border-border/80 bg-card/90 ring-1 ring-white/5',
-        st?.error && 'border-destructive/40',
         repo.hidden && 'opacity-60',
       )
     "
@@ -731,7 +730,7 @@ async function confirmDiscard(): Promise<void> {
           :title="identity ? `${identity.displayName} · ${identity.gitEmail}` : $t('repo.identity.setTitle')"
           :class="
             cn(
-              'flex size-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-ring/50',
+              'flex size-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold outline-none transition hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring/50',
               identity ? identityTint(identity.id) : 'bg-secondary text-muted-foreground hover:bg-accent',
             )
           "
@@ -983,7 +982,7 @@ async function confirmDiscard(): Promise<void> {
               :disabled="generating"
               :title="$t('repo.commit.generateTitle')"
               :aria-label="$t('repo.commit.generateTitle')"
-              class="absolute top-1.5 right-1 flex size-7 items-center justify-center rounded-md text-violet-300 outline-none transition-colors hover:bg-accent disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-ring/40"
+              class="absolute top-1 right-1 flex size-7 items-center justify-center rounded-md text-primary outline-none transition-colors hover:bg-accent disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-ring/40"
               @click="generate"
             >
               <Loader2 v-if="generating" :size="16" class="animate-spin" />
@@ -991,47 +990,64 @@ async function confirmDiscard(): Promise<void> {
             </button>
           </div>
 
-          <div class="flex shrink-0">
-            <Button
-              class="rounded-r-none"
-              :disabled="!commitMsg.trim() || committing"
-              @click="doCommit()"
-            >
-              <Loader2 v-if="committing" class="animate-spin" />
-              <GitCommitHorizontal v-else />
-              <!-- when a per-file selection is active, say "Commit all" so this button is clearly
-                   distinct from the "Commit selected (N)" bar below (both share the message box). -->
-              <span>{{ selectedCount > 0 ? $t("repo.commit.commitAll") : $t("repo.commit.commit") }}</span>
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger as-child>
+          <div class="flex shrink-0 items-start gap-1.5">
+            <div class="flex">
+              <Button
+                class="h-9 rounded-r-none"
+                :disabled="!commitMsg.trim() || committing"
+                @click="doCommit()"
+              >
+                <Loader2 v-if="committing" class="animate-spin" />
+                <GitCommitHorizontal v-else />
+                <span>{{ selectedCount > 0 ? $t("repo.commit.commitAll") : $t("repo.commit.commit") }}</span>
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger as-child>
+                  <Button
+                    class="h-9 rounded-l-none border-l border-l-black/15 px-1.5 dark:border-l-white/20"
+                    :disabled="!commitMsg.trim() || committing"
+                    :aria-label="$t('repo.commit.menuLabel')"
+                  >
+                    <ChevronDown :size="16" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" class="w-52">
+                  <DropdownMenuItem @select="doCommit('commit')">
+                    <GitCommitHorizontal :size="15" />
+                    <span>{{ $t("repo.commit.commit") }}</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem @select="doCommit('amend')">
+                    <Pencil :size="15" />
+                    <span>{{ $t("repo.commit.amend") }}</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem :disabled="!hasUpstream" @select="doCommit('push')">
+                    <ArrowUpFromLine :size="15" />
+                    <span>{{ $t("repo.commit.commitPush") }}</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem :disabled="!hasUpstream" @select="doCommit('sync')">
+                    <RefreshCw :size="15" />
+                    <span>{{ $t("repo.commit.commitSync") }}</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+            <!-- Smart-commit (AI multi-commit split): inline "Auto", right of Commit. -->
+            <Tooltip v-if="aiHere && st && st.dirty > 1">
+              <TooltipTrigger as-child>
                 <Button
-                  class="rounded-l-none border-l border-l-black/15 px-1.5 dark:border-l-white/20"
-                  :disabled="!commitMsg.trim() || committing"
-                  :aria-label="$t('repo.commit.menuLabel')"
+                  variant="outline"
+                  class="h-9"
+                  :disabled="smartBusy || committing"
+                  :aria-label="$t('repo.smartCommit.button')"
+                  @click="runSmart"
                 >
-                  <ChevronDown :size="16" />
+                  <Loader2 v-if="smartBusy" class="animate-spin" />
+                  <Sparkles v-else />
+                  <span>{{ $t("repo.smartCommit.button") }}</span>
                 </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" class="w-52">
-                <DropdownMenuItem @select="doCommit('commit')">
-                  <GitCommitHorizontal :size="15" />
-                  <span>{{ $t("repo.commit.commit") }}</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem @select="doCommit('amend')">
-                  <Pencil :size="15" />
-                  <span>{{ $t("repo.commit.amend") }}</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem :disabled="!hasUpstream" @select="doCommit('push')">
-                  <ArrowUpFromLine :size="15" />
-                  <span>{{ $t("repo.commit.commitPush") }}</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem :disabled="!hasUpstream" @select="doCommit('sync')">
-                  <RefreshCw :size="15" />
-                  <span>{{ $t("repo.commit.commitSync") }}</span>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+              </TooltipTrigger>
+              <TooltipContent>{{ store.aiSettings.yolo ? $t('repo.smartCommit.buttonTitleYolo') : $t('repo.smartCommit.buttonTitle') }}</TooltipContent>
+            </Tooltip>
           </div>
         </div>
 
@@ -1055,25 +1071,6 @@ async function confirmDiscard(): Promise<void> {
             {{ $t("repo.commit.clearSelection") }}
           </button>
         </div>
-
-        <!-- smart commit: AI splits the working tree into separate scoped commits (opt-in;
-             shown only with >1 changed file, since one file can't be split) -->
-        <button
-          v-if="aiHere && st && st.dirty > 1"
-          type="button"
-          :disabled="smartBusy || committing"
-          class="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-violet-300/40 bg-violet-300/5 px-3 py-1.5 text-[12.5px] text-violet-300 outline-none transition-colors hover:bg-violet-300/10 disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-ring/40"
-          :title="store.aiSettings.yolo ? $t('repo.smartCommit.buttonTitleYolo') : $t('repo.smartCommit.buttonTitle')"
-          @click="runSmart"
-        >
-          <Loader2 v-if="smartBusy" :size="14" class="animate-spin" />
-          <Sparkles v-else :size="14" />
-          <span>{{ $t("repo.smartCommit.button") }}</span>
-          <span
-            v-if="store.aiSettings.yolo"
-            class="text-[10px] font-semibold tracking-wide uppercase opacity-70"
-          >{{ $t("repo.smartCommit.yoloTag") }}</span>
-        </button>
 
         <!-- git actions -->
         <div class="flex flex-wrap items-center gap-2">
@@ -1111,15 +1108,21 @@ async function confirmDiscard(): Promise<void> {
           <!-- stash save + stash-list (pop / drop) — see StashPanel.vue -->
           <StashPanel :repo-id="repo.id" :can-stash="caps.stash" :dirty="st?.dirty ?? 0" />
           <span class="flex-1" />
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            :aria-label="$t('repo.actions.refresh')"
-            :disabled="anyBusy"
-            @click="run('refresh')"
-          >
-            <RefreshCw :class="busyAction === 'refresh' && 'animate-spin'" />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                class="size-8"
+                :aria-label="$t('repo.actions.refresh')"
+                :disabled="anyBusy"
+                @click="run('refresh')"
+              >
+                <RefreshCw :class="busyAction === 'refresh' && 'animate-spin'" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{{ $t("repo.actions.refresh") }}</TooltipContent>
+          </Tooltip>
           <!-- overflow menu (hide / unhide this repo from the dashboard) -->
           <DropdownMenu>
             <DropdownMenuTrigger

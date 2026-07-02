@@ -49,8 +49,6 @@ onMounted(async () => {
     v-else
     class="safe-bottom relative min-h-dvh transition-[padding] duration-300 ease-in-out"
     :style="{
-      backgroundImage: 'var(--brand-glow)',
-      backgroundRepeat: 'no-repeat',
       paddingRight: appShiftPx ? `${appShiftPx}px` : undefined,
     }"
   >
