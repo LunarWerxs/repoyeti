@@ -168,6 +168,15 @@ export interface TunnelConfig {
   token?: string;
 }
 
+export interface AnalyticsConfig {
+  /** Explicit opt-out switch. Analytics only sends when a Connections endpoint is configured. */
+  enabled?: boolean;
+  /** Connections-compatible event collector URL. Env CONNECTIONS_ANALYTICS_URL wins when set. */
+  endpoint?: string;
+  /** Anonymous per-install id. Generated only after analytics is configured and first used. */
+  installId?: string;
+}
+
 export interface RepoYetiConfig {
   /** Absolute root paths to recursively scan for git repos. */
   roots: string[];
@@ -227,6 +236,8 @@ export interface RepoYetiConfig {
   oauth?: OAuthConfig;
   /** Remote-access tunnel config (quick trycloudflare by default; named for a stable host). */
   tunnel?: TunnelConfig;
+  /** Transparent product analytics, forwarded to a Connections-compatible endpoint when configured. */
+  analytics?: AnalyticsConfig;
   /** Bring-your-own-key AI config (optional). */
   ai?: AiConfig;
   /**

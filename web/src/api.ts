@@ -14,6 +14,7 @@ import type {
   FileContent,
   FileDiff,
   Identity,
+  DetectedIdentity,
   LogResult,
   CommitDetail,
   LoreServer,
@@ -21,6 +22,8 @@ import type {
   SmartCommitResult,
   StashList,
   TagList,
+  UpdateApplyResult,
+  UpdateStatus,
 } from "./types";
 
 export class ApiError extends Error {
@@ -131,6 +134,11 @@ export const api = {
   addRoot: (path: string) => req<{ ok: boolean; roots: string[] }>("POST", "/api/roots", { path }),
   removeRoot: (path: string) =>
     req<{ ok: boolean; roots: string[]; removed: number }>("DELETE", "/api/roots", { path }),
+  /** Rescan every configured scan root for new repos. Fire-and-forget — progress + results
+   *  stream back over the scan_* / repo_added SSE events. No-op if a scan is already running. */
+  startScan: () => req<{ ok: boolean; running: boolean }>("POST", "/api/scan"),
+  /** Stop the in-flight scan. `cancelled` is false when no scan was running. */
+  cancelScan: () => req<{ ok: boolean; cancelled: boolean }>("POST", "/api/scan/cancel"),
 
   // ── lore servers (registry + clone-from-server) ──────────────────────────────
   servers: () => req<{ servers: LoreServer[] }>("GET", "/api/servers").then((r) => r.servers),
@@ -141,9 +149,18 @@ export const api = {
     req<{ repo: Repo }>("POST", "/api/servers/clone", input).then((r) => r.repo),
   /** Fetch every repo that has a remote; returns a per-repo summary. */
   fetchAll: () => req<FetchAllResult>("POST", "/api/repos/fetch-all"),
+  /** Cleanly stop the local daemon. */
+  shutdown: () => req<{ ok: boolean }>("POST", "/api/shutdown"),
 
   /** Runtime status: access mode + the remote-access tunnel URL, if any. */
   status: () => req<RuntimeStatus>("GET", "/api/status"),
+  /** Check the public source remote for an app update. */
+  checkUpdate: () => req<UpdateStatus>("GET", "/api/updates"),
+  /** Apply an available source update. The daemon should be restarted afterward. */
+  applyUpdate: () => req<UpdateApplyResult>("POST", "/api/updates/apply"),
+  /** Transparent product analytics; no-op unless the daemon has a Connections endpoint configured. */
+  trackEvent: (event: string, properties?: Record<string, unknown>) =>
+    req<{ ok: boolean; enabled: boolean }>("POST", "/api/analytics/events", { event, properties }),
   /** Flip local ↔ remote. Throws ApiError "NEEDS_OWNER" if remote needs a sign-in first. */
   setMode: (mode: AccessMode) => req<ModeResult>("PUT", "/api/mode", { mode }),
   /** Configure the stable named tunnel (hostname + connector token). Token is write-only — pass
@@ -175,6 +192,8 @@ export const api = {
 
   listRepos: () => req<{ repos: Repo[] }>("GET", "/api/repos").then((r) => r.repos),
   listIdentities: () => req<{ identities: Identity[] }>("GET", "/api/identities").then((r) => r.identities),
+  detectedIdentities: () =>
+    req<{ detected: DetectedIdentity[] }>("GET", "/api/identities/detected").then((r) => r.detected),
 
   createIdentity: (input: Omit<Identity, "id">) =>
     req<{ identity: Identity }>("POST", "/api/identities", input).then((r) => r.identity),

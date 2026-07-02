@@ -66,6 +66,17 @@ test("spot-check: POST /api/repos/:id/commit documents a body with a `message` p
   expect(schema.properties?.message).toBeDefined();
 });
 
+test("POST /api/shutdown acknowledges before invoking the daemon cleanup hook", async () => {
+  let called = false;
+  const app = createApp(localCfg(), { requestShutdown: () => { called = true; } });
+  const res = await app.request("/api/shutdown", { method: "POST" });
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ ok: true });
+  expect(called).toBe(false);
+  await new Promise((resolve) => setTimeout(resolve, 35));
+  expect(called).toBe(true);
+});
+
 test("the spec is reachable WITHOUT auth even when auth is enforced", async () => {
   const app = createApp(enforcedCfg());
   // A normal /api/* route is gated over the tunnel (401)…

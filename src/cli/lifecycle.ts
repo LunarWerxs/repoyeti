@@ -128,8 +128,21 @@ export async function start(rest: string[]): Promise<void> {
   startWatching(known);
 
   // 3) serve immediately.
-  const app = createApp(liveCfg);
-  const server = listen(app, port);
+  let server: ReturnType<typeof listen> | null = null;
+  let shuttingDown = false;
+  const shutdown = (): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    stopManagedTunnel();
+    stopRemoteSync();
+    stopWatching();
+    clearInstanceInfo();
+    server?.stop(true);
+    process.exit(0);
+  };
+
+  const app = createApp(liveCfg, { requestShutdown: shutdown });
+  server = listen(app, port);
   const url = `http://127.0.0.1:${server.port}`;
   // Advertise where we actually landed (the port may have hopped) so the launcher
   // opens the right URL and a second launch can detect us. Cleared on clean exit.
@@ -178,14 +191,6 @@ export async function start(rest: string[]): Promise<void> {
 
   console.log(`Serving ${known.length} known repo(s); discovery running. Ctrl-C to stop.`);
 
-  const shutdown = (): void => {
-    stopManagedTunnel();
-    stopRemoteSync();
-    stopWatching();
-    clearInstanceInfo();
-    server.stop(true);
-    process.exit(0);
-  };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 }

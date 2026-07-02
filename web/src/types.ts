@@ -72,6 +72,33 @@ export interface Identity {
   sshKeyPath: string | null;
 }
 
+export type DetectedIdentitySource =
+  | "git-global"
+  | "git-local"
+  | "git-credential"
+  | "github-cli"
+  | "windows-credential"
+  | "ssh-key"
+  | "ssh-agent";
+export type DetectedIdentityConfidence = "high" | "medium" | "low";
+
+export interface DetectedIdentitySuggestion {
+  displayName: string;
+  gitUsername: string;
+  gitEmail: string;
+  sshKeyPath: string | null;
+}
+
+export interface DetectedIdentity {
+  id: string;
+  source: DetectedIdentitySource;
+  title: string;
+  detail: string;
+  confidence: DetectedIdentityConfidence;
+  suggestion: DetectedIdentitySuggestion;
+  missing: Array<keyof DetectedIdentitySuggestion>;
+}
+
 export interface ChangedFile {
   path: string;
   /** M · A · D · R · U · C */
@@ -384,4 +411,28 @@ export interface SmartCommitResult {
   synced?: boolean;
   syncCode?: ApiCode;
   syncMessage?: string;
+}
+
+export interface UpdateStatus {
+  ok: boolean;
+  service: "repoyeti";
+  currentVersion: string;
+  currentCommit: string | null;
+  remoteCommit: string | null;
+  branch: string | null;
+  upstream: string | null;
+  remote: string | null;
+  dirty: boolean;
+  updateAvailable: boolean;
+  canApply: boolean;
+  checkedAt: number;
+  reason: string | null;
+}
+
+export interface UpdateApplyResult {
+  ok: boolean;
+  message: string;
+  restartRequired: boolean;
+  status: UpdateStatus;
+  output: string[];
 }

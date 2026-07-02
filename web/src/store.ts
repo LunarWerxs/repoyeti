@@ -16,6 +16,7 @@ import type {
   BranchList,
   ChangedFile,
   CommitPlanResponse,
+  DetectedIdentity,
   FetchAllResult,
   Identity,
   LogResult,
@@ -23,6 +24,8 @@ import type {
   SmartCommitResult,
   StashList,
   TagList,
+  UpdateApplyResult,
+  UpdateStatus,
 } from "./types";
 
 /** Sync-status filter keys (multi-select; OR semantics). */
@@ -46,6 +49,7 @@ interface SyncedRepo {
 // Desktop-notification opt-in is per-browser (it rides the browser's Notification permission),
 // so it lives in localStorage, not the daemon config.
 const DESKTOP_NOTIFY_KEY = "repoyeti.desktopNotify";
+let appOpenedTracked = false;
 function loadDesktopNotifyPref(): boolean {
   try {
     return localStorage.getItem(DESKTOP_NOTIFY_KEY) === "1";
@@ -64,8 +68,14 @@ function saveDesktopNotifyPref(on: boolean): void {
 export const useStore = defineStore("repoyeti", () => {
   const repos = ref<Repo[]>([]);
   const identities = ref<Identity[]>([]);
+  const detectedIdentities = ref<DetectedIdentity[]>([]);
+  const detectedIdentitiesLoading = ref(false);
+  const detectedIdentitiesReady = ref(false);
   const loading = ref(true);
   const connected = ref(false);
+  const updateStatus = ref<UpdateStatus | null>(null);
+  const updateChecking = ref(false);
+  const updateApplying = ref(false);
 
   // auth
   const authReady = ref(false);
@@ -101,6 +111,17 @@ export const useStore = defineStore("repoyeti", () => {
   const servers = ref<LoreServer[]>([]);
   // True while a bulk "fetch all" is running (drives the header button spinner).
   const fetchingAll = ref(false);
+
+  // ── "Scan for projects" modal ──────────────────────────────────────────────────
+  // Store-owned so every entry point (header kebab, Add-project button, and the
+  // "new projects found" toast raised from inside this store) can open the one modal.
+  const scanOpen = ref(false);
+  // Live scan lifecycle, driven entirely by the scan_* SSE events (see connect()).
+  const scanning = ref(false);
+  const scanFound = ref(0); // repos seen so far this scan
+  const scanNew = ref(0); // of those, how many were not previously known
+  const scanDone = ref(false); // a scan has finished (or was stopped) → show the summary
+  const lastScanCancelled = ref(false); // the finished scan ended via the Stop (X) control
 
   // BYOK AI settings (redacted — never holds a key). `aiEnabled` gates the Generate button.
   // Style is hardcoded to Conventional Commits (no UI picker); owners can still override
@@ -293,6 +314,43 @@ export const useStore = defineStore("repoyeti", () => {
       identities.value = i;
     } finally {
       loading.value = false;
+      if (!appOpenedTracked) {
+        appOpenedTracked = true;
+        void trackEvent("app_opened");
+      }
+      void checkForUpdate();
+    }
+  }
+
+  async function checkForUpdate(): Promise<UpdateStatus | null> {
+    if (updateChecking.value) return updateStatus.value;
+    updateChecking.value = true;
+    try {
+      updateStatus.value = await api.checkUpdate();
+      return updateStatus.value;
+    } catch {
+      return updateStatus.value;
+    } finally {
+      updateChecking.value = false;
+    }
+  }
+
+  async function applyUpdate(): Promise<UpdateApplyResult> {
+    updateApplying.value = true;
+    try {
+      const result = await api.applyUpdate();
+      updateStatus.value = result.status;
+      return result;
+    } finally {
+      updateApplying.value = false;
+    }
+  }
+
+  async function trackEvent(event: string, properties?: Record<string, unknown>): Promise<void> {
+    try {
+      await api.trackEvent(event, properties);
+    } catch {
+      /* analytics is non-critical */
     }
   }
 
@@ -464,6 +522,31 @@ export const useStore = defineStore("repoyeti", () => {
     toast.success(t("notify.syncedTitle"), { description: body });
   }
 
+  /** A finished scan found repos we didn't know about. Toast (with a "View" action that opens the
+   *  scan modal — handy when the scan ran while the modal was closed) plus an opt-in OS notification. */
+  function notifyNewProjects(count: number): void {
+    if (count < 1) return;
+    toast.success(t("notify.newProjectsTitle"), {
+      description: t("notify.newProjectsBody", { count }, count),
+      action: {
+        label: t("notify.newProjectsView"),
+        onClick: () => {
+          scanOpen.value = true;
+        },
+      },
+    });
+    if (desktopNotify.value && typeof Notification !== "undefined" && Notification.permission === "granted") {
+      try {
+        new Notification(t("notify.newProjectsTitle"), {
+          body: t("notify.newProjectsBody", { count }, count),
+          tag: "repoyeti-new-projects",
+        });
+      } catch {
+        /* notification construction can throw on some platforms — never break the SSE loop */
+      }
+    }
+  }
+
   // ── BYOK AI ───────────────────────────────────────────────────────────────────
   async function loadAiCatalog(): Promise<void> {
     try {
@@ -574,6 +657,10 @@ export const useStore = defineStore("repoyeti", () => {
         "repo_synced",
         "daemon_status",
         "settings_changed",
+        "scan_started",
+        "scan_progress",
+        "scan_done",
+        "scan_cancelled",
       ],
       { autoReconnect: { retries: -1, delay: 2500 } },
     );
@@ -620,6 +707,24 @@ export const useStore = defineStore("repoyeti", () => {
           if (typeof payload.syncCheck === "boolean") syncCheckEnabled.value = payload.syncCheck;
           if (typeof payload.syncIntervalSecs === "number") syncIntervalSecs.value = payload.syncIntervalSecs;
           if (payload.tunnel) tunnelConfig.value = payload.tunnel as TunnelStatus;
+        } else if (event.value === "scan_started") {
+          // A rescan began (from the modal, or another device) — reset the live counters.
+          scanning.value = true;
+          scanDone.value = false;
+          lastScanCancelled.value = false;
+          scanFound.value = 0;
+          scanNew.value = 0;
+        } else if (event.value === "scan_progress") {
+          if (typeof payload.found === "number") scanFound.value = payload.found;
+          if (typeof payload.added === "number") scanNew.value = payload.added;
+        } else if (event.value === "scan_done" || event.value === "scan_cancelled") {
+          scanning.value = false;
+          scanDone.value = true;
+          lastScanCancelled.value = event.value === "scan_cancelled";
+          if (typeof payload.found === "number") scanFound.value = payload.found;
+          if (typeof payload.added === "number") scanNew.value = payload.added;
+          // Surface genuinely-new projects even if the scan was stopped early.
+          if (typeof payload.added === "number") notifyNewProjects(payload.added);
         }
       } catch {
         /* ignore malformed frame */
@@ -926,6 +1031,26 @@ export const useStore = defineStore("repoyeti", () => {
     roots.value = r.roots;
     return r.removed;
   }
+
+  /** Start rescanning every configured scan root. Progress + results arrive over the scan_*
+   *  SSE events; we flip `scanning` on optimistically so the modal reacts before the first frame. */
+  async function startScan(): Promise<void> {
+    scanning.value = true;
+    scanDone.value = false;
+    lastScanCancelled.value = false;
+    scanFound.value = 0;
+    scanNew.value = 0;
+    try {
+      await api.startScan();
+    } catch (e) {
+      scanning.value = false; // the request itself failed — never entered the running state
+      throw e;
+    }
+  }
+  /** Stop the in-flight scan (the modal's X). The scan_cancelled SSE event settles the state. */
+  async function cancelScan(): Promise<void> {
+    await api.cancelScan();
+  }
   // ── lore servers ─────────────────────────────────────────────────────────────
   async function loadServers(): Promise<void> {
     servers.value = await api.servers();
@@ -956,6 +1081,9 @@ export const useStore = defineStore("repoyeti", () => {
     } finally {
       fetchingAll.value = false;
     }
+  }
+  async function shutdown(): Promise<void> {
+    await api.shutdown();
   }
   /** Sign out on every device (rotates the daemon's signing key). */
   async function logoutAll(): Promise<void> {
@@ -1008,6 +1136,19 @@ export const useStore = defineStore("repoyeti", () => {
   async function reloadIdentities(): Promise<void> {
     identities.value = await api.listIdentities();
   }
+  async function loadDetectedIdentities(): Promise<void> {
+    if (detectedIdentitiesLoading.value) return;
+    detectedIdentitiesLoading.value = true;
+    try {
+      detectedIdentities.value = await api.detectedIdentities();
+      detectedIdentitiesReady.value = true;
+    } catch {
+      detectedIdentities.value = [];
+      detectedIdentitiesReady.value = true;
+    } finally {
+      detectedIdentitiesLoading.value = false;
+    }
+  }
   async function createIdentity(input: Omit<Identity, "id">): Promise<void> {
     await api.createIdentity(input);
     await reloadIdentities();
@@ -1024,8 +1165,17 @@ export const useStore = defineStore("repoyeti", () => {
   return {
     repos,
     identities,
+    detectedIdentities,
+    detectedIdentitiesLoading,
+    detectedIdentitiesReady,
     loading,
     connected,
+    updateStatus,
+    updateChecking,
+    updateApplying,
+    checkForUpdate,
+    applyUpdate,
+    trackEvent,
     busy,
     changesByRepo,
     changesLoading,
@@ -1056,11 +1206,20 @@ export const useStore = defineStore("repoyeti", () => {
     loadRoots,
     addScanRoot,
     removeScanRoot,
+    scanOpen,
+    scanning,
+    scanFound,
+    scanNew,
+    scanDone,
+    lastScanCancelled,
+    startScan,
+    cancelScan,
     loadServers,
     addServer,
     removeServer,
     cloneFromServer,
     fetchAll,
+    shutdown,
     logoutAll,
     aiSettings,
     aiCatalog,
@@ -1142,6 +1301,7 @@ export const useStore = defineStore("repoyeti", () => {
     createIdentity,
     updateIdentity,
     removeIdentity,
+    loadDetectedIdentities,
     cloneRepo,
   };
 });

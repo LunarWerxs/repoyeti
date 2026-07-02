@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { DialogContentEmits, DialogContentProps } from "reka-ui"
-import type { HTMLAttributes } from "vue"
+import { computed, type CSSProperties, type HTMLAttributes } from "vue"
 import { X } from "@lucide/vue"
 import { reactiveOmit } from "@vueuse/core"
 import {
@@ -16,6 +16,8 @@ import SheetOverlay from "./SheetOverlay.vue"
 interface SheetContentProps extends DialogContentProps {
   class?: HTMLAttributes["class"]
   side?: SheetVariants["side"]
+  showOverlay?: boolean
+  rightOffsetPx?: number
 }
 
 defineOptions({
@@ -24,20 +26,28 @@ defineOptions({
 
 const props = withDefaults(defineProps<SheetContentProps>(), {
   side: "right",
+  showOverlay: true,
+  rightOffsetPx: 0,
 })
 const emits = defineEmits<DialogContentEmits>()
 
-const delegatedProps = reactiveOmit(props, "class", "side")
+const delegatedProps = reactiveOmit(props, "class", "side", "showOverlay", "rightOffsetPx")
 
 const forwarded = useForwardPropsEmits(delegatedProps, emits)
+
+const contentStyle = computed<CSSProperties | undefined>(() => {
+  if (props.side !== "right" || props.rightOffsetPx <= 0) return undefined
+  return { right: `${props.rightOffsetPx}px` }
+})
 </script>
 
 <template>
   <DialogPortal>
-    <SheetOverlay />
+    <SheetOverlay v-if="props.showOverlay" />
     <DialogContent
       data-slot="sheet-content"
       :class="cn(sheetVariants({ side }), props.class)"
+      :style="contentStyle"
       v-bind="{ ...$attrs, ...forwarded }"
     >
       <slot />

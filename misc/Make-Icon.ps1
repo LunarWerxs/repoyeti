@@ -1,35 +1,29 @@
-# Generates misc\RepoYeti.ico — a rounded git-orange tile with a big "G".
+# Generates misc\RepoYeti.ico — the standalone RepoYeti yeti medallion (no tile).
 # Emits a proper MULTI-SIZE icon: 16/24/32/48 (true 32bpp DIB) + 256 (PNG). The Windows
 # system tray needs small frames; a 256-only icon renders BLANK or fuzzy in the tray.
-# Re-run after changing the letter/color, then re-run Create-Shortcut.ps1
-# (Windows caches icons; refreshing the shortcut picks up the new one).
+#
+# Source art is misc\RepoYeti-icon.png (a committed 1024x1024 render of the brand icon) so
+# this script needs NO SVG renderer at runtime — it just loads the PNG and downscales.
+# To change the logo: re-render the PNG from the web favicon, then re-run this script, e.g.
+#     magick -background none web\public\icon.svg -resize 1024x1024 misc\RepoYeti-icon.png
+# The brand vectors live in misc\brand\ (icon/full × light/dark). After regenerating, re-run
+# Create-Shortcut.ps1 (Windows caches icons; refreshing the shortcut picks up the new one).
 Add-Type -AssemblyName System.Drawing
 
-# Draw the 256x256 artwork (rounded tile + big letter) once; return the bitmap.
-function New-AppArt([string]$Letter,[string]$HexBg){
-  $size = 256
-  $bmp = New-Object System.Drawing.Bitmap($size,$size,[System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
-  $g = [System.Drawing.Graphics]::FromImage($bmp)
-  $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-  $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
-  $g.Clear([System.Drawing.Color]::Transparent)
-  $bg = [System.Drawing.ColorTranslator]::FromHtml($HexBg)
-  $brush = New-Object System.Drawing.SolidBrush($bg)
-  $pad = 16; $radius = 48; $d = $radius*2
-  $x=$pad; $y=$pad; $w=$size-2*$pad; $h=$size-2*$pad
-  $gp = New-Object System.Drawing.Drawing2D.GraphicsPath
-  $gp.AddArc($x,$y,$d,$d,180,90)
-  $gp.AddArc($x+$w-$d,$y,$d,$d,270,90)
-  $gp.AddArc($x+$w-$d,$y+$h-$d,$d,$d,0,90)
-  $gp.AddArc($x,$y+$h-$d,$d,$d,90,90)
-  $gp.CloseFigure()
-  $g.FillPath($brush,$gp)
-  $font = New-Object System.Drawing.Font("Segoe UI",140,[System.Drawing.FontStyle]::Bold,[System.Drawing.GraphicsUnit]::Pixel)
-  $sf = New-Object System.Drawing.StringFormat
-  $sf.Alignment=[System.Drawing.StringAlignment]::Center; $sf.LineAlignment=[System.Drawing.StringAlignment]::Center
-  $white = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
-  $g.DrawString($Letter,$font,$white,(New-Object System.Drawing.RectangleF(0,4,$size,$size)),$sf)
-  $g.Dispose()
+# Load the source PNG into a detached 32bpp ARGB bitmap (frees the file handle, keeps alpha).
+function Get-SourceArt([string]$PngPath){
+  if(-not (Test-Path $PngPath)){
+    throw "Source art not found: $PngPath`nRe-render it, e.g.:  magick -background none web\public\icon.svg -resize 1024x1024 $PngPath"
+  }
+  $img = [System.Drawing.Image]::FromFile($PngPath)
+  try {
+    $bmp = New-Object System.Drawing.Bitmap($img.Width,$img.Height,[System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $g.Clear([System.Drawing.Color]::Transparent)
+    $g.DrawImage($img,0,0,$img.Width,$img.Height)
+    $g.Dispose()
+  } finally { $img.Dispose() }
   return $bmp
 }
 
@@ -93,8 +87,7 @@ function Save-MultiIcon([string]$Path,[System.Drawing.Bitmap]$art){
 }
 
 $dir = Split-Path -Parent $MyInvocation.MyCommand.Definition
-# Output filename, letter, color (hex). #F05133 is Git's brand orange-red.
-$art = New-AppArt "G" "#F05133"
+$art = Get-SourceArt (Join-Path $dir "RepoYeti-icon.png")
 Save-MultiIcon (Join-Path $dir "RepoYeti.ico") $art
 $art.Dispose()
-Write-Host "Wrote $dir\RepoYeti.ico (16/24/32/48 + 256)"
+Write-Host "Wrote $dir\RepoYeti.ico (16/24/32/48 + 256) from RepoYeti-icon.png"

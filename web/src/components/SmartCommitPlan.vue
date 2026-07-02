@@ -28,7 +28,10 @@ import {
 import { toast } from "vue-sonner";
 import { useStore } from "../store";
 import { ApiError } from "../api";
-import type { CommitPlan } from "../types";
+import type { CommitPlan, DiffStat as DiffStatT } from "../types";
+import SmartCommitFileDiff from "./SmartCommitFileDiff.vue";
+import SmartCommitCommitDiff from "./SmartCommitCommitDiff.vue";
+import DiffStat from "./DiffStat.vue";
 import { cn } from "@/lib/utils";
 import {
   Dialog,
@@ -74,6 +77,20 @@ const groups = ref<EditableGroup[]>([]);
 const leftovers = ref<string[]>([]);
 /** Per-group "regenerating message" flags, keyed by group key. */
 const regenBusy = reactive<Record<string, boolean>>({});
+/** Path whose inline diff is expanded, or null. Single-open across the whole editor, so at
+ *  most one Monaco diff is ever mounted (same cost as the full-screen file viewer). */
+const openDiff = ref<string | null>(null);
+/** Group key whose combined "review all changes" view is open, or null. Mutually exclusive with
+ *  openDiff so at most one diff surface is mounted at a time (the single-file view uses Monaco). */
+const openAll = ref<string | null>(null);
+function toggleDiff(path: string): void {
+  openDiff.value = openDiff.value === path ? null : path;
+  if (openDiff.value) openAll.value = null;
+}
+function toggleAll(key: string): void {
+  openAll.value = openAll.value === key ? null : key;
+  if (openAll.value) openDiff.value = null;
+}
 
 let keySeq = 0;
 const nextKey = (): string => `g${keySeq++}`;
@@ -101,6 +118,13 @@ const isOpen = computed({
 const statusByPath = computed<Record<string, string>>(() => {
   const out: Record<string, string> = {};
   for (const f of store.changesByRepo[props.repoId] ?? []) out[f.path] = f.status;
+  return out;
+});
+/** Per-file line/char delta (for the chip's +adds/−dels), when the diff-stats owner setting is
+ *  on — same source + gating as the changed-files tree, so a file reads the same weight here. */
+const statByPath = computed<Record<string, DiffStatT>>(() => {
+  const out: Record<string, DiffStatT> = {};
+  for (const f of store.changesByRepo[props.repoId] ?? []) if (f.stat) out[f.path] = f.stat;
   return out;
 });
 function statusVariant(letter: string | undefined): "success" | "warning" | "destructive" | "info" | "secondary" {
@@ -146,6 +170,8 @@ function applyPlan(plan: CommitPlan): void {
   leftovers.value = [...plan.leftovers];
   degraded.value = plan.degraded;
   truncated.value = plan.truncated;
+  openDiff.value = null; // a fresh plan → collapse any open preview
+  openAll.value = null;
 }
 
 async function generate(): Promise<void> {
@@ -402,37 +428,86 @@ async function execute(sync: boolean): Promise<void> {
                 />
               </div>
 
-              <!-- files -->
+              <!-- files: tap a chip to preview its diff; the ⋯ menu moves it to another commit -->
               <div class="mt-2 flex flex-wrap gap-1.5 pl-6">
-                <DropdownMenu v-for="f in g.files" :key="f">
-                  <DropdownMenuTrigger as-child>
-                    <button
-                      type="button"
-                      class="flex max-w-full items-center gap-1.5 rounded-md border border-border bg-secondary/40 px-2 py-1 text-[11.5px] outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/40"
-                      :title="$t('repo.smartCommit.fileMenu')"
-                    >
-                      <Badge :variant="statusVariant(statusByPath[f])" class="px-1 py-0 text-[9px] leading-none">{{ statusByPath[f] ?? "·" }}</Badge>
-                      <span class="truncate">{{ f }}</span>
-                      <ChevronDown :size="12" class="shrink-0 text-muted-foreground" />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" class="max-h-72 w-60 overflow-y-auto">
-                    <DropdownMenuLabel>{{ $t("repo.smartCommit.moveTo") }}</DropdownMenuLabel>
-                    <DropdownMenuItem
-                      v-for="(other, oi) in groups"
-                      :key="other.key"
-                      :disabled="other.key === g.key"
-                      @select="moveFileTo(f, other.key)"
-                    >
-                      <GitCommitHorizontal :size="14" />
-                      <span class="truncate">{{ oi + 1 }}. {{ other.subjectLine || $t("repo.smartCommit.newCommit") }}</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem @select="moveFileTo(f, 'new')">
-                      <Plus :size="14" /><span>{{ $t("repo.smartCommit.newCommit") }}</span>
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <div
+                  v-for="f in g.files"
+                  :key="f"
+                  class="flex max-w-full items-stretch overflow-hidden rounded-md border border-border bg-secondary/40 text-[11.5px]"
+                >
+                  <button
+                    type="button"
+                    class="flex min-w-0 items-center gap-1.5 px-2 py-1 outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/40"
+                    :aria-expanded="openDiff === f"
+                    :title="$t('repo.smartCommit.viewDiff')"
+                    @click="toggleDiff(f)"
+                  >
+                    <Badge :variant="statusVariant(statusByPath[f])" class="px-1 py-0 text-[9px] leading-none">{{ statusByPath[f] ?? "·" }}</Badge>
+                    <span class="truncate">{{ f }}</span>
+                    <DiffStat v-if="statByPath[f]" :stat="statByPath[f]" show="lines" class="shrink-0" />
+                    <ChevronDown :size="12" :class="cn('shrink-0 text-muted-foreground transition-transform', openDiff === f && 'rotate-180')" />
+                  </button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger as-child>
+                      <button
+                        type="button"
+                        class="flex shrink-0 items-center border-l border-border/60 px-1 text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+                        :title="$t('repo.smartCommit.fileMenu')"
+                        :aria-label="$t('repo.smartCommit.fileMenu')"
+                      >
+                        <MoreVertical :size="13" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" class="max-h-72 w-60 overflow-y-auto">
+                      <DropdownMenuLabel>{{ $t("repo.smartCommit.moveTo") }}</DropdownMenuLabel>
+                      <DropdownMenuItem
+                        v-for="(other, oi) in groups"
+                        :key="other.key"
+                        :disabled="other.key === g.key"
+                        @select="moveFileTo(f, other.key)"
+                      >
+                        <GitCommitHorizontal :size="14" />
+                        <span class="truncate">{{ oi + 1 }}. {{ other.subjectLine || $t("repo.smartCommit.newCommit") }}</span>
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem @select="moveFileTo(f, 'new')">
+                        <Plus :size="14" /><span>{{ $t("repo.smartCommit.newCommit") }}</span>
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              </div>
+
+              <!-- inline diff of the expanded file (single-open across the whole editor) -->
+              <div v-if="openDiff && g.files.includes(openDiff)" class="mt-2 pl-6">
+                <SmartCommitFileDiff
+                  :key="openDiff"
+                  :repo-id="repoId"
+                  :path="openDiff"
+                  :status="statusByPath[openDiff]"
+                />
+              </div>
+
+              <!-- combined per-commit review: every file's diff stacked (companion to the
+                   single-file zoom above). Only meaningful with more than one file. -->
+              <div v-if="g.files.length > 1" class="mt-2 pl-6">
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1 text-[11.5px] text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+                  :aria-expanded="openAll === g.key"
+                  @click="toggleAll(g.key)"
+                >
+                  <ChevronDown :size="13" :class="cn('transition-transform', openAll === g.key && 'rotate-180')" />
+                  <span>{{ openAll === g.key ? $t("repo.smartCommit.hideAll") : $t("repo.smartCommit.reviewAll") }}</span>
+                </button>
+                <SmartCommitCommitDiff
+                  v-if="openAll === g.key"
+                  :key="g.files.join('|')"
+                  :repo-id="repoId"
+                  :files="g.files"
+                  :status-by-path="statusByPath"
+                  class="mt-2"
+                />
               </div>
             </div>
           </div>
@@ -445,30 +520,57 @@ async function execute(sync: boolean): Promise<void> {
             </div>
             <p class="mb-2 text-[11.5px] text-muted-foreground">{{ $t("repo.smartCommit.unassignedHint") }}</p>
             <div class="flex flex-wrap gap-1.5">
-              <DropdownMenu v-for="f in leftovers" :key="f">
-                <DropdownMenuTrigger as-child>
-                  <button
-                    type="button"
-                    class="flex max-w-full items-center gap-1.5 rounded-md border border-border bg-secondary/40 px-2 py-1 text-[11.5px] outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/40"
-                    :title="$t('repo.smartCommit.fileMenu')"
-                  >
-                    <Badge :variant="statusVariant(statusByPath[f])" class="px-1 py-0 text-[9px] leading-none">{{ statusByPath[f] ?? "·" }}</Badge>
-                    <span class="truncate">{{ f }}</span>
-                    <ChevronDown :size="12" class="shrink-0 text-muted-foreground" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" class="max-h-72 w-60 overflow-y-auto">
-                  <DropdownMenuLabel>{{ $t("repo.smartCommit.moveTo") }}</DropdownMenuLabel>
-                  <DropdownMenuItem v-for="(other, oi) in groups" :key="other.key" @select="moveFileTo(f, other.key)">
-                    <GitCommitHorizontal :size="14" />
-                    <span class="truncate">{{ oi + 1 }}. {{ other.subjectLine || $t("repo.smartCommit.newCommit") }}</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem @select="moveFileTo(f, 'new')">
-                    <Plus :size="14" /><span>{{ $t("repo.smartCommit.newCommit") }}</span>
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <div
+                v-for="f in leftovers"
+                :key="f"
+                class="flex max-w-full items-stretch overflow-hidden rounded-md border border-border bg-secondary/40 text-[11.5px]"
+              >
+                <button
+                  type="button"
+                  class="flex min-w-0 items-center gap-1.5 px-2 py-1 outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/40"
+                  :aria-expanded="openDiff === f"
+                  :title="$t('repo.smartCommit.viewDiff')"
+                  @click="toggleDiff(f)"
+                >
+                  <Badge :variant="statusVariant(statusByPath[f])" class="px-1 py-0 text-[9px] leading-none">{{ statusByPath[f] ?? "·" }}</Badge>
+                  <span class="truncate">{{ f }}</span>
+                  <DiffStat v-if="statByPath[f]" :stat="statByPath[f]" show="lines" class="shrink-0" />
+                  <ChevronDown :size="12" :class="cn('shrink-0 text-muted-foreground transition-transform', openDiff === f && 'rotate-180')" />
+                </button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger as-child>
+                    <button
+                      type="button"
+                      class="flex shrink-0 items-center border-l border-border/60 px-1 text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+                      :title="$t('repo.smartCommit.fileMenu')"
+                      :aria-label="$t('repo.smartCommit.fileMenu')"
+                    >
+                      <MoreVertical :size="13" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" class="max-h-72 w-60 overflow-y-auto">
+                    <DropdownMenuLabel>{{ $t("repo.smartCommit.moveTo") }}</DropdownMenuLabel>
+                    <DropdownMenuItem v-for="(other, oi) in groups" :key="other.key" @select="moveFileTo(f, other.key)">
+                      <GitCommitHorizontal :size="14" />
+                      <span class="truncate">{{ oi + 1 }}. {{ other.subjectLine || $t("repo.smartCommit.newCommit") }}</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem @select="moveFileTo(f, 'new')">
+                      <Plus :size="14" /><span>{{ $t("repo.smartCommit.newCommit") }}</span>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </div>
+
+            <!-- inline diff of an expanded unassigned file (shares the single-open slot) -->
+            <div v-if="openDiff && leftovers.includes(openDiff)" class="mt-2">
+              <SmartCommitFileDiff
+                :key="openDiff"
+                :repo-id="repoId"
+                :path="openDiff"
+                :status="statusByPath[openDiff]"
+              />
             </div>
           </div>
         </template>

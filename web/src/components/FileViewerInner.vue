@@ -2,7 +2,7 @@
 // Shared content of the file viewer (header + body), rendered inside either the desktop
 // push-drawer or the mobile bottom sheet. Owns the fetch + the lazily-loaded editor.
 import { computed, defineAsyncComponent, h, onMounted, onBeforeUnmount, ref, watch } from "vue";
-import { useColorMode, usePreferredDark } from "@vueuse/core";
+import { usePreferredDark } from "@vueuse/core";
 import { X, Loader2, FileWarning, Columns2, AlignJustify, Pencil, Save } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { t } from "@/i18n";
@@ -10,6 +10,7 @@ import { api, ApiError } from "@/api";
 import { fileVisual } from "@/lib/file-icons";
 import { cn } from "@/lib/utils";
 import type { EditorTheme } from "@/lib/monaco-setup";
+import { useRepoYetiColorMode } from "@/lib/theme";
 import {
   viewerMode,
   wordLevelDiff,
@@ -58,7 +59,7 @@ const MonacoDiffViewer = defineAsyncComponent({
 });
 
 // ── theme (mirror the app's resolved light/dark for the editor) ────────────────
-const mode = useColorMode({ initialValue: "dark" });
+const mode = useRepoYetiColorMode();
 const prefersDark = usePreferredDark();
 const editorTheme = computed<EditorTheme>(() =>
   (mode.value === "auto" ? prefersDark.value : mode.value === "dark") ? "dark" : "light",

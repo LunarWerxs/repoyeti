@@ -24,6 +24,7 @@ import * as token from "./routes/token.ts";
 import * as mode from "./routes/mode.ts";
 import * as repos from "./routes/repos.ts";
 import * as roots from "./routes/roots.ts";
+import * as scan from "./routes/scan.ts";
 import * as servers from "./routes/servers.ts";
 import * as identities from "./routes/identities.ts";
 import * as repoFlags from "./routes/repo-flags.ts";
@@ -35,11 +36,17 @@ import * as tags from "./routes/tags.ts";
 import * as remote from "./routes/remote.ts";
 import * as files from "./routes/files.ts";
 import * as ai from "./routes/ai.ts";
+import * as updates from "./routes/updates.ts";
+import * as analytics from "./routes/analytics.ts";
 import * as events from "./routes/events.ts";
 import * as openapi from "./routes/openapi.ts";
 import * as mcp from "./routes/mcp.ts";
 
-export function createApp(cfg: RepoYetiConfig): Hono {
+export interface AppHooks {
+  requestShutdown?: () => void;
+}
+
+export function createApp(cfg: RepoYetiConfig, hooks: AppHooks = {}): Hono {
   // Startup side-effects: prime the runtime flags from this daemon's config before serving.
   // Sync the runtime diff-stats flag to this daemon's config (off by default).
   setDiffStatsEnabled(!!cfg.diffStats);
@@ -61,7 +68,7 @@ export function createApp(cfg: RepoYetiConfig): Hono {
   // MUST be registered first so it fronts every /api/* route below.
   app.use("/api/*", authMiddleware(cfg));
 
-  const deps: Deps = { cfg };
+  const deps: Deps = { cfg, requestShutdown: hooks.requestShutdown };
 
   // Register every route module, preserving the original route registration order.
   health.register(app, deps);
@@ -70,6 +77,7 @@ export function createApp(cfg: RepoYetiConfig): Hono {
   mode.register(app, deps);
   repos.register(app, deps);
   roots.register(app, deps);
+  scan.register(app, deps);
   servers.register(app, deps);
   identities.register(app, deps);
   repoFlags.register(app, deps);
@@ -81,6 +89,8 @@ export function createApp(cfg: RepoYetiConfig): Hono {
   remote.register(app, deps);
   files.register(app, deps);
   ai.register(app, deps);
+  updates.register(app, deps);
+  analytics.register(app, deps);
   events.register(app, deps);
   openapi.register(app, deps);
   mcp.register(app, deps);

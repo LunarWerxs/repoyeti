@@ -12,6 +12,7 @@
  *   - watch       → live fs watching, coalesced refresh, refreshAllRepos, watcherHealth
  *   - actions     → mutating VCS actions, fetch-all, discardFile, smartCommitRepo
  *   - repo-mgmt   → discover/forget/register/clone/create
+ *   - scan        → on-demand "Scan for projects" (cancellable rescan of all roots)
  *   - reads       → branches/log/commit/stashes/tags/changes/search + AI diff collectors
  *   - files       → file-viewer read/write/diff + diff-patch runtime settings
  *   - guards      → shared repo-precondition guard
@@ -20,6 +21,7 @@ export * from "./core.ts";
 export * from "./watch.ts";
 export * from "./actions.ts";
 export * from "./repo-mgmt.ts";
+export * from "./scan.ts";
 export * from "./reads.ts";
 export * from "./files.ts";
 export * from "./guards.ts";

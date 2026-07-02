@@ -24,8 +24,11 @@ async function continueLocal(): Promise<void> {
     style="background-image: var(--brand-glow); background-repeat: no-repeat"
   >
     <div class="w-full max-w-sm text-center">
-      <img src="/icon.svg" alt="" width="60" height="60" class="mx-auto rounded-2xl shadow-lg shadow-black/40" />
-      <h1 class="mt-4 mb-1.5 text-2xl font-bold tracking-tight">RepoYeti</h1>
+      <!-- Full horizontal lockup, swapped by theme: black wordmark on light, white on dark. -->
+      <h1 class="mb-1.5">
+        <img src="/logo-light.svg" alt="RepoYeti" class="mx-auto h-14 w-auto dark:hidden" />
+        <img src="/logo-dark.svg" alt="RepoYeti" class="mx-auto hidden h-14 w-auto dark:block" />
+      </h1>
       <p class="mx-auto mb-7 max-w-xs text-sm leading-relaxed text-muted-foreground">
         {{ $t("signIn.tagline") }}
       </p>

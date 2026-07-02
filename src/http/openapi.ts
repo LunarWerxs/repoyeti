@@ -65,7 +65,11 @@ export const META: Record<string, RouteMeta> = {
     summary: "Runtime status: access mode, tunnel URL, and owner UI settings.",
     tags: ["system"],
   },
+  "POST /api/shutdown": { summary: "Cleanly stop the local daemon.", tags: ["system"] },
   "PUT /api/settings": { summary: "Update owner UI settings (diff-stats, remote editing, sync).", tags: ["system"] },
+  "GET /api/updates": { summary: "Check the configured public Git remote for a source update.", tags: ["system"] },
+  "POST /api/updates/apply": { summary: "Apply an available source update with git pull --ff-only, then rebuild the web UI.", tags: ["system"] },
+  "POST /api/analytics/events": { summary: "Forward a transparent product analytics event to the configured Connections endpoint.", tags: ["system"] },
   "GET /api/openapi.json": { summary: "This OpenAPI 3.1 document (public, unauthenticated).", tags: ["system"] },
 
   // ── auth ──────────────────────────────────────────────────────────────────────
@@ -171,6 +175,8 @@ export const META: Record<string, RouteMeta> = {
   "GET /api/roots": { summary: "List the discovery scan roots.", tags: ["roots"] },
   "POST /api/roots": { summary: "Add a discovery scan root.", body: RootPathSchema, tags: ["roots"] },
   "DELETE /api/roots": { summary: "Remove a discovery scan root.", body: RootPathSchema, tags: ["roots"] },
+  "POST /api/scan": { summary: "Rescan all configured scan roots for new repositories.", tags: ["roots"] },
+  "POST /api/scan/cancel": { summary: "Cancel the in-flight project scan.", tags: ["roots"] },
 
   // ── lore servers ───────────────────────────────────────────────────────────────
   "GET /api/servers": { summary: "List registered Lore servers.", tags: ["servers"] },
@@ -180,6 +186,7 @@ export const META: Record<string, RouteMeta> = {
 
   // ── identities ─────────────────────────────────────────────────────────────────
   "GET /api/identities": { summary: "List commit identities.", tags: ["identities"] },
+  "GET /api/identities/detected": { summary: "Detect local Git/GitHub/SSH identity hints.", tags: ["identities"] },
   "POST /api/identities": { summary: "Create a commit identity.", body: IdentityCreateSchema, tags: ["identities"] },
   "PUT /api/identities/:id": { summary: "Update a commit identity.", body: IdentityUpdateSchema, tags: ["identities"] },
   "DELETE /api/identities/:id": { summary: "Delete a commit identity.", tags: ["identities"] },

@@ -8,16 +8,20 @@ import RepoList from "./components/RepoList.vue";
 import RepoCard from "./components/RepoCard.vue";
 import RepoFilters from "./components/RepoFilters.vue";
 import AddRepo from "./components/AddRepo.vue";
+import ScanProjects from "./components/ScanProjects.vue";
 import Settings from "./components/Settings.vue";
 import SignIn from "./components/SignIn.vue";
 import RemoteAccess from "./components/RemoteAccess.vue";
 import FileViewer from "./components/FileViewer.vue";
 import { pageShiftPx } from "@/lib/file-viewer";
+import { useSettingsPanelShift } from "@/lib/settings-panel";
 
 const store = useStore();
 const showAdd = ref(false);
 const showSettings = ref(false);
 const showRemote = ref(false);
+const { side: settingsSide, shiftPx: settingsShiftPx } = useSettingsPanelShift(showSettings);
+const appShiftPx = computed(() => pageShiftPx.value + settingsShiftPx.value);
 
 // The login gate shows only in remote mode, when there's no owner session and no local
 // bypass. Local mode (and the "Continue local for now" bypass) skip straight to the app.
@@ -46,7 +50,7 @@ onMounted(async () => {
     :style="{
       backgroundImage: 'var(--brand-glow)',
       backgroundRepeat: 'no-repeat',
-      paddingRight: pageShiftPx ? `${pageShiftPx}px` : undefined,
+      paddingRight: appShiftPx ? `${appShiftPx}px` : undefined,
     }"
   >
     <AppHeader
@@ -127,7 +131,8 @@ onMounted(async () => {
     </footer>
 
     <AddRepo v-model:open="showAdd" />
-    <Settings v-model:open="showSettings" />
+    <ScanProjects v-model:open="store.scanOpen" @open-settings="showSettings = true" />
+    <Settings v-model:open="showSettings" :side="settingsSide" :right-offset-px="pageShiftPx" />
     <RemoteAccess v-model:open="showRemote" />
     <FileViewer />
   </div>

@@ -25,6 +25,7 @@ desktop.ini
 # logs & test/coverage output
 *.log
 coverage/
+tmp/
 
 # Playwright E2E artifacts (web/) — regenerated per run, never committed
 web/test-results/

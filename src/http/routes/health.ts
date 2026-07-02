@@ -21,7 +21,7 @@ import {
   setSyncIntervalSecs,
 } from "../../remote-sync.ts";
 
-export function register(app: Hono, { cfg }: Deps): void {
+export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
   // ── auth surface ───────────────────────────────────────────────────────────
   app.get("/api/health", (c) =>
     c.json({ ok: true, service: "repoyeti", version: VERSION, ts: Date.now() }),
@@ -56,6 +56,10 @@ export function register(app: Hono, { cfg }: Deps): void {
     }),
   );
 
+  app.post("/api/shutdown", (c) => {
+    setTimeout(() => requestShutdown?.(), 25);
+    return c.json({ ok: true });
+  });
   // Owner UI settings. Currently just the diff-stats toggle: flipping it persists the
   // config, updates the runtime flag, tells every client over SSE, and re-reads all repos
   // so each card's aggregate stat appears/clears immediately.

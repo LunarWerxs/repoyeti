@@ -91,19 +91,24 @@ export function discover(roots: string[], maxDepth: number, maxRepos: number): F
  * dir, an external drive, a network share) never delays the HTTP server from coming up:
  * each repo is reported via `onFound` the instant it's seen, and the caller indexes/watches
  * it live. Returns the number of repos found (after the `maxRepos` cap).
+ *
+ * Pass an `AbortSignal` to make the walk cancellable — the on-demand "Scan for projects"
+ * uses it so the modal's Stop (X) can end a long scan early. Repos already reported via
+ * `onFound` before the abort stay reported; the walk simply stops descending.
  */
 export async function discoverStream(
   roots: string[],
   maxDepth: number,
   maxRepos: number,
   onFound: (repo: FoundRepo) => void,
+  signal?: AbortSignal,
 ): Promise<number> {
   let count = 0;
   const seen = new Set<string>();
   const lore = isLoreEnabled();
 
   const visit = async (dir: string, depth: number): Promise<void> => {
-    if (count >= maxRepos) return;
+    if (count >= maxRepos || signal?.aborted) return;
     let entries: import("node:fs").Dirent[];
     try {
       entries = await readdir(dir, { withFileTypes: true });
@@ -129,7 +134,7 @@ export async function discoverStream(
 
     if (depth >= maxDepth) return;
     for (const e of entries) {
-      if (count >= maxRepos) return;
+      if (count >= maxRepos || signal?.aborted) return;
       if (!e.isDirectory()) continue;
       if (e.name.startsWith(".")) continue;
       if (SKIP_DIRS.has(e.name)) continue;
@@ -138,6 +143,7 @@ export async function discoverStream(
   };
 
   for (const root of roots) {
+    if (signal?.aborted) break;
     if (existsSync(root)) await visit(root, 0);
   }
   return count;

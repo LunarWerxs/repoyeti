@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { FolderGit2, FolderPlus, DownloadCloud, Server, Loader2 } from "@lucide/vue";
+import { FolderGit2, FolderPlus, DownloadCloud, Server, FolderSearch, Loader2 } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { useStore } from "../store";
 import { cn } from "@/lib/utils";
@@ -87,6 +87,12 @@ const seg = (active: boolean): string =>
       : "text-muted-foreground hover:bg-card/50 hover:text-foreground active:bg-card/70",
   );
 
+// Hand off to the one "Scan for projects" modal — scanning lives there, not in this dialog.
+function openScan(): void {
+  open.value = false;
+  store.scanOpen = true;
+}
+
 async function submit(): Promise<void> {
   if (!canSubmit.value) return;
   busy.value = true;
@@ -152,6 +158,19 @@ async function submit(): Promise<void> {
           <Server :size="14" /> {{ $t("addRepo.modeLore") }}
         </button>
       </div>
+
+      <!-- hand-off to the dedicated Scan-for-projects modal -->
+      <button
+        type="button"
+        class="flex w-full items-center gap-2.5 rounded-md border border-border/60 bg-secondary/30 px-3 py-2 text-left transition-colors hover:bg-secondary/60 [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted-foreground"
+        @click="openScan"
+      >
+        <FolderSearch />
+        <span class="flex flex-col">
+          <span class="text-[13px] font-medium text-foreground">{{ $t("addRepo.scanButton") }}</span>
+          <span class="text-[11.5px] text-muted-foreground">{{ $t("addRepo.scanHint") }}</span>
+        </span>
+      </button>
 
       <!-- register / create: a single path -->
       <template v-if="mode === 'register' || mode === 'create'">

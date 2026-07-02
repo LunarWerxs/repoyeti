@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { reactive, ref, computed } from "vue";
-import { Plus, Pencil, Trash2, KeyRound, Save, X, Check, Users } from "@lucide/vue";
+import { reactive, ref, computed, nextTick } from "vue";
+import { Plus, Pencil, Trash2, KeyRound, Save, X, Check, Users, RefreshCw } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { useI18n } from "vue-i18n";
 import { useStore } from "../store";
@@ -9,7 +9,7 @@ import { identityInitials, identityTint } from "@/lib/identity-display";
 import SettingsSection from "./SettingsSection.vue";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { Identity } from "../types";
+import type { DetectedIdentity, DetectedIdentitySource, Identity } from "../types";
 
 const { t } = useI18n();
 
@@ -19,12 +19,34 @@ const editingId = ref<string | null>(null);
 const showForm = ref(false);
 const saving = ref(false);
 const confirmId = ref<string | null>(null);
+const formEl = ref<HTMLElement | null>(null);
 const form = reactive({ displayName: "", gitUsername: "", gitEmail: "", sshKeyPath: "" });
 
 const formTitle = computed(() => (editingId.value ? t("identity.form.titleEdit") : t("identity.form.titleNew")));
 const valid = computed(
   () => !!(form.displayName.trim() && form.gitUsername.trim() && form.gitEmail.trim()),
 );
+const sourceLabels = computed<Record<DetectedIdentitySource, string>>(() => ({
+  "git-global": t("identity.detected.source.gitGlobal"),
+  "git-local": t("identity.detected.source.gitLocal"),
+  "git-credential": t("identity.detected.source.gitCredential"),
+  "github-cli": t("identity.detected.source.githubCli"),
+  "windows-credential": t("identity.detected.source.windowsCredential"),
+  "ssh-key": t("identity.detected.source.sshKey"),
+  "ssh-agent": t("identity.detected.source.sshAgent"),
+}));
+const shownDetected = computed(() => {
+  const saved = new Set(
+    store.identities.map((i) =>
+      [i.gitUsername.trim().toLowerCase(), i.gitEmail.trim().toLowerCase(), i.sshKeyPath ?? ""].join("\0"),
+    ),
+  );
+  return store.detectedIdentities.filter((i) => {
+    const s = i.suggestion;
+    const key = [s.gitUsername.trim().toLowerCase(), s.gitEmail.trim().toLowerCase(), s.sshKeyPath ?? ""].join("\0");
+    return !saved.has(key);
+  });
+});
 
 function reset(): void {
   form.displayName = "";
@@ -32,10 +54,16 @@ function reset(): void {
   form.gitEmail = "";
   form.sshKeyPath = "";
 }
+async function revealForm(): Promise<void> {
+  await nextTick();
+  formEl.value?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  formEl.value?.querySelector<HTMLInputElement>('[data-slot="input"]')?.focus();
+}
 function openNew(): void {
   editingId.value = null;
   reset();
   showForm.value = true;
+  void revealForm();
 }
 function openEdit(i: Identity): void {
   editingId.value = i.id;
@@ -44,10 +72,31 @@ function openEdit(i: Identity): void {
   form.gitEmail = i.gitEmail;
   form.sshKeyPath = i.sshKeyPath ?? "";
   showForm.value = true;
+  void revealForm();
+}
+function useDetected(i: DetectedIdentity): void {
+  editingId.value = null;
+  form.displayName = i.suggestion.displayName;
+  form.gitUsername = i.suggestion.gitUsername;
+  form.gitEmail = i.suggestion.gitEmail;
+  form.sshKeyPath = i.suggestion.sshKeyPath ?? "";
+  showForm.value = true;
+  void revealForm();
 }
 function cancel(): void {
   showForm.value = false;
   editingId.value = null;
+}
+
+function missingText(i: DetectedIdentity): string {
+  const fields = i.missing.filter((field) => field !== "sshKeyPath");
+  if (fields.length === 0) return "";
+  const labels: Record<string, string> = {
+    displayName: t("identity.field.displayName"),
+    gitUsername: t("identity.field.gitUsername"),
+    gitEmail: t("identity.field.gitEmail"),
+  };
+  return t("identity.detected.needs", { fields: fields.map((field) => labels[field] ?? field).join(", ") });
 }
 
 async function save(): Promise<void> {
@@ -96,7 +145,59 @@ async function remove(id: string): Promise<void> {
     :default-open="true"
   >
     <div class="flex flex-col gap-3">
+        <!-- local machine suggestions -->
+        <div class="flex items-center justify-between gap-2">
+          <div class="text-[12px] font-medium text-muted-foreground">{{ $t("identity.detected.title") }}</div>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            :aria-label="$t('identity.detected.refresh')"
+            :disabled="store.detectedIdentitiesLoading"
+            @click="store.loadDetectedIdentities()"
+          >
+            <RefreshCw :class="store.detectedIdentitiesLoading && 'animate-spin'" />
+          </Button>
+        </div>
+        <div v-if="shownDetected.length" v-auto-animate class="flex flex-col gap-2">
+          <div
+            v-for="d in shownDetected"
+            :key="d.id"
+            class="flex items-center gap-3 rounded-xl border border-border bg-background/50 p-2.5"
+          >
+            <span class="flex size-9 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground">
+              <KeyRound v-if="d.source === 'ssh-key' || d.source === 'ssh-agent'" :size="15" />
+              <Users v-else :size="15" />
+            </span>
+            <div class="min-w-0 flex-1">
+              <div class="flex min-w-0 items-center gap-2">
+                <div class="truncate text-[13px] font-medium">{{ d.title }}</div>
+                <span class="shrink-0 rounded border border-border bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                  {{ sourceLabels[d.source] }}
+                </span>
+              </div>
+              <div class="mono truncate text-[11px] text-muted-foreground">{{ d.detail }}</div>
+              <div v-if="missingText(d)" class="mt-0.5 text-[11px] text-warning">{{ missingText(d) }}</div>
+            </div>
+            <Button variant="secondary" size="sm" @click="useDetected(d)">
+              <Plus />
+              {{ $t("identity.detected.use") }}
+            </Button>
+          </div>
+        </div>
+        <div
+          v-else-if="store.detectedIdentitiesReady && !store.detectedIdentitiesLoading"
+          class="rounded-lg border border-dashed border-border px-3 py-2 text-[12px] text-muted-foreground"
+        >
+          {{ $t("identity.detected.empty") }}
+        </div>
+
         <!-- identity list -->
+        <div
+          v-if="store.identities.length || !shownDetected.length"
+          class="text-[12px] font-medium text-muted-foreground"
+        >
+          {{ $t("identity.savedTitle") }}
+        </div>
         <div v-if="store.identities.length" v-auto-animate class="flex flex-col gap-2">
           <div
             v-for="i in store.identities"
@@ -144,12 +245,15 @@ async function remove(id: string): Promise<void> {
             </div>
           </div>
         </div>
-        <div v-else class="rounded-xl border border-dashed border-border py-8 text-center text-[13px] text-muted-foreground">
+        <div
+          v-else-if="!shownDetected.length"
+          class="rounded-xl border border-dashed border-border py-8 text-center text-[13px] text-muted-foreground"
+        >
           {{ $t("identity.empty") }}
         </div>
 
         <!-- create / edit form -->
-        <div v-if="showForm" class="rounded-xl border border-border bg-secondary/40 p-3.5">
+        <div v-if="showForm" ref="formEl" class="rounded-xl border border-border bg-secondary/40 p-3.5">
           <div class="mb-3 text-[13px] font-semibold text-foreground/90">{{ formTitle }}</div>
           <div class="flex flex-col gap-3">
             <label class="block">

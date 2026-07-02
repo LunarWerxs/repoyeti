@@ -36,7 +36,7 @@ export default defineConfig({
     Icons({ compiler: "vue3", autoInstall: false }),
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["icon.svg"],
+      includeAssets: ["icon.svg", "icon-light.svg", "icon-dark.svg", "logo-light.svg", "logo-dark.svg"],
       manifest: {
         name: "RepoYeti",
         short_name: "RepoYeti",
@@ -46,12 +46,17 @@ export default defineConfig({
         display: "standalone",
         orientation: "portrait",
         start_url: "/",
-        icons: [
-          { src: "icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
-          { src: "icon.svg", sizes: "any", type: "image/svg+xml", purpose: "maskable" },
-        ],
+        // Standalone medallion (a disc, not a full-bleed tile), so only "any" — no maskable
+        // variant, which would expect art that fills the icon's safe zone edge to edge.
+        icons: [{ src: "icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" }],
       },
       workbox: {
+        // Apply a new build immediately instead of waiting for every tab to close: the fresh SW
+        // activates + claims open clients right away (paired with registerType:"autoUpdate", which
+        // reloads on update). Without these, a rebuild would keep serving the stale cached app.
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
         navigateFallback: "index.html",
         // Never let the service worker cache live data or the auth dance.
         navigateFallbackDenylist: [/^\/api\//, /^\/oauth\//, /^\/assets\//],

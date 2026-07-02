@@ -1,38 +1,170 @@
 <script setup lang="ts">
-import { RefreshCw, Plus, Settings, Cloud, CloudOff, DownloadCloud, Loader2 } from "@lucide/vue";
+import { onBeforeUnmount, onMounted, ref } from "vue";
+import { RefreshCw, Plus, Settings, Cloud, CloudOff, DownloadCloud, FolderSearch, Loader2, MoreVertical, Power } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { useStore } from "../store";
+import { useRepoFeedback } from "@/lib/repo-feedback";
 
 defineProps<{ connected: boolean; repoCount: number }>();
-defineEmits<{ reload: []; add: []; settings: []; remote: [] }>();
+const emit = defineEmits<{ reload: []; add: []; settings: []; remote: [] }>();
 
 const store = useStore();
 const { t } = useI18n();
+const { friendly } = useRepoFeedback();
+const actionsOpen = ref(false);
+const actionsMenuRef = ref<HTMLElement | null>(null);
+const confirmShutdownOpen = ref(false);
+const shuttingDown = ref(false);
+
+function firstFetchFailureDescription(failed: Array<{ name: string; code: string }>): string | undefined {
+  const first = failed[0];
+  if (!first) return undefined;
+  const reason = friendly(first.code) || first.code;
+  const more = failed.length - 1;
+  return more > 0
+    ? t("header.fetchAllFirstFailureMore", { name: first.name, reason, count: more }, more)
+    : t("header.fetchAllFirstFailure", { name: first.name, reason });
+}
+
+function toastFetchError(e: unknown): void {
+  const description = e instanceof Error ? e.message : "";
+  if (description) toast.error(t("header.fetchAllFailed"), { description });
+  else toast.error(t("header.fetchAllFailed"));
+}
 
 // Fetch every repo that has a remote, then toast a one-line summary.
 async function fetchAll(): Promise<void> {
   if (store.fetchingAll) return;
+  actionsOpen.value = false;
+  if (store.repos.length === 0) {
+    toast.message(t("header.fetchAllNoRepos"));
+    return;
+  }
   try {
     const r = await store.fetchAll();
     if (r.total === 0) toast.message(t("header.fetchAllNone"));
     else if (r.failed.length === 0) toast.success(t("header.fetchAllDone", { count: r.ok }, r.ok));
-    else toast.warning(t("header.fetchAllPartial", { ok: r.ok, failed: r.failed.length }));
-  } catch {
-    toast.error(t("header.fetchAllFailed"));
+    else {
+      const description = firstFetchFailureDescription(r.failed);
+      if (description) toast.warning(t("header.fetchAllPartial", { ok: r.ok, failed: r.failed.length }), { description });
+      else toast.warning(t("header.fetchAllPartial", { ok: r.ok, failed: r.failed.length }));
+    }
+  } catch (e) {
+    toastFetchError(e);
   }
 }
+
+async function updateApp(): Promise<void> {
+  actionsOpen.value = false;
+  if (store.updateApplying || store.updateChecking) return;
+  try {
+    let status = store.updateStatus;
+    if (!status) status = await store.checkForUpdate();
+    if (!status?.ok) {
+      toast.warning(t("header.updateCheckFailed"), {
+        description: status?.reason ?? undefined,
+      });
+      return;
+    }
+    if (!status?.updateAvailable) {
+      toast.message(t("header.updateNone"));
+      return;
+    }
+    if (!status.canApply) {
+      toast.warning(t("header.updateBlocked"), {
+        description: status.reason ?? undefined,
+      });
+      return;
+    }
+    const result = await store.applyUpdate();
+    toast.success(t("header.updateApplied"), {
+      description: result.restartRequired ? t("header.updateRestart") : undefined,
+    });
+  } catch (e) {
+    toast.error(t("header.updateFailed"), {
+      description: e instanceof Error ? e.message : undefined,
+    });
+  }
+}
+
+function toggleActions(): void {
+  actionsOpen.value = !actionsOpen.value;
+}
+
+function onWindowPointerDown(e: PointerEvent): void {
+  if (!actionsOpen.value) return;
+  const target = e.target;
+  if (target instanceof Node && actionsMenuRef.value?.contains(target)) return;
+  actionsOpen.value = false;
+}
+
+function onWindowKeydown(e: KeyboardEvent): void {
+  if (e.key === "Escape") actionsOpen.value = false;
+}
+
+async function shutdown(): Promise<void> {
+  if (shuttingDown.value) return;
+  shuttingDown.value = true;
+  try {
+    await store.shutdown();
+    confirmShutdownOpen.value = false;
+    toast.message(t("header.shutdownStarted"));
+  } catch {
+    toast.error(t("header.shutdownFailed"));
+    confirmShutdownOpen.value = false;
+    shuttingDown.value = false;
+  }
+}
+
+function reload(): void {
+  actionsOpen.value = false;
+  emit("reload");
+}
+
+function openScan(): void {
+  actionsOpen.value = false;
+  store.scanOpen = true;
+}
+
+function openSettings(): void {
+  actionsOpen.value = false;
+  emit("settings");
+}
+
+function openShutdownConfirm(): void {
+  actionsOpen.value = false;
+  confirmShutdownOpen.value = true;
+}
+
+onMounted(() => {
+  window.addEventListener("pointerdown", onWindowPointerDown);
+  window.addEventListener("keydown", onWindowKeydown);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("pointerdown", onWindowPointerDown);
+  window.removeEventListener("keydown", onWindowKeydown);
+});
 </script>
 
 <template>
-  <header
-    class="safe-top sticky top-0 z-30 border-b border-border/70 bg-background/70 backdrop-blur-xl"
-  >
+  <header class="safe-top sticky top-0 z-30">
     <div class="mx-auto flex max-w-3xl items-center justify-between gap-2 px-3 py-2.5 sm:px-4">
       <div class="flex items-center gap-2.5">
-        <img src="/icon.svg" alt="" width="30" height="30" class="rounded-lg" />
+        <!-- Standalone medallion, swapped by theme so the disc always contrasts with the header. -->
+        <img :src="'/icon-light.svg'" alt="" width="30" height="30" class="dark:hidden" />
+        <img :src="'/icon-dark.svg'" alt="" width="30" height="30" class="hidden dark:block" />
         <div class="leading-tight">
           <div class="text-[17px] font-bold tracking-tight">{{ $t("app.name") }}</div>
           <div class="text-[12px] text-muted-foreground">
@@ -77,39 +209,91 @@ async function fetchAll(): Promise<void> {
           </span>
         </div>
 
-        <Tooltip>
-          <TooltipTrigger as-child>
-            <Button
-              variant="ghost"
-              size="icon"
+        <div ref="actionsMenuRef" class="relative">
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <Button
+                variant="ghost"
+                size="icon"
+                :aria-label="$t('header.moreActions')"
+                :aria-expanded="actionsOpen"
+                aria-haspopup="menu"
+                @click.stop="toggleActions"
+              >
+                <MoreVertical />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{{ $t("header.moreActions") }}</TooltipContent>
+          </Tooltip>
+          <div
+            v-if="actionsOpen"
+            role="menu"
+            class="absolute top-[calc(100%+0.375rem)] right-0 z-50 w-52 rounded-xl border bg-popover p-1 text-popover-foreground shadow-xl shadow-black/40"
+            @click.stop
+          >
+            <div class="px-2 py-1.5 text-xs font-medium text-muted-foreground">{{ $t("header.actions") }}</div>
+            <button
+              type="button"
+              role="menuitem"
               :disabled="store.fetchingAll"
-              :aria-label="$t('header.fetchAll')"
+              class="relative flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-hidden transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0"
               @click="fetchAll"
             >
               <Loader2 v-if="store.fetchingAll" class="animate-spin" />
               <DownloadCloud v-else />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{{ $t("header.fetchAll") }}</TooltipContent>
-        </Tooltip>
-
-        <Tooltip>
-          <TooltipTrigger as-child>
-            <Button variant="ghost" size="icon" :aria-label="$t('header.reload')" @click="$emit('reload')">
+              <span>{{ $t("header.fetchAll") }}</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              :disabled="store.updateChecking || store.updateApplying"
+              class="relative flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-hidden transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0"
+              @click="updateApp"
+            >
+              <Loader2 v-if="store.updateChecking || store.updateApplying" class="animate-spin" />
+              <DownloadCloud v-else />
+              <span>{{ store.updateStatus?.updateAvailable ? $t("header.updateAvailable") : $t("header.checkUpdates") }}</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              class="relative flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-hidden transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground [&_svg]:size-4 [&_svg]:shrink-0"
+              @click="openScan"
+            >
+              <FolderSearch />
+              <span>{{ $t("header.scanProjects") }}</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              class="relative flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-hidden transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground [&_svg]:size-4 [&_svg]:shrink-0"
+              @click="reload"
+            >
               <RefreshCw />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{{ $t("header.reload") }}</TooltipContent>
-        </Tooltip>
-
-        <Tooltip>
-          <TooltipTrigger as-child>
-            <Button variant="ghost" size="icon" :aria-label="$t('header.settings')" @click="$emit('settings')">
+              <span>{{ $t("header.reload") }}</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              class="relative flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-hidden transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground [&_svg]:size-4 [&_svg]:shrink-0"
+              @click="openSettings"
+            >
               <Settings />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{{ $t("header.settingsTooltip") }}</TooltipContent>
-        </Tooltip>
+              <span>{{ $t("header.settings") }}</span>
+            </button>
+            <div class="-mx-1 my-1 h-px bg-border" />
+            <button
+              type="button"
+              role="menuitem"
+              :disabled="shuttingDown"
+              class="relative flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-destructive outline-hidden transition-colors hover:bg-destructive/10 focus:bg-destructive/10 disabled:pointer-events-none disabled:opacity-50 dark:hover:bg-destructive/20 dark:focus:bg-destructive/20 [&_svg]:size-4 [&_svg]:shrink-0"
+              @click="openShutdownConfirm"
+            >
+              <Power />
+              <span>{{ $t("header.shutdown") }}</span>
+            </button>
+          </div>
+        </div>
 
         <Button class="ml-1" size="sm" :aria-label="$t('header.addRepository')" @click="$emit('add')">
           <Plus />
@@ -118,4 +302,23 @@ async function fetchAll(): Promise<void> {
       </div>
     </div>
   </header>
+
+  <Dialog v-model:open="confirmShutdownOpen">
+    <DialogContent class="sm:max-w-sm">
+      <DialogHeader>
+        <DialogTitle>{{ $t("header.shutdownTitle") }}</DialogTitle>
+        <DialogDescription>{{ $t("header.shutdownBody") }}</DialogDescription>
+      </DialogHeader>
+      <DialogFooter class="gap-2 sm:gap-2">
+        <Button variant="secondary" :disabled="shuttingDown" @click="confirmShutdownOpen = false">
+          {{ $t("common.cancel") }}
+        </Button>
+        <Button variant="destructive" :disabled="shuttingDown" @click="shutdown">
+          <Loader2 v-if="shuttingDown" class="animate-spin" />
+          <Power v-else />
+          {{ $t("header.shutdownConfirm") }}
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>

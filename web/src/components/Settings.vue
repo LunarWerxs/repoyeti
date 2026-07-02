@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { reactive, ref, computed, watch } from "vue";
-import { useColorMode } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import {
   Sparkles,
@@ -11,6 +10,7 @@ import {
   X,
   ChevronDown,
   Palette,
+  GitCompare,
   Cloud,
   Keyboard,
   Settings as SettingsIcon,
@@ -23,9 +23,10 @@ import {
 import { toast } from "vue-sonner";
 import { useStore } from "../store";
 import { ApiError } from "../api";
-import { useLockedSheetSide } from "@/lib/use-locked-sheet-side";
+import type { SheetSide } from "@/lib/use-locked-sheet-side";
 import { changesViewSize } from "@/lib/changes-view";
 import { hotkeysEnabled, powerShortcuts, SHORTCUTS } from "@/lib/hotkeys";
+import { useRepoYetiColorMode } from "@/lib/theme";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,13 +45,17 @@ import SettingsSection from "./SettingsSection.vue";
 import type { AiCatalogEntry, AiModel, AiProviderId, CommitStyle } from "../types";
 
 const open = defineModel<boolean>("open", { required: true });
+const props = withDefaults(defineProps<{ side?: SheetSide; rightOffsetPx?: number }>(), {
+  side: "right",
+  rightOffsetPx: 0,
+});
 const store = useStore();
 const { t } = useI18n();
 
 // Shared light/dark/system theme — writes to the same store App.vue reads. §3.
-const theme = useColorMode({ initialValue: "dark" });
+const theme = useRepoYetiColorMode();
 
-const side = useLockedSheetSide(open);
+const usesDesktopPanel = computed(() => props.side === "right");
 
 // Human descriptions for the Keyboard-shortcuts reference list, keyed by Shortcut.id.
 // Static t() literals (re-run on locale change) so the i18n parity check sees them used.
@@ -147,6 +152,7 @@ watch(open, (isOpen) => {
   if (isOpen) {
     void store.loadRoots();
     void store.loadServers();
+    void store.loadDetectedIdentities();
     // Seed the stable-address field from the live config (the token stays blank — it's write-only).
     tunnelHost.value = store.tunnelConfig.hostname ?? "";
     confirmForgetTunnel.value = false;
@@ -433,8 +439,13 @@ async function remove(id: AiProviderId): Promise<void> {
 </script>
 
 <template>
-  <Sheet v-model:open="open">
-    <SheetContent :side="side" class="gap-0 p-0">
+  <Sheet v-model:open="open" :modal="!usesDesktopPanel">
+    <SheetContent
+      :side="props.side"
+      :show-overlay="!usesDesktopPanel"
+      :right-offset-px="props.rightOffsetPx"
+      class="gap-0 p-0 transition-[right,transform]"
+    >
       <SheetHeader class="border-b border-border/60">
         <SheetTitle class="flex items-center gap-2">
           <SettingsIcon :size="17" class="text-muted-foreground" /> {{ $t("settings.title") }}
@@ -681,6 +692,15 @@ async function remove(id: AiProviderId): Promise<void> {
                 {{ $t("settings.changesHeightHint") }}
               </span>
             </div>
+        </SettingsSection>
+
+        <!-- Diffs ─────────────────────────────────────────────────────── -->
+        <SettingsSection
+          section-id="diffs"
+          :icon="GitCompare"
+          :title="$t('settings.cardDiffs')"
+          :default-open="true"
+        >
             <label class="flex cursor-pointer items-center justify-between gap-3">
               <span class="flex flex-col gap-0.5">
                 <span class="text-[12.5px] font-medium text-foreground">{{ $t("settings.diffStats") }}</span>

@@ -79,6 +79,18 @@ test("launcher chain is wired: shortcut → wscript → RepoYeti.vbs → RepoYet
   must(/src[\\/]index\.ts/.test(tray), "RepoYeti-Tray.ps1 doesn't start the daemon (src/index.ts)");
   must(/\bstart\b/.test(tray), "RepoYeti-Tray.ps1 doesn't run the daemon's 'start' command");
   must(/RepoYeti\.ico/.test(tray), "RepoYeti-Tray.ps1 doesn't load the tray icon RepoYeti.ico");
+  must(/RepoYetiTrayHost/.test(tray), "RepoYeti-Tray.ps1 doesn't guard against duplicate tray hosts");
+  must(/New-RepoYetiTrayIcon/.test(tray), "RepoYeti-Tray.ps1 doesn't have a hard tray-icon startup gate");
+  must(
+    !/if\s*\(\$existing\)\s*\{\s*Start-Process\s+\$existing;\s*return\s*\}/.test(tray),
+    "RepoYeti-Tray.ps1 exits before creating a tray icon when the daemon is already running",
+  );
+
+  const trayGate = tray.indexOf("$tray = New-RepoYetiTrayIcon $scriptDir");
+  const daemonLaunch = tray.indexOf("$startProc = Start-RepoYeti $root $port");
+  must(trayGate >= 0, "RepoYeti-Tray.ps1 doesn't create the tray icon before daemon startup");
+  must(daemonLaunch >= 0 && trayGate < daemonLaunch, "RepoYeti-Tray.ps1 can start the daemon before the tray icon exists");
+  must(!/SystemIcons\]::Application/.test(tray), "RepoYeti-Tray.ps1 falls back to a generic icon instead of refusing to start");
 });
 
 // ── Windows-only runtime proofs (the tray is Windows-only) ────────────────────────
