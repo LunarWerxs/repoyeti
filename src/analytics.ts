@@ -9,7 +9,11 @@ export interface AnalyticsResult {
 }
 
 function endpoint(cfg: RepoYetiConfig): string | null {
-  const configured = cfg.analytics?.endpoint?.trim() || process.env.CONNECTIONS_ANALYTICS_URL?.trim();
+  // Per-app override wins, then the shared family endpoint, then config.json.
+  const configured =
+    cfg.analytics?.endpoint?.trim() ||
+    process.env.REPOYETI_PULSE_URL?.trim() ||
+    process.env.CONNECTIONS_ANALYTICS_URL?.trim();
   return configured || null;
 }
 
@@ -56,7 +60,8 @@ export async function trackAnalyticsEvent(
 
   try {
     const headers: Record<string, string> = { "content-type": "application/json" };
-    const token = process.env.CONNECTIONS_ANALYTICS_TOKEN?.trim();
+    const token =
+      process.env.REPOYETI_PULSE_TOKEN?.trim() || process.env.CONNECTIONS_ANALYTICS_TOKEN?.trim();
     if (token) headers.authorization = `Bearer ${token}`;
     const res = await fetch(url, {
       method: "POST",
