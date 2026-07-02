@@ -321,8 +321,6 @@ $pollTimer.Add_Tick({
     $tray.ShowBalloonTip(3500, "RepoYeti", "Web build failed. See misc\RepoYeti-Rebuild.log.", [System.Windows.Forms.ToolTipIcon]::Error)
   } elseif ($out -and $out.Ready) {
     if ($out.Url) { $script:url = $out.Url }
-    $msg = if ($script:jobKind -eq 'rebuild') { "UI rebuilt - daemon restarted. Refresh your browser (Ctrl+R)." } else { "Restarted." }
-    $tray.ShowBalloonTip(2500, "RepoYeti", $msg, [System.Windows.Forms.ToolTipIcon]::Info)
     if ($script:jobKind -eq 'rebuild') { Start-Process $script:url }
   } else {
     $tray.ShowBalloonTip(3500, "RepoYeti", "Restarted, but RepoYeti isn't answering yet.", [System.Windows.Forms.ToolTipIcon]::Warning)
@@ -338,8 +336,6 @@ function Start-Job-Async([bool]$doRebuild) {
   $script:jobKind = if ($doRebuild) { 'rebuild' } else { 'restart' }
   $rebuildItem.Enabled = $false
   $restartItem.Enabled = $false
-  $startMsg = if ($doRebuild) { "Rebuilding the web UI and restarting..." } else { "Restarting..." }
-  $tray.ShowBalloonTip(1500, "RepoYeti", $startMsg, [System.Windows.Forms.ToolTipIcon]::Info)
 
   try {
     $script:shared = [hashtable]::Synchronized(@{ buildPid = 0; serverPid = 0; cancel = $false })
