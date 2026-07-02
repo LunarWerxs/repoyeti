@@ -11,7 +11,7 @@ const props = defineProps<{ class?: HTMLAttributes["class"] }>();
 </script>
 
 <template>
-  <div :class="cn('mx-auto w-full max-w-[var(--container-max)] px-4 sm:px-6', props.class)">
+  <div :class="cn('mx-auto w-full max-w-(--container-max) px-4 sm:px-6', props.class)">
     <slot />
   </div>
 </template>
