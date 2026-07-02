@@ -5,6 +5,7 @@ import { toast } from "vue-sonner";
 import { api, ApiError, type AccessMode, type TunnelStatus } from "./api";
 import { t } from "./i18n";
 import type {
+  AccountsSnapshot,
   ActionName,
   ActionResult,
   AiCatalogEntry,
@@ -12,6 +13,7 @@ import type {
   AiProviderId,
   AiSettings,
   CommitStyle,
+  GhAccount,
   LoreServer,
   BranchList,
   ChangedFile,
@@ -138,6 +140,20 @@ export const useStore = defineStore("repoyeti", () => {
   const identityById = computed<Record<string, Identity>>(() =>
     Object.fromEntries(identities.value.map((i) => [i.id, i])),
   );
+
+  // ── GitHub (gh) accounts — the machine-wide active-account switcher ────────────
+  // `ghAvailable` is false when the `gh` CLI isn't installed/reachable (the UI then shows a hint).
+  // Loaded on boot (loadAll) so the header switcher shows the active account, and refreshed when
+  // Settings opens. Switching flips the active auth account — see AccountSwitcher.vue / AppHeader.vue.
+  const ghAvailable = ref(false);
+  const ghAccounts = ref<GhAccount[]>([]);
+  /** Global git author in effect (display-only; switching auth does NOT change this). */
+  const gitCommitIdentity = ref<{ name: string; email: string }>({ name: "", email: "" });
+  const accountsReady = ref(false);
+  const accountsLoading = ref(false);
+  /** The login currently being switched to (drives per-row + header spinners); null when idle. */
+  const switchingAccount = ref<string | null>(null);
+  const activeAccount = computed(() => ghAccounts.value.find((a) => a.active) ?? null);
 
   // Public cloudflared tunnel URL (null until one exists) + whether a tunnel is up.
   // Surfaced in the connection panel so the owner can open RepoYeti on their phone.
@@ -309,6 +325,7 @@ export const useStore = defineStore("repoyeti", () => {
         loadAiSettings(),
         loadAiCatalog(),
         loadStatus(),
+        loadAccounts(), // best-effort — populates the header account switcher on boot
       ]);
       repos.value = r;
       identities.value = i;
@@ -1159,7 +1176,50 @@ export const useStore = defineStore("repoyeti", () => {
   }
   async function removeIdentity(id: string): Promise<void> {
     await api.deleteIdentity(id);
-    await Promise.all([reloadIdentities(), api.listRepos().then((r) => (repos.value = r))]);
+    // Also refresh accounts: the server cascade clears any account→identity link that pointed at
+    // this identity, so re-reading drops the now-stale link from the switcher's dropdowns.
+    await Promise.all([
+      reloadIdentities(),
+      api.listRepos().then((r) => (repos.value = r)),
+      loadAccounts(),
+    ]);
+  }
+
+  // ── GitHub (gh) accounts ──────────────────────────────────────────────────────
+  function applyAccountsSnapshot(s: AccountsSnapshot): void {
+    ghAvailable.value = s.ghAvailable;
+    ghAccounts.value = s.accounts ?? [];
+    gitCommitIdentity.value = s.commitIdentity ?? { name: "", email: "" };
+    accountsReady.value = true;
+  }
+  /** Load the machine's gh accounts + active one. Best-effort: never throws (drives an empty state). */
+  async function loadAccounts(): Promise<void> {
+    if (accountsLoading.value) return;
+    accountsLoading.value = true;
+    try {
+      applyAccountsSnapshot(await api.accounts());
+    } catch {
+      ghAvailable.value = false;
+      ghAccounts.value = [];
+      accountsReady.value = true;
+    } finally {
+      accountsLoading.value = false;
+    }
+  }
+  /** Switch the machine's active GitHub account (host defaults to github.com). Throws ApiError →
+   *  the caller toasts; on success the snapshot (incl. the new active account) is applied. */
+  async function switchAccount(login: string, host?: string): Promise<void> {
+    switchingAccount.value = login;
+    try {
+      applyAccountsSnapshot(await api.switchAccount(login, host));
+    } finally {
+      switchingAccount.value = null;
+    }
+  }
+  /** Link (or unlink, with null) a GitHub account to a saved commit identity (applied on switch).
+   *  Throws ApiError → the caller toasts. */
+  async function setAccountIdentity(login: string, identityId: string | null, host?: string): Promise<void> {
+    applyAccountsSnapshot(await api.setAccountIdentity(login, identityId, host));
   }
 
   return {
@@ -1303,5 +1363,16 @@ export const useStore = defineStore("repoyeti", () => {
     removeIdentity,
     loadDetectedIdentities,
     cloneRepo,
+    // GitHub (gh) accounts
+    ghAvailable,
+    ghAccounts,
+    gitCommitIdentity,
+    accountsReady,
+    accountsLoading,
+    switchingAccount,
+    activeAccount,
+    loadAccounts,
+    switchAccount,
+    setAccountIdentity,
   };
 });

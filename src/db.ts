@@ -127,6 +127,15 @@ export function initDb(): Database {
       pat_handle     TEXT,
       signing_handle TEXT
     );
+    -- Optional link from a machine GitHub account (gh host+login) to a saved commit identity.
+    -- When the active account is switched to (host, login), the daemon also sets the global git
+    -- author to that identity's name/email (see gh-cli.ts). Absent row = don't touch the author.
+    CREATE TABLE IF NOT EXISTS account_identities (
+      host        TEXT NOT NULL,
+      login       TEXT NOT NULL,
+      identity_id TEXT NOT NULL,
+      PRIMARY KEY (host, login)
+    );
     -- Auth uses stateless, HMAC-signed cookies (see auth.ts) — there is no session row
     -- to store or revoke, so there is intentionally NO \`sessions\` table.
   `);
@@ -340,6 +349,8 @@ export function deleteIdentity(id: string): boolean {
   const db2 = getDb();
   // detach from any repos that pointed at it (no FK cascade configured)
   db2.query(`UPDATE repos SET identity_id = NULL WHERE identity_id = ?`).run(id);
+  // and from any GitHub-account links that pointed at it
+  db2.query(`DELETE FROM account_identities WHERE identity_id = ?`).run(id);
   const res = db2.query(`DELETE FROM identities WHERE id = ?`).run(id);
   return res.changes > 0;
 }
@@ -349,6 +360,47 @@ export function setRepoIdentity(repoId: string, identityId: string | null): void
   getDb()
     .query(`UPDATE repos SET identity_id = ?, updated_at = ? WHERE id = ?`)
     .run(identityId, Date.now(), repoId);
+}
+
+// ── GitHub account → commit-identity links ──────────────────────────────────────
+
+interface AccountIdentityRow {
+  host: string;
+  login: string;
+  identity_id: string;
+}
+
+/** All account→identity links as a `${host}\0${login}` → identityId map (for enriching a snapshot). */
+export function accountIdentityMap(): Record<string, string> {
+  const rows = getDb()
+    .query(`SELECT host, login, identity_id FROM account_identities`)
+    .all() as AccountIdentityRow[];
+  const out: Record<string, string> = {};
+  for (const r of rows) out[`${r.host}\0${r.login}`] = r.identity_id;
+  return out;
+}
+
+/** The identity id linked to one account (host + login), or null. */
+export function getAccountIdentity(host: string, login: string): string | null {
+  const r = getDb()
+    .query(`SELECT identity_id FROM account_identities WHERE host = ? AND login = ?`)
+    .get(host, login) as { identity_id: string } | null;
+  return r?.identity_id ?? null;
+}
+
+/** Link (or unlink, with null) a GitHub account to a saved commit identity. */
+export function setAccountIdentity(host: string, login: string, identityId: string | null): void {
+  const db2 = getDb();
+  if (!identityId) {
+    db2.query(`DELETE FROM account_identities WHERE host = ? AND login = ?`).run(host, login);
+    return;
+  }
+  db2
+    .query(
+      `INSERT INTO account_identities (host, login, identity_id) VALUES (?, ?, ?)
+       ON CONFLICT(host, login) DO UPDATE SET identity_id = excluded.identity_id`,
+    )
+    .run(host, login, identityId);
 }
 
 /** Hide (or unhide) a repo from the dashboard. Display-only — never affects watching. */

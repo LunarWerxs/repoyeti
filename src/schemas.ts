@@ -53,6 +53,22 @@ export const IdentityUpdateSchema = z.object({
 
 export const AssignIdentitySchema = z.object({ identityId: z.string().trim().nullish() });
 
+// ── GitHub (gh) accounts ──────────────────────────────────────────────────────────
+// Switch the machine's active GitHub account. `host` defaults to github.com in the handler; `login`
+// is validated against the live `gh` account list there (an unknown login → NOT_FOUND).
+export const AccountSwitchSchema = z.object({
+  host: z.string().trim().optional(),
+  login: nonEmpty,
+});
+
+// Link (or unlink) a GitHub account to a saved commit identity. `identityId` null/"" clears the
+// link; a value is validated to exist in the handler (unknown id → NOT_FOUND).
+export const AccountIdentitySchema = z.object({
+  host: z.string().trim().optional(),
+  login: nonEmpty,
+  identityId: z.string().trim().nullish(),
+});
+
 // ── repos ───────────────────────────────────────────────────────────────────────
 export const RepoPathSchema = z.object({ path: nonEmpty });
 

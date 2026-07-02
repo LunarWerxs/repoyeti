@@ -27,6 +27,7 @@ import * as roots from "./routes/roots.ts";
 import * as scan from "./routes/scan.ts";
 import * as servers from "./routes/servers.ts";
 import * as identities from "./routes/identities.ts";
+import * as accounts from "./routes/accounts.ts";
 import * as repoFlags from "./routes/repo-flags.ts";
 import * as gitOps from "./routes/git-ops.ts";
 import * as branches from "./routes/branches.ts";
@@ -80,6 +81,7 @@ export function createApp(cfg: RepoYetiConfig, hooks: AppHooks = {}): Hono {
   scan.register(app, deps);
   servers.register(app, deps);
   identities.register(app, deps);
+  accounts.register(app, deps);
   repoFlags.register(app, deps);
   gitOps.register(app, deps);
   branches.register(app, deps);

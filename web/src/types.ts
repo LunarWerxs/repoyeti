@@ -99,6 +99,29 @@ export interface DetectedIdentity {
   missing: Array<keyof DetectedIdentitySuggestion>;
 }
 
+/** One authenticated GitHub (gh) account on the machine (mirrors src/gh-cli.ts GhAccount). */
+export interface GhAccount {
+  host: string;
+  login: string;
+  active: boolean;
+  /** "https" | "ssh" | "" */
+  gitProtocol: string;
+  scopes: string[];
+  /** Saved identity linked to this account — applied as the git author on switch, or null. */
+  identityId: string | null;
+}
+
+/**
+ * The machine's gh account state + the global git author in effect (mirrors src/gh-cli.ts).
+ * `commitIdentity` is display-only — switching the active account changes authentication, not who
+ * commits are attributed to.
+ */
+export interface AccountsSnapshot {
+  ghAvailable: boolean;
+  accounts: GhAccount[];
+  commitIdentity: { name: string; email: string };
+}
+
 export interface ChangedFile {
   path: string;
   /** M · A · D · R · U · C */

@@ -1,6 +1,7 @@
 // Thin REST client — one place that talks to the daemon. Throws an Error carrying
 // the parsed `{ code, message }` on any non-2xx so callers can show a real reason.
 import type {
+  AccountsSnapshot,
   ActionResult,
   AiCatalogEntry,
   AiModel,
@@ -197,6 +198,22 @@ export const api = {
 
   createIdentity: (input: Omit<Identity, "id">) =>
     req<{ identity: Identity }>("POST", "/api/identities", input).then((r) => r.identity),
+
+  // ── GitHub (gh) accounts — read + switch the machine's active account ──────────
+  /** The machine's authenticated GitHub accounts + which is active + the global git author. */
+  accounts: () => req<AccountsSnapshot>("GET", "/api/accounts"),
+  /** Switch the active GitHub account (host defaults to github.com). Returns the fresh snapshot;
+   *  throws ApiError (NOT_CONFIGURED / NOT_FOUND / ERROR) → the caller toasts. */
+  switchAccount: (login: string, host?: string) =>
+    req<AccountsSnapshot & { ok: boolean; switched: string }>(
+      "POST",
+      "/api/accounts/switch",
+      host ? { login, host } : { login },
+    ),
+  /** Link (or unlink, with null) a GitHub account to a saved commit identity — applied on the next
+   *  switch to that account. Returns the fresh snapshot; throws ApiError (NOT_FOUND) → caller toasts. */
+  setAccountIdentity: (login: string, identityId: string | null, host?: string) =>
+    req<AccountsSnapshot>("PUT", "/api/accounts/identity", { login, identityId, ...(host ? { host } : {}) }),
   updateIdentity: (id: string, patch: Partial<Omit<Identity, "id">>) =>
     req<{ identity: Identity }>("PUT", `/api/identities/${id}`, patch).then((r) => r.identity),
   deleteIdentity: (id: string) => req<{ ok: boolean }>("DELETE", `/api/identities/${id}`),

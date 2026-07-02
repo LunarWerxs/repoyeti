@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue";
-import { RefreshCw, Plus, Settings, Cloud, CloudOff, DownloadCloud, FolderSearch, Loader2, MoreVertical, Power } from "@lucide/vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { RefreshCw, Plus, Settings, Cloud, CloudOff, CircleUser, Check, DownloadCloud, FolderSearch, Loader2, MoreVertical, Power } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,10 @@ const actionsOpen = ref(false);
 const actionsMenuRef = ref<HTMLElement | null>(null);
 const confirmShutdownOpen = ref(false);
 const shuttingDown = ref(false);
+// GitHub account quick-switcher (only shown when the gh CLI has at least one account).
+const accountsOpen = ref(false);
+const accountsMenuRef = ref<HTMLElement | null>(null);
+const showAccounts = computed(() => store.ghAvailable && store.ghAccounts.length >= 1);
 
 function firstFetchFailureDescription(failed: Array<{ name: string; code: string }>): string | undefined {
   const first = failed[0];
@@ -100,17 +104,44 @@ async function updateApp(): Promise<void> {
 
 function toggleActions(): void {
   actionsOpen.value = !actionsOpen.value;
+  if (actionsOpen.value) accountsOpen.value = false;
+}
+
+function toggleAccounts(): void {
+  accountsOpen.value = !accountsOpen.value;
+  if (accountsOpen.value) actionsOpen.value = false;
+}
+
+// Switch the machine's active GitHub account, then toast the outcome. Closes the menu first so the
+// quick-switch feels instant; the header label + settings list update from the returned snapshot.
+async function switchAccount(login: string, host: string): Promise<void> {
+  accountsOpen.value = false;
+  if (store.switchingAccount) return;
+  try {
+    await store.switchAccount(login, host);
+    toast.success(t("accounts.toast.switched", { login }));
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : t("accounts.toast.switchFailed"));
+  }
+}
+
+function manageAccounts(): void {
+  accountsOpen.value = false;
+  emit("settings");
 }
 
 function onWindowPointerDown(e: PointerEvent): void {
-  if (!actionsOpen.value) return;
   const target = e.target;
-  if (target instanceof Node && actionsMenuRef.value?.contains(target)) return;
-  actionsOpen.value = false;
+  if (!(target instanceof Node)) return;
+  if (actionsOpen.value && !actionsMenuRef.value?.contains(target)) actionsOpen.value = false;
+  if (accountsOpen.value && !accountsMenuRef.value?.contains(target)) accountsOpen.value = false;
 }
 
 function onWindowKeydown(e: KeyboardEvent): void {
-  if (e.key === "Escape") actionsOpen.value = false;
+  if (e.key === "Escape") {
+    actionsOpen.value = false;
+    accountsOpen.value = false;
+  }
 }
 
 async function shutdown(): Promise<void> {
@@ -159,8 +190,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <header class="safe-top sticky top-0 z-30">
-    <div class="mx-auto flex max-w-3xl items-center justify-between gap-2 px-3 py-2.5 sm:px-4">
+  <header class="safe-top sticky top-0 z-30 bg-background/80 backdrop-blur">
+    <div class="mx-auto flex max-w-(--container-max) items-center justify-between gap-2 px-4 py-2.5 sm:px-6">
       <div class="flex items-center gap-2.5">
         <!-- Standalone medallion, swapped by theme so the disc always contrasts with the header. -->
         <img :src="'/icon-light.svg'" alt="" width="30" height="30" class="dark:hidden" />
@@ -194,6 +225,7 @@ onBeforeUnmount(() => {
             </TooltipContent>
           </Tooltip>
           <span
+            v-if="store.mode === 'remote'"
             class="pointer-events-none absolute right-1.5 top-1.5 flex size-2"
             role="status"
             :aria-label="connected ? $t('header.connectedStatus') : $t('header.reconnecting')"
@@ -207,6 +239,64 @@ onBeforeUnmount(() => {
               :class="connected ? 'bg-emerald-500' : 'bg-red-500'"
             />
           </span>
+        </div>
+
+        <!-- GitHub account quick-switcher -->
+        <div v-if="showAccounts" ref="accountsMenuRef" class="relative">
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <Button
+                variant="ghost"
+                size="sm"
+                class="gap-1.5 px-2 text-muted-foreground"
+                :aria-label="$t('header.switchAccount')"
+                :aria-expanded="accountsOpen"
+                aria-haspopup="menu"
+                @click.stop="toggleAccounts"
+              >
+                <Loader2 v-if="store.switchingAccount" class="animate-spin" />
+                <CircleUser v-else />
+                <span class="hidden max-w-[9rem] truncate sm:inline">
+                  {{ store.activeAccount?.login ?? store.ghAccounts[0]?.login }}
+                </span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{{ $t("header.switchAccount") }}</TooltipContent>
+          </Tooltip>
+          <div
+            v-if="accountsOpen"
+            role="menu"
+            class="absolute top-[calc(100%+0.375rem)] right-0 z-50 w-56 rounded-xl border bg-popover p-1 text-popover-foreground shadow-xl shadow-black/40"
+            @click.stop
+          >
+            <div class="px-2 py-1.5 text-xs font-medium text-muted-foreground">{{ $t("header.accounts") }}</div>
+            <button
+              v-for="a in store.ghAccounts"
+              :key="`${a.host}/${a.login}`"
+              type="button"
+              role="menuitemradio"
+              :aria-checked="a.active"
+              :disabled="a.active || !!store.switchingAccount"
+              class="relative flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-hidden transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground disabled:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0"
+              @click="switchAccount(a.login, a.host)"
+            >
+              <Loader2 v-if="store.switchingAccount === a.login" class="animate-spin" />
+              <Check v-else-if="a.active" class="text-emerald-500" />
+              <CircleUser v-else class="text-muted-foreground" />
+              <span class="min-w-0 flex-1 truncate">{{ a.login }}</span>
+              <span v-if="a.active" class="shrink-0 text-[10px] text-muted-foreground">{{ $t("accounts.active") }}</span>
+            </button>
+            <div class="-mx-1 my-1 h-px bg-border" />
+            <button
+              type="button"
+              role="menuitem"
+              class="relative flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-hidden transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground [&_svg]:size-4 [&_svg]:shrink-0"
+              @click="manageAccounts"
+            >
+              <Settings />
+              <span>{{ $t("header.accountsManage") }}</span>
+            </button>
+          </div>
         </div>
 
         <div ref="actionsMenuRef" class="relative">
@@ -252,7 +342,7 @@ onBeforeUnmount(() => {
             >
               <Loader2 v-if="store.updateChecking || store.updateApplying" class="animate-spin" />
               <DownloadCloud v-else />
-              <span>{{ store.updateStatus?.updateAvailable ? $t("header.updateAvailable") : $t("header.checkUpdates") }}</span>
+              <span>{{ $t("header.checkUpdates") }}</span>
             </button>
             <button
               type="button"

@@ -41,6 +41,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import IdentityManager from "./IdentityManager.vue";
+import AccountSwitcher from "./AccountSwitcher.vue";
 import SettingsSection from "./SettingsSection.vue";
 import type { AiCatalogEntry, AiModel, AiProviderId, CommitStyle } from "../types";
 
@@ -151,6 +152,7 @@ watch(open, (isOpen) => {
     void store.loadRoots();
     void store.loadServers();
     void store.loadDetectedIdentities();
+    void store.loadAccounts();
     // Seed the stable-address field from the live config (the token stays blank — it's write-only).
     tunnelHost.value = store.tunnelConfig.hostname ?? "";
     confirmForgetTunnel.value = false;
@@ -468,6 +470,9 @@ async function remove(id: AiProviderId): Promise<void> {
 
         <!-- Identities (git author identities) ────────────────────────────── -->
         <IdentityManager />
+
+        <!-- GitHub accounts (machine-wide active account switcher via gh) ────── -->
+        <AccountSwitcher />
 
         <!-- Access (local ↔ remote) ───────────────────────────────────── -->
         <SettingsSection section-id="access" :icon="Cloud" :title="$t('settings.cardAccess')">

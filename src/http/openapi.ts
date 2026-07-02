@@ -35,6 +35,8 @@ import {
   IdentityCreateSchema,
   IdentityUpdateSchema,
   AssignIdentitySchema,
+  AccountSwitchSchema,
+  AccountIdentitySchema,
   TunnelSettingsSchema,
   ConnectSchema,
   AiSettingsSchema,
@@ -190,6 +192,11 @@ export const META: Record<string, RouteMeta> = {
   "POST /api/identities": { summary: "Create a commit identity.", body: IdentityCreateSchema, tags: ["identities"] },
   "PUT /api/identities/:id": { summary: "Update a commit identity.", body: IdentityUpdateSchema, tags: ["identities"] },
   "DELETE /api/identities/:id": { summary: "Delete a commit identity.", tags: ["identities"] },
+
+  // ── GitHub (gh) accounts — machine-wide active account switcher ─────────────────────
+  "GET /api/accounts": { summary: "List the machine's authenticated GitHub (gh) accounts + which is active.", tags: ["accounts"] },
+  "POST /api/accounts/switch": { summary: "Switch the active GitHub (gh) account (and align the credential username pin).", body: AccountSwitchSchema, tags: ["accounts"] },
+  "PUT /api/accounts/identity": { summary: "Link (or unlink) a GitHub account to a saved commit identity, applied on switch.", body: AccountIdentitySchema, tags: ["accounts"] },
 
   // ── AI (bring-your-own-key) ───────────────────────────────────────────────────────
   "GET /api/ai/catalog": { summary: "Static provider catalog (display metadata; no secrets).", tags: ["ai"] },
