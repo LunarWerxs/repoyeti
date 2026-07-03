@@ -6,6 +6,7 @@ import IdentityAccessSection from "./settings/IdentityAccessSection.vue";
 import DiscoverySection from "./settings/DiscoverySection.vue";
 import AppearanceSection from "./settings/AppearanceSection.vue";
 import SyncHotkeysSection from "./settings/SyncHotkeysSection.vue";
+import AutoCommitSection from "./settings/AutoCommitSection.vue";
 import AiProvidersSection from "./settings/AiProvidersSection.vue";
 
 const open = defineModel<boolean>("open", { required: true });
@@ -39,6 +40,9 @@ const props = withDefaults(defineProps<{ side?: PushPanelSide; rightOffsetPx?: n
 
       <!-- Background sync + keyboard shortcuts ────────────────────────────── -->
       <SyncHotkeysSection />
+
+      <!-- Auto-commit timer (opt-in per repo on each card) ────────────────── -->
+      <AutoCommitSection />
 
       <!-- AI commit-message providers, YOLO mode, and style ───────────────── -->
       <AiProvidersSection :open="open" />

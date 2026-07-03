@@ -5,7 +5,7 @@
 // and the store, and runs its own git ops (discard) keyed by repo.id.
 import { computed, ref, watch, onBeforeUnmount } from "vue";
 import { useI18n } from "vue-i18n";
-import { AlertTriangle, Check, ChevronsDownUp, ChevronsUpDown, Cloud, CloudOff, GripHorizontal, Loader2, Search, X } from "@lucide/vue";
+import { AlertTriangle, Check, ChevronsDownUp, ChevronsUpDown, Cloud, CloudOff, GripHorizontal, List, ListTree, Loader2, Search, X } from "@lucide/vue";
 import { useStore } from "../../store";
 import { api } from "../../api";
 import { buildChangeTree } from "@/lib/util";
@@ -17,6 +17,8 @@ import {
   setChangesOverride,
   clearChangesOverride,
   hasChangesOverride,
+  changesDisplayMode,
+  setChangesDisplayMode,
   MIN_CHANGES_PX,
   MAX_CHANGES_PX,
 } from "@/lib/changes-view";
@@ -67,6 +69,26 @@ const allCollapsed = computed(
 function toggleCollapseAll(): void {
   if (allCollapsed.value) treeCollapse.expandAll();
   else treeCollapse.collapseAll(dirPaths.value);
+}
+
+// ── tree ⇄ list view (per-repo, persisted; see @/lib/changes-view) ────────────
+// Some people prefer a flat list of full paths over the nested folder tree. The toggle in the
+// toolbar flips this per card; "tree" is the default so nothing changes for existing cards.
+const displayMode = computed(() => changesDisplayMode(props.repo.id));
+const isList = computed(() => displayMode.value === "list");
+function toggleDisplayMode(): void {
+  setChangesDisplayMode(props.repo.id, isList.value ? "tree" : "list");
+}
+
+// List view = every file leaf of the (already search-filtered) tree, flattened and sorted by
+// full path. Reuses ChangesTree in `flat` mode, so selection / discard / open / diff-stats /
+// keyboard nav all work identically — only folders and indentation drop away.
+function flattenLeaves(nodes: TreeNode[], acc: TreeNode[] = []): TreeNode[] {
+  for (const n of nodes) {
+    if (n.type === "file") acc.push(n);
+    else if (n.children) flattenLeaves(n.children, acc);
+  }
+  return acc;
 }
 
 // ── changed-files search ──────────────────────────────────────────────────────
@@ -159,6 +181,10 @@ const filteredTree = computed(() => {
     (n) => n.path.toLowerCase().includes(q) || (useContent && n.type === "file" && matches.has(n.path)),
   );
 });
+// The flat file list for list view — leaves of the filtered tree, sorted by full path.
+const flatFiles = computed(() =>
+  flattenLeaves(filteredTree.value).sort((a, b) => a.path.localeCompare(b.path)),
+);
 
 // ── drag-to-resize the changed-files tree ─────────────────────────────────────
 // The grip below the tree pins an explicit height (persisted per repo); double-click
@@ -330,8 +356,20 @@ async function confirmDiscard(): Promise<void> {
         </span>
         <span class="whitespace-nowrap">{{ $t("repo.changes.searchContent") }}</span>
       </button>
+      <!-- tree ⇄ list view toggle (per-repo, persisted). Shows the icon of the mode you'd switch TO. -->
       <button
-        v-if="dirPaths.length && !searching"
+        type="button"
+        role="switch"
+        :aria-checked="isList"
+        class="flex size-7 shrink-0 items-center justify-center rounded text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+        :aria-label="isList ? $t('repo.changes.viewAsTree') : $t('repo.changes.viewAsList')"
+        :title="isList ? $t('repo.changes.viewAsTree') : $t('repo.changes.viewAsList')"
+        @click="toggleDisplayMode"
+      >
+        <component :is="isList ? ListTree : List" :size="14" />
+      </button>
+      <button
+        v-if="dirPaths.length && !searching && !isList"
         type="button"
         class="flex size-7 shrink-0 items-center justify-center rounded text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
         :aria-label="allCollapsed ? $t('repo.changes.expandAll') : $t('repo.changes.collapseAll')"
@@ -356,9 +394,10 @@ async function confirmDiscard(): Promise<void> {
       </div>
       <ChangesTree
         v-else
-        :nodes="filteredTree"
+        :nodes="isList ? flatFiles : filteredTree"
         :repo-id="repo.id"
-        :force-expand="searching"
+        :flat="isList"
+        :force-expand="searching && !isList"
         @discard="askDiscard"
       />
       <!-- Server capped an oversized changed-file list (MAX_CHANGED_FILES) — say so. -->

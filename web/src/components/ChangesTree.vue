@@ -20,9 +20,19 @@ function diffTitle(s: DiffStatT): string {
   );
 }
 
-// Self-recursive component (renders <ChangesTree> for each subfolder).
+// Self-recursive component (renders <ChangesTree> for each subfolder). In `flat` (list-view)
+// mode the caller passes only file nodes — no folders — and each row shows the file's full
+// path (muted directory prefix + filename) instead of just its name; everything else (open,
+// select, discard, diff-stats, keyboard nav) is unchanged.
 defineOptions({ name: "ChangesTree" });
-const props = defineProps<{ nodes: TreeNode[]; repoId: string; depth?: number; forceExpand?: boolean }>();
+const props = defineProps<{ nodes: TreeNode[]; repoId: string; depth?: number; forceExpand?: boolean; flat?: boolean }>();
+
+// Directory prefix of a flat-list row (everything up to and including the last "/"), e.g.
+// "src/components/". Empty for a repo-root file. Only used when `flat` is on.
+function rowDir(path: string): string {
+  const i = path.lastIndexOf("/");
+  return i >= 0 ? path.slice(0, i + 1) : "";
+}
 // Bubbles a per-file "discard changes" request up to RepoCard (which confirms, then calls
 // the store). Re-emitted through each recursion level so a deep file reaches the root.
 const emit = defineEmits<{ discard: [path: string] }>();
@@ -192,7 +202,7 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
           <span class="w-3.5 shrink-0" aria-hidden="true" />
           <component :is="icon" class="shrink-0 text-[15px]" />
           <span class="truncate" :class="n.staged ? 'text-[#cfe9d9]' : 'text-[#cfcfd8]'">
-            {{ n.name }}
+            <span v-if="flat && rowDir(n.path)" class="text-muted-foreground/55">{{ rowDir(n.path) }}</span>{{ n.name }}
           </span>
           <!-- right side: per-file diff stats (when enabled) + the git-status letter -->
           <span class="mono ml-auto flex shrink-0 items-center gap-1.5">

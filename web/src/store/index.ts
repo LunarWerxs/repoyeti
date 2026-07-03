@@ -8,7 +8,13 @@ import { useAi } from "./ai";
 import { useGitOps } from "./git-ops";
 import { useSources } from "./sources";
 import { useIdentities } from "./identities";
-import { useSettings, type BehindRepo, type SyncedRepo } from "./settings";
+import {
+  useSettings,
+  type BehindRepo,
+  type SyncedRepo,
+  type AutoCommittedRepo,
+  type AutoCommitBlockedRepo,
+} from "./settings";
 
 export type { StatusKey };
 
@@ -61,6 +67,14 @@ export const useStore = defineStore("repoyeti", () => {
   // Owner setting: after the check, auto fast-forward repos that can safely take new commits.
   // From /api/status, kept live via `settings_changed`; off until status loads (opt-in).
   const keepInSync = ref(false);
+  // Owner settings: the auto-commit timer (opt-in globally here + per-repo on each card). From
+  // /api/status, kept live via `settings_changed`. Off + built-in defaults until status loads.
+  const autoCommit = ref(false);
+  const autoCommitMode = ref<"interval" | "daily">("interval");
+  const autoCommitIntervalSecs = ref(900);
+  const autoCommitAt = ref("18:00");
+  const autoCommitPull = ref(true);
+  const autoCommitPush = ref(true);
   // Owner setting: sweep the whole machine for repos on every app start. From /api/status,
   // kept live via `settings_changed`; off until status loads (opt-in) — see AppShell.vue's
   // scheduleIdle(() => autoScan && startScan()) on mount.
@@ -111,6 +125,7 @@ export const useStore = defineStore("repoyeti", () => {
     setHidden,
     setPinned,
     setStarred,
+    setAutoCommit: setRepoAutoCommit,
   } = useRepoActions(repos, busy, asResult);
 
   const {
@@ -217,6 +232,12 @@ export const useStore = defineStore("repoyeti", () => {
     setSyncCheck,
     setSyncInterval,
     setKeepInSync,
+    setAutoCommit,
+    setAutoCommitMode,
+    setAutoCommitInterval,
+    setAutoCommitAt,
+    setAutoCommitPull,
+    setAutoCommitPush,
     setAutoScan,
     desktopNotify,
     notifyPermission,
@@ -230,6 +251,8 @@ export const useStore = defineStore("repoyeti", () => {
     scanOpen,
     notifyBehind,
     notifySynced,
+    notifyAutoCommitted,
+    notifyAutoCommitBlocked,
     notifyNewProjects,
   } = useSettings({
     mode,
@@ -243,6 +266,12 @@ export const useStore = defineStore("repoyeti", () => {
     syncCheckEnabled,
     syncIntervalSecs,
     keepInSync,
+    autoCommit,
+    autoCommitMode,
+    autoCommitIntervalSecs,
+    autoCommitAt,
+    autoCommitPull,
+    autoCommitPush,
     autoScan,
   });
 
@@ -316,6 +345,12 @@ export const useStore = defineStore("repoyeti", () => {
       syncCheckEnabled.value = s.syncCheck ?? true;
       syncIntervalSecs.value = s.syncIntervalSecs ?? 120;
       keepInSync.value = s.keepInSync ?? false;
+      autoCommit.value = s.autoCommit ?? false;
+      autoCommitMode.value = s.autoCommitMode ?? "interval";
+      autoCommitIntervalSecs.value = s.autoCommitIntervalSecs ?? 900;
+      autoCommitAt.value = s.autoCommitAt ?? "18:00";
+      autoCommitPull.value = s.autoCommitPull ?? true;
+      autoCommitPush.value = s.autoCommitPush ?? true;
       autoScan.value = s.autoScan ?? false;
       contentSearchMin.value = s.minContentSearch ?? 3;
     } catch {
@@ -338,8 +373,11 @@ export const useStore = defineStore("repoyeti", () => {
         "repo_hidden_changed",
         "repo_pinned_changed",
         "repo_starred_changed",
+        "repo_auto_commit_changed",
         "repo_behind",
         "repo_synced",
+        "repo_auto_committed",
+        "repo_auto_commit_blocked",
         "daemon_status",
         "settings_changed",
         "scan_started",
@@ -379,6 +417,8 @@ export const useStore = defineStore("repoyeti", () => {
           patchRepo(payload.id, { pinned: !!payload.pinned });
         else if (event.value === "repo_starred_changed")
           patchRepo(payload.id, { starred: !!payload.starred });
+        else if (event.value === "repo_auto_commit_changed")
+          patchRepo(payload.id, { autoCommit: !!payload.autoCommit });
         else if (event.value === "repo_behind") {
           // The background sync check found repos with new remote commits → warn (toast +
           // opt-in OS notification). The amber card state arrives separately via repo_state_changed.
@@ -386,6 +426,12 @@ export const useStore = defineStore("repoyeti", () => {
         } else if (event.value === "repo_synced") {
           // "Keep in sync" auto-pulled these — quiet confirmation (the cards already updated).
           notifySynced((payload.repos as SyncedRepo[] | undefined) ?? []);
+        } else if (event.value === "repo_auto_committed") {
+          // The auto-commit timer committed (and maybe synced) these — quiet success toast.
+          notifyAutoCommitted((payload.repos as AutoCommittedRepo[] | undefined) ?? []);
+        } else if (event.value === "repo_auto_commit_blocked") {
+          // The auto-commit timer skipped these (conflict / mid-operation / failed sync) → warn.
+          notifyAutoCommitBlocked((payload.repos as AutoCommitBlockedRepo[] | undefined) ?? []);
         } else if (event.value === "daemon_status") {
           tunnelUrl.value = typeof payload.tunnelUrl === "string" ? payload.tunnelUrl : null;
           if (typeof payload.tunnelActive === "boolean") tunnelActive.value = payload.tunnelActive;
@@ -396,6 +442,15 @@ export const useStore = defineStore("repoyeti", () => {
           if (typeof payload.diffPatchEnabled === "boolean") diffPatchEnabled.value = payload.diffPatchEnabled;
           if (typeof payload.syncCheck === "boolean") syncCheckEnabled.value = payload.syncCheck;
           if (typeof payload.syncIntervalSecs === "number") syncIntervalSecs.value = payload.syncIntervalSecs;
+          if (typeof payload.keepInSync === "boolean") keepInSync.value = payload.keepInSync;
+          if (typeof payload.autoCommit === "boolean") autoCommit.value = payload.autoCommit;
+          if (payload.autoCommitMode === "interval" || payload.autoCommitMode === "daily")
+            autoCommitMode.value = payload.autoCommitMode;
+          if (typeof payload.autoCommitIntervalSecs === "number")
+            autoCommitIntervalSecs.value = payload.autoCommitIntervalSecs;
+          if (typeof payload.autoCommitAt === "string") autoCommitAt.value = payload.autoCommitAt;
+          if (typeof payload.autoCommitPull === "boolean") autoCommitPull.value = payload.autoCommitPull;
+          if (typeof payload.autoCommitPush === "boolean") autoCommitPush.value = payload.autoCommitPush;
           if (typeof payload.autoScan === "boolean") autoScan.value = payload.autoScan;
           if (payload.tunnel) tunnelConfig.value = payload.tunnel as TunnelStatus;
         } else if (event.value === "scan_started") {
@@ -528,6 +583,19 @@ export const useStore = defineStore("repoyeti", () => {
     setSyncCheck,
     setSyncInterval,
     setKeepInSync,
+    autoCommit,
+    autoCommitMode,
+    autoCommitIntervalSecs,
+    autoCommitAt,
+    autoCommitPull,
+    autoCommitPush,
+    setAutoCommit,
+    setAutoCommitMode,
+    setAutoCommitInterval,
+    setAutoCommitAt,
+    setAutoCommitPull,
+    setAutoCommitPush,
+    setRepoAutoCommit,
     autoScan,
     setAutoScan,
     notifications,

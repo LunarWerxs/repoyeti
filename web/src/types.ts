@@ -64,6 +64,8 @@ export interface Repo {
   pinned: boolean;
   /** Favorited into the "Starred" section. Independent of `pinned`. */
   starred: boolean;
+  /** Opted into the auto-commit timer (per-repo; see the daemon's src/auto-commit.ts). */
+  autoCommit: boolean;
   status: RepoStatus | null;
   updatedAt: number;
 }

@@ -113,6 +113,18 @@ export interface RuntimeStatus {
   syncIntervalSecs: number;
   /** Whether the check also auto fast-forwards safe repos ("keep in sync"; owner setting). */
   keepInSync: boolean;
+  /** Whether the auto-commit timer runs (owner setting; per-repo opt-in on each repo). */
+  autoCommit: boolean;
+  /** Auto-commit schedule: "interval" (every N seconds) or "daily" (once at a set time). */
+  autoCommitMode: "interval" | "daily";
+  /** Auto-commit cadence in seconds for "interval" mode (owner setting). */
+  autoCommitIntervalSecs: number;
+  /** Local "HH:MM" the auto-commit timer fires at in "daily" mode (owner setting). */
+  autoCommitAt: string;
+  /** Whether auto-commit pulls (--ff-only) before pushing (owner setting). */
+  autoCommitPull: boolean;
+  /** Whether auto-commit pushes after committing (owner setting; false = commit locally only). */
+  autoCommitPush: boolean;
   /** Whether the whole machine is auto-scanned for repos on every app start (owner setting). */
   autoScan: boolean;
 }
@@ -194,6 +206,24 @@ export const api = {
   /** Toggle "keep in sync" auto fast-forward (owner setting; persisted). */
   setKeepInSync: (enabled: boolean) =>
     req<{ ok: boolean; keepInSync: boolean }>("PUT", "/api/settings", { keepInSync: enabled }),
+  /** Toggle the auto-commit timer (owner setting; persisted). Per-repo opt-in still required. */
+  setAutoCommit: (enabled: boolean) =>
+    req<{ ok: boolean; autoCommit: boolean }>("PUT", "/api/settings", { autoCommit: enabled }),
+  /** Set the auto-commit schedule mode ("interval" | "daily"; persisted). */
+  setAutoCommitMode: (mode: "interval" | "daily") =>
+    req<{ ok: boolean; autoCommitMode: "interval" | "daily" }>("PUT", "/api/settings", { autoCommitMode: mode }),
+  /** Set the auto-commit interval cadence in seconds (server clamps to [60,86400] + persists). */
+  setAutoCommitInterval: (secs: number) =>
+    req<{ ok: boolean; autoCommitIntervalSecs: number }>("PUT", "/api/settings", { autoCommitIntervalSecs: secs }),
+  /** Set the auto-commit daily fire time "HH:MM" (server normalises + persists). */
+  setAutoCommitAt: (at: string) =>
+    req<{ ok: boolean; autoCommitAt: string }>("PUT", "/api/settings", { autoCommitAt: at }),
+  /** Toggle whether auto-commit pulls (--ff-only) before pushing (persisted). */
+  setAutoCommitPull: (enabled: boolean) =>
+    req<{ ok: boolean; autoCommitPull: boolean }>("PUT", "/api/settings", { autoCommitPull: enabled }),
+  /** Toggle whether auto-commit pushes after committing (persisted). */
+  setAutoCommitPush: (enabled: boolean) =>
+    req<{ ok: boolean; autoCommitPush: boolean }>("PUT", "/api/settings", { autoCommitPush: enabled }),
   /** Toggle auto-scanning the whole machine on every app start (owner setting; persisted). */
   setAutoScan: (enabled: boolean) =>
     req<{ ok: boolean; autoScan: boolean }>("PUT", "/api/settings", { autoScan: enabled }),
@@ -250,6 +280,10 @@ export const api = {
 
   setStarred: (repoId: string, starred: boolean) =>
     req<{ repo: Repo }>("POST", `/api/repos/${repoId}/starred`, { starred }).then((r) => r.repo),
+
+  /** Opt a repo in/out of the auto-commit timer (per-repo; the daemon only auto-commits opted-in repos). */
+  setRepoAutoCommit: (repoId: string, autoCommit: boolean) =>
+    req<{ repo: Repo }>("POST", `/api/repos/${repoId}/auto-commit`, { autoCommit }).then((r) => r.repo),
 
   // Actions return a structured result even on a "handled" failure (409 etc.):
   // ApiError is thrown, carrying .code/.message — callers translate to a toast.

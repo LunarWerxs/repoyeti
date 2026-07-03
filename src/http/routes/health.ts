@@ -20,6 +20,20 @@ import {
   setKeepInSync,
   setSyncIntervalSecs,
 } from "../../remote-sync.ts";
+import {
+  autoCommitEnabled,
+  getAutoCommitMode,
+  getAutoCommitIntervalSecs,
+  getAutoCommitAt,
+  autoCommitPullEnabled,
+  autoCommitPushEnabled,
+  setAutoCommitEnabled,
+  setAutoCommitMode,
+  setAutoCommitIntervalSecs,
+  setAutoCommitAt,
+  setAutoCommitPull,
+  setAutoCommitPush,
+} from "../../auto-commit.ts";
 
 export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
   // ── auth surface ───────────────────────────────────────────────────────────
@@ -53,6 +67,14 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       syncIntervalSecs: getSyncIntervalSecs(),
       // "Keep in sync": whether the check also auto fast-forwards safe repos.
       keepInSync: keepInSyncEnabled(),
+      // Auto-commit timer: whether it runs, how it's scheduled, and its pull/push behaviour, so
+      // the Settings UI reflects the live state on first load. Per-repo opt-in lives on each repo.
+      autoCommit: autoCommitEnabled(),
+      autoCommitMode: getAutoCommitMode(),
+      autoCommitIntervalSecs: getAutoCommitIntervalSecs(),
+      autoCommitAt: getAutoCommitAt(),
+      autoCommitPull: autoCommitPullEnabled(),
+      autoCommitPush: autoCommitPushEnabled(),
       // Auto-scan the whole machine on every app start (owner setting; off by default). A pure
       // stored flag — the web client acts on it at boot; the daemon has no runtime side effect.
       autoScan: cfg.autoScan === true,
@@ -111,6 +133,44 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       saveConfig(cfg);
       broadcast("settings_changed", { keepInSync: cfg.keepInSync });
     }
+    // ── auto-commit timer settings ──────────────────────────────────────────
+    if (typeof b.autoCommit === "boolean") {
+      // Toggling this starts/stops the daemon-wide auto-commit timer (see auto-commit.ts).
+      cfg.autoCommit = b.autoCommit;
+      setAutoCommitEnabled(b.autoCommit);
+      saveConfig(cfg);
+      broadcast("settings_changed", { autoCommit: cfg.autoCommit });
+    }
+    if (b.autoCommitMode === "interval" || b.autoCommitMode === "daily") {
+      cfg.autoCommitMode = b.autoCommitMode;
+      setAutoCommitMode(b.autoCommitMode);
+      saveConfig(cfg);
+      broadcast("settings_changed", { autoCommitMode: cfg.autoCommitMode });
+    }
+    if (typeof b.autoCommitIntervalSecs === "number" && Number.isFinite(b.autoCommitIntervalSecs)) {
+      // setAutoCommitIntervalSecs clamps to [60, 86400] → persist the clamped value.
+      cfg.autoCommitIntervalSecs = setAutoCommitIntervalSecs(b.autoCommitIntervalSecs);
+      saveConfig(cfg);
+      broadcast("settings_changed", { autoCommitIntervalSecs: cfg.autoCommitIntervalSecs });
+    }
+    if (typeof b.autoCommitAt === "string") {
+      // setAutoCommitAt normalises "HH:MM" → persist the normalised value.
+      cfg.autoCommitAt = setAutoCommitAt(b.autoCommitAt);
+      saveConfig(cfg);
+      broadcast("settings_changed", { autoCommitAt: cfg.autoCommitAt });
+    }
+    if (typeof b.autoCommitPull === "boolean") {
+      cfg.autoCommitPull = b.autoCommitPull;
+      setAutoCommitPull(b.autoCommitPull);
+      saveConfig(cfg);
+      broadcast("settings_changed", { autoCommitPull: cfg.autoCommitPull });
+    }
+    if (typeof b.autoCommitPush === "boolean") {
+      cfg.autoCommitPush = b.autoCommitPush;
+      setAutoCommitPush(b.autoCommitPush);
+      saveConfig(cfg);
+      broadcast("settings_changed", { autoCommitPush: cfg.autoCommitPush });
+    }
     if (typeof b.autoScan === "boolean") {
       // Pure stored flag — no runtime call (the web client is what acts on it at boot).
       cfg.autoScan = b.autoScan;
@@ -126,6 +186,12 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       syncCheck: syncCheckEnabled(),
       syncIntervalSecs: getSyncIntervalSecs(),
       keepInSync: keepInSyncEnabled(),
+      autoCommit: autoCommitEnabled(),
+      autoCommitMode: getAutoCommitMode(),
+      autoCommitIntervalSecs: getAutoCommitIntervalSecs(),
+      autoCommitAt: getAutoCommitAt(),
+      autoCommitPull: autoCommitPullEnabled(),
+      autoCommitPush: autoCommitPushEnabled(),
       autoScan: cfg.autoScan === true,
     });
   });

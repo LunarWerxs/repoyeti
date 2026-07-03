@@ -18,6 +18,8 @@ import {
   RefreshCw,
   Star,
   StarOff,
+  Timer,
+  TimerOff,
 } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { useStore } from "../../store";
@@ -107,6 +109,20 @@ async function toggleStarred(): Promise<void> {
   }
 }
 
+// ── opt this repo in/out of the auto-commit timer ─────────────────────────────
+async function toggleAutoCommit(): Promise<void> {
+  const next = !props.repo.autoCommit;
+  try {
+    await store.setRepoAutoCommit(props.repo.id, next);
+    undoableToast(
+      next ? t("repo.toastAutoCommitOn") : t("repo.toastAutoCommitOff"),
+      () => store.setRepoAutoCommit(props.repo.id, !next),
+    );
+  } catch {
+    toast.error(t("repo.toastAutoCommitFailed"));
+  }
+}
+
 // ── remote & tags management (self-contained dialog) ─────────────────────────
 const manageOpen = ref(false);
 </script>
@@ -182,6 +198,14 @@ const manageOpen = ref(false);
           <Star v-else :size="15" />
           <span>{{ repo.starred ? $t("repo.unstar") : $t("repo.star") }}</span>
         </DropdownMenuItem>
+        <template v-if="!isLore">
+          <DropdownMenuSeparator />
+          <DropdownMenuItem @select="toggleAutoCommit">
+            <TimerOff v-if="repo.autoCommit" :size="15" />
+            <Timer v-else :size="15" />
+            <span>{{ repo.autoCommit ? $t("repo.autoCommitStop") : $t("repo.autoCommitStart") }}</span>
+          </DropdownMenuItem>
+        </template>
         <DropdownMenuSeparator />
         <DropdownMenuItem @select="toggleHidden">
           <Eye v-if="repo.hidden" :size="15" />

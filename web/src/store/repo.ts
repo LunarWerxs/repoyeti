@@ -208,6 +208,17 @@ export function useRepoActions(
     }
   }
 
+  /** Opt a repo in/out of the auto-commit timer (optimistic; rolls back on failure). */
+  async function setAutoCommit(repoId: string, autoCommit: boolean): Promise<void> {
+    patchRepo(repoId, { autoCommit }); // optimistic
+    try {
+      await api.setRepoAutoCommit(repoId, autoCommit);
+    } catch (e) {
+      patchRepo(repoId, { autoCommit: !autoCommit }); // roll back
+      throw e;
+    }
+  }
+
   return {
     changesByRepo,
     changesLoading,
@@ -235,5 +246,6 @@ export function useRepoActions(
     setHidden,
     setPinned,
     setStarred,
+    setAutoCommit,
   };
 }

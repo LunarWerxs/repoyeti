@@ -18,6 +18,17 @@ import {
   setSyncIntervalSecs,
   SYNC_INTERVAL_DEFAULT_S,
 } from "../remote-sync.ts";
+import {
+  setAutoCommitConfig,
+  setAutoCommitEnabled,
+  setAutoCommitMode,
+  setAutoCommitIntervalSecs,
+  setAutoCommitAt,
+  setAutoCommitPull,
+  setAutoCommitPush,
+  AUTO_COMMIT_INTERVAL_DEFAULT_S,
+  AUTO_COMMIT_AT_DEFAULT,
+} from "../auto-commit.ts";
 import * as health from "./routes/health.ts";
 import * as auth from "./routes/auth.ts";
 import * as token from "./routes/token.ts";
@@ -61,6 +72,16 @@ export function createApp(cfg: RepoYetiConfig, hooks: AppHooks = {}): Hono {
   setSyncIntervalSecs(cfg.syncIntervalSecs ?? SYNC_INTERVAL_DEFAULT_S);
   // "Keep in sync" (auto fast-forward) is opt-in → absent/false = off.
   setKeepInSync(cfg.keepInSync === true);
+  // Auto-commit timer: hand the module the live config (for AI provider resolution) + prime its
+  // runtime flags. Like the sync check, the timer only STARTS after boot (startAutoCommit in
+  // lifecycle.ts), so this just primes flags — createApp() in tests never spins a real timer.
+  setAutoCommitConfig(cfg);
+  setAutoCommitEnabled(cfg.autoCommit === true); // opt-in (it pushes) → absent/false = off
+  setAutoCommitMode(cfg.autoCommitMode === "daily" ? "daily" : "interval");
+  setAutoCommitIntervalSecs(cfg.autoCommitIntervalSecs ?? AUTO_COMMIT_INTERVAL_DEFAULT_S);
+  setAutoCommitAt(cfg.autoCommitAt ?? AUTO_COMMIT_AT_DEFAULT);
+  setAutoCommitPull(cfg.autoCommitPull !== false); // absent = on
+  setAutoCommitPush(cfg.autoCommitPush !== false); // absent = on
 
   const app = new Hono();
 

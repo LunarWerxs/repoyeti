@@ -22,6 +22,7 @@ import { discoverStream } from "../discovery.ts";
 import { createApp } from "../http/app.ts";
 import { refreshRepo, startWatching, watchOne, stopWatching } from "../service/index.ts";
 import { startRemoteSync, stopRemoteSync } from "../remote-sync.ts";
+import { startAutoCommit, stopAutoCommit } from "../auto-commit.ts";
 import { broadcast } from "../bus.ts";
 import { setServerPort, startManagedTunnel, stopManagedTunnel } from "../runtime.ts";
 import { clearInstanceInfo, findLiveInstance, writeInstanceInfo } from "../instance.ts";
@@ -139,6 +140,7 @@ export async function start(rest: string[]): Promise<void> {
     shuttingDown = true;
     stopManagedTunnel();
     stopRemoteSync();
+    stopAutoCommit();
     stopWatching();
     clearInstanceInfo();
     server?.stop(true);
@@ -186,6 +188,12 @@ export async function start(rest: string[]): Promise<void> {
   //     `repo_behind` on a fresh fall-behind. Started here — after hydration is kicked off — so
   //     the first network fetch happens one interval later, not in the boot stampede.
   startRemoteSync();
+
+  // 6c) start the auto-commit timer (if enabled in config). For each repo the owner opted in, it
+  //     Smart-Commits uncommitted changes on a schedule and — configurably — pulls + pushes. Like
+  //     the sync check, it's armed here (after boot) so the first round is one interval out, not in
+  //     the boot stampede. Conflicted / mid-operation repos are always skipped (never committed).
+  startAutoCommit();
 
   // 7) discover the filesystem in the BACKGROUND — index/watch/refresh each repo as it's
   //    found and broadcast `repo_added` so the dashboard fills in live. A huge or slow root

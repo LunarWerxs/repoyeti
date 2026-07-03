@@ -8,6 +8,21 @@ All notable changes to RepoYeti are documented here. The format is based on
 
 ### Added
 
+- **Auto-commit timer.** An opt-in, daemon-wide scheduler that, for each repo you flag from its
+  ⋯ menu, automatically runs the AI **Smart Commit** splitter over its uncommitted changes and —
+  configurably — `pull --ff-only`s then pushes. Two schedules: **repeat on a timer** (every
+  N minutes/hours, clamped [60s, 24h]) or **once a day** at a set local time. Pull and push are
+  each independently toggleable (off = commit locally only). **Safety:** a repo with a merge
+  conflict or that is mid-merge/rebase/cherry-pick is always **skipped** (never auto-committed) and
+  surfaced via a warning toast; pull-before-push (and skipping the push if the pull fails) mirrors
+  "commit & sync" so an unattended run can't publish over a diverged remote. Uses your configured AI
+  provider to split the commits, falling back to a deterministic grouping when none is set. New
+  daemon module `src/auto-commit.ts` (self-rescheduling timer, mirrors `remote-sync.ts`), a per-repo
+  `auto_commit` column, `POST /api/repos/:id/auto-commit`, and the `autoCommit*` owner settings.
+- **Tree ⇄ list view for a repo's changes.** A per-repo toggle in the changed-files toolbar (between
+  "Search content" and Collapse All) flips the file view between the nested folder **tree** (default)
+  and a flat **list** of full paths. Persisted per repo in `localStorage`, like the tree height and
+  fold state; reuses the same rows so selection, discard, diff-stats, and keyboard nav are identical.
 - **MCP server for AI agents.** A hand-rolled Model Context Protocol server (zero new deps —
   JSON-RPC 2.0 + MCP implemented directly) exposes RepoYeti's git operations to AI agents over
   two transports: **`repoyeti mcp`** (stdio — what an MCP client like Claude Desktop/Code or

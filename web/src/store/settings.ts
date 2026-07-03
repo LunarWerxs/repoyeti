@@ -18,6 +18,23 @@ export interface SyncedRepo {
   pulled: number;
 }
 
+/** One repo the auto-commit timer just committed (the `repo_auto_committed` SSE payload). */
+export interface AutoCommittedRepo {
+  id: string;
+  name: string;
+  commits: number;
+  pulled: boolean;
+  pushed: boolean;
+  note?: string;
+}
+
+/** One repo the auto-commit timer refused to touch (the `repo_auto_commit_blocked` SSE payload). */
+export interface AutoCommitBlockedRepo {
+  id: string;
+  name: string;
+  reason: string;
+}
+
 // Desktop-notification opt-in is per-browser (it rides the browser's Notification permission),
 // so it lives in localStorage, not the daemon config.
 const DESKTOP_NOTIFY_KEY = "repoyeti.desktopNotify";
@@ -54,6 +71,12 @@ export function useSettings(deps: {
   syncCheckEnabled: Ref<boolean>;
   syncIntervalSecs: Ref<number>;
   keepInSync: Ref<boolean>;
+  autoCommit: Ref<boolean>;
+  autoCommitMode: Ref<"interval" | "daily">;
+  autoCommitIntervalSecs: Ref<number>;
+  autoCommitAt: Ref<string>;
+  autoCommitPull: Ref<boolean>;
+  autoCommitPush: Ref<boolean>;
   autoScan: Ref<boolean>;
 }) {
   const {
@@ -68,6 +91,12 @@ export function useSettings(deps: {
     syncCheckEnabled,
     syncIntervalSecs,
     keepInSync,
+    autoCommit,
+    autoCommitMode,
+    autoCommitIntervalSecs,
+    autoCommitAt,
+    autoCommitPull,
+    autoCommitPush,
     autoScan,
   } = deps;
 
@@ -212,6 +241,67 @@ export function useSettings(deps: {
     }
   }
 
+  // ── auto-commit timer settings (all optimistic; roll back on failure) ─────────
+  async function setAutoCommit(enabled: boolean): Promise<void> {
+    autoCommit.value = enabled;
+    try {
+      await api.setAutoCommit(enabled);
+    } catch (e) {
+      autoCommit.value = !enabled; // roll back
+      throw e;
+    }
+  }
+  async function setAutoCommitMode(next: "interval" | "daily"): Promise<void> {
+    const prev = autoCommitMode.value;
+    autoCommitMode.value = next;
+    try {
+      await api.setAutoCommitMode(next);
+    } catch (e) {
+      autoCommitMode.value = prev; // roll back
+      throw e;
+    }
+  }
+  async function setAutoCommitInterval(secs: number): Promise<void> {
+    const prev = autoCommitIntervalSecs.value;
+    autoCommitIntervalSecs.value = secs;
+    try {
+      const r = await api.setAutoCommitInterval(secs);
+      autoCommitIntervalSecs.value = r.autoCommitIntervalSecs; // adopt the server's clamped value
+    } catch (e) {
+      autoCommitIntervalSecs.value = prev; // roll back
+      throw e;
+    }
+  }
+  async function setAutoCommitAt(at: string): Promise<void> {
+    const prev = autoCommitAt.value;
+    autoCommitAt.value = at;
+    try {
+      const r = await api.setAutoCommitAt(at);
+      autoCommitAt.value = r.autoCommitAt; // adopt the server's normalised value
+    } catch (e) {
+      autoCommitAt.value = prev; // roll back
+      throw e;
+    }
+  }
+  async function setAutoCommitPull(enabled: boolean): Promise<void> {
+    autoCommitPull.value = enabled;
+    try {
+      await api.setAutoCommitPull(enabled);
+    } catch (e) {
+      autoCommitPull.value = !enabled; // roll back
+      throw e;
+    }
+  }
+  async function setAutoCommitPush(enabled: boolean): Promise<void> {
+    autoCommitPush.value = enabled;
+    try {
+      await api.setAutoCommitPush(enabled);
+    } catch (e) {
+      autoCommitPush.value = !enabled; // roll back
+      throw e;
+    }
+  }
+
   /** Toggle auto-scanning the whole machine on every app start (optimistic; rolls back). */
   async function setAutoScan(enabled: boolean): Promise<void> {
     autoScan.value = enabled;
@@ -318,6 +408,39 @@ export function useSettings(deps: {
     toast.success(t("notify.syncedTitle"), { description: body });
   }
 
+  /** Quiet success toast when the auto-commit timer committed (and maybe pushed) repos. */
+  function notifyAutoCommitted(repos: AutoCommittedRepo[]): void {
+    if (!repos?.length) return;
+    const one = repos.length === 1 ? repos[0]! : null;
+    const body = one
+      ? t("notify.autoCommitBody", { name: one.name, count: one.commits }, one.commits)
+      : t("notify.autoCommitManyBody", { count: repos.length }, repos.length);
+    toast.success(t("notify.autoCommitTitle"), { description: body });
+  }
+
+  /** Warn about repos the auto-commit timer SKIPPED (merge conflict / mid-operation / a failed
+   *  sync) — these need the owner's attention, so it's a warning toast (+ opt-in OS notification). */
+  function notifyAutoCommitBlocked(repos: AutoCommitBlockedRepo[]): void {
+    if (!repos?.length) return;
+    const one = repos.length === 1 ? repos[0]! : null;
+    const title = t("notify.autoCommitBlockedTitle");
+    const body = one
+      ? t("notify.autoCommitBlockedBody", { name: one.name })
+      : t("notify.autoCommitBlockedManyBody", { count: repos.length }, repos.length);
+    toast.warning(title, { description: body });
+    if (
+      desktopNotify.value &&
+      typeof Notification !== "undefined" &&
+      Notification.permission === "granted"
+    ) {
+      try {
+        new Notification(title, { body, tag: "repoyeti-auto-commit-blocked" });
+      } catch {
+        /* notification construction can throw on some platforms — never break the SSE loop */
+      }
+    }
+  }
+
   /** A finished scan found repos we didn't know about. Upserts the one rolling "new projects"
    *  notification (a re-scan refreshes it rather than stacking), plus the existing toast (with a
    *  "View" action that opens the scan modal) and an opt-in OS notification. */
@@ -371,6 +494,12 @@ export function useSettings(deps: {
     setSyncCheck,
     setSyncInterval,
     setKeepInSync,
+    setAutoCommit,
+    setAutoCommitMode,
+    setAutoCommitInterval,
+    setAutoCommitAt,
+    setAutoCommitPull,
+    setAutoCommitPush,
     setAutoScan,
     desktopNotify,
     notifyPermission,
@@ -384,6 +513,8 @@ export function useSettings(deps: {
     scanOpen,
     notifyBehind,
     notifySynced,
+    notifyAutoCommitted,
+    notifyAutoCommitBlocked,
     notifyNewProjects,
   };
 }

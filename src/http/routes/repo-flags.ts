@@ -10,6 +10,7 @@ import {
   setRepoHidden,
   setRepoPinned,
   setRepoStarred,
+  setRepoAutoCommit,
 } from "../../db.ts";
 import { broadcast } from "../../bus.ts";
 import { withRepo } from "../respond.ts";
@@ -73,6 +74,17 @@ export function register(app: Hono, _deps: Deps): void {
       const starred = b.starred === true;
       setRepoStarred(repoId, starred);
       broadcast("repo_starred_changed", { id: repoId, starred });
+      return c.json({ ok: true, repo: getRepo(repoId) });
+    }),
+  );
+
+  // ── opt a repo in/out of the auto-commit timer (see src/auto-commit.ts) ──────
+  app.post("/api/repos/:id/auto-commit", (c) =>
+    withRepo(c, async (repoId) => {
+      const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+      const autoCommit = b.autoCommit === true;
+      setRepoAutoCommit(repoId, autoCommit);
+      broadcast("repo_auto_commit_changed", { id: repoId, autoCommit });
       return c.json({ ok: true, repo: getRepo(repoId) });
     }),
   );

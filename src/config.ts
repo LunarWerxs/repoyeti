@@ -232,6 +232,30 @@ export interface RepoYetiConfig {
    */
   keepInSync?: boolean;
   /**
+   * Auto-commit: a daemon-wide timer that, for each repo the owner OPTED IN per-repo (the repos
+   * table's `auto_commit` flag), automatically Smart-Commits its uncommitted changes and (by
+   * default) pulls + pushes — see src/auto-commit.ts. Absent/false = OFF: it commits AND pushes
+   * unattended, so it is strictly opt-in both globally (here) and per repo. A repo with a merge
+   * conflict or mid-merge/rebase state is always skipped (never auto-committed).
+   */
+  autoCommit?: boolean;
+  /**
+   * How the auto-commit timer fires: "interval" = every `autoCommitIntervalSecs`; "daily" = once
+   * per day at `autoCommitAt` (local time). Absent = "interval".
+   */
+  autoCommitMode?: "interval" | "daily";
+  /**
+   * Auto-commit cadence in seconds for "interval" mode. Clamped to [60, 86400] on read; absent =
+   * the built-in default (900s / 15 min). Owner setting (the Settings UI writes it).
+   */
+  autoCommitIntervalSecs?: number;
+  /** Local wall-clock time "HH:MM" the "daily" mode fires at. Absent = "18:00". */
+  autoCommitAt?: string;
+  /** Whether auto-commit also `pull --ff-only`s before pushing (absent = true). */
+  autoCommitPull?: boolean;
+  /** Whether auto-commit pushes after committing (absent = true). false = commit locally only. */
+  autoCommitPush?: boolean;
+  /**
    * Auto-scan the whole machine on every app start. Absent/false = OFF (opt-in) — a fresh
    * install never sweeps the filesystem unasked. Purely a stored flag: the WEB client reads
    * it at boot and decides whether to fire `POST /api/scan`; the daemon itself takes no
@@ -277,12 +301,13 @@ export interface RedactedAiConfig {
  * Abuse only burns this key's rate limit — rotate by swapping the constant below.
  *
  * The key is read at call time from REPOYETI_BUILTIN_GROQ_KEY (handy for dev / tests /
- * rotation) and otherwise falls back to the hardcoded constant. It counts as ACTIVE
- * only when it looks like a real Groq key (`gsk_…`), so the placeholder leaves the
- * feature DORMANT until a real key is dropped in, and `REPOYETI_BUILTIN_GROQ_KEY=""`
- * force-disables it (used by the tests to assert the unconfigured baseline).
+ * rotation) and otherwise falls back to the baked-in constant below (the shipped default —
+ * do NOT scrub it back to a placeholder; it's a deliberately-public throwaway, not a leaked
+ * secret). It counts as ACTIVE only when it looks like a real Groq key (`gsk_…`) and isn't the
+ * `…REPLACE…` placeholder, so a fork with the placeholder stays DORMANT until a key is dropped
+ * in, and `REPOYETI_BUILTIN_GROQ_KEY=""` force-disables it (the tests assert the unconfigured baseline).
  */
-const BUILTIN_GROQ_KEY = "gsk_REPLACE_WITH_YOUR_THROWAWAY_GROQ_KEY";
+const BUILTIN_GROQ_KEY = "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";
 export const BUILTIN_AI = {
   provider: "groq" as AiProviderId,
   model: process.env.REPOYETI_BUILTIN_GROQ_MODEL ?? "llama-3.1-8b-instant",

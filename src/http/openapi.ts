@@ -172,6 +172,7 @@ export const META: Record<string, RouteMeta> = {
   "POST /api/repos/:id/hidden": { summary: "Hide/unhide a repo from the dashboard.", tags: ["repos"] },
   "POST /api/repos/:id/pinned": { summary: "Pin/unpin a repo.", tags: ["repos"] },
   "POST /api/repos/:id/starred": { summary: "Star/unstar a repo.", tags: ["repos"] },
+  "POST /api/repos/:id/auto-commit": { summary: "Opt a repo in/out of the auto-commit timer.", tags: ["repos"] },
 
   // ── scan roots ──────────────────────────────────────────────────────────────────
   "GET /api/roots": { summary: "List the discovery scan roots.", tags: ["roots"] },

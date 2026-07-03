@@ -48,6 +48,8 @@ interface RepoRow {
   /** User "favorite" flags — organisation only. Distinct from source='pinned'. */
   pinned: number;
   starred: number;
+  /** Owner opted this repo into the auto-commit timer (see src/auto-commit.ts). */
+  auto_commit: number;
   last_status: string | null;
   updated_at: number;
 }
@@ -73,6 +75,8 @@ export interface RepoView {
   pinned: boolean;
   /** Favorited into the "Starred" section. Organisation flag, independent of pinned. */
   starred: boolean;
+  /** Opted into the auto-commit timer (per-repo; the timer only touches repos with this on). */
+  autoCommit: boolean;
   status: RepoStatus | null;
   updatedAt: number;
 }
@@ -120,6 +124,7 @@ export function initDb(): Database {
       hidden        INTEGER NOT NULL DEFAULT 0,
       pinned        INTEGER NOT NULL DEFAULT 0,
       starred       INTEGER NOT NULL DEFAULT 0,
+      auto_commit   INTEGER NOT NULL DEFAULT 0,
       last_status   TEXT,
       sort_order    INTEGER,
       updated_at    INTEGER NOT NULL
@@ -183,6 +188,12 @@ export function initDb(): Database {
   } catch {
     /* column already present */
   }
+  // Per-repo opt-in for the auto-commit timer (src/auto-commit.ts).
+  try {
+    handle.exec("ALTER TABLE repos ADD COLUMN auto_commit INTEGER NOT NULL DEFAULT 0;");
+  } catch {
+    /* column already present */
+  }
   db = handle;
   return db;
 }
@@ -241,6 +252,7 @@ function toView(r: RepoRow): RepoView {
     hidden: r.hidden === 1,
     pinned: r.pinned === 1,
     starred: r.starred === 1,
+    autoCommit: r.auto_commit === 1,
     status: r.last_status ? (JSON.parse(r.last_status) as RepoStatus) : null,
     updatedAt: r.updated_at,
   };
@@ -452,4 +464,11 @@ export function setRepoStarred(repoId: string, starred: boolean): void {
   getDb()
     .query(`UPDATE repos SET starred = ?, updated_at = ? WHERE id = ?`)
     .run(starred ? 1 : 0, Date.now(), repoId);
+}
+
+/** Opt a repo into (or out of) the auto-commit timer — see src/auto-commit.ts. */
+export function setRepoAutoCommit(repoId: string, autoCommit: boolean): void {
+  getDb()
+    .query(`UPDATE repos SET auto_commit = ?, updated_at = ? WHERE id = ?`)
+    .run(autoCommit ? 1 : 0, Date.now(), repoId);
 }

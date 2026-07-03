@@ -48,3 +48,27 @@ export function setChangesOverride(repoId: string, px: number): void {
 export function clearChangesOverride(repoId: string): void {
   delete overrides.value[repoId];
 }
+
+// ── tree ⇄ list view mode ─────────────────────────────────────────────────────
+// The changed files render as a VS Code-style nested folder tree by default; some people
+// prefer a flat list of full paths. This is a per-repo client preference (same localStorage
+// pattern as the height override above): absent = "tree", so existing cards are unchanged.
+export type ChangesDisplayMode = "tree" | "list";
+
+/** repoId → chosen display mode. Absent = "tree" (the default). */
+const displayModes = useLocalStorage<Record<string, ChangesDisplayMode>>(
+  "repoyeti:changesDisplayMode",
+  {},
+);
+
+/** The card's current display mode ("tree" unless the owner switched it to "list"). */
+export function changesDisplayMode(repoId: string): ChangesDisplayMode {
+  return displayModes.value[repoId] === "list" ? "list" : "tree";
+}
+
+/** Set (or reset to the default) a card's display mode. Storing "tree" drops the key so the
+ *  record only ever holds the non-default choices — matches clearChangesOverride's tidiness. */
+export function setChangesDisplayMode(repoId: string, mode: ChangesDisplayMode): void {
+  if (mode === "list") displayModes.value[repoId] = "list";
+  else delete displayModes.value[repoId];
+}

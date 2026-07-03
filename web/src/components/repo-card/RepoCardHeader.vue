@@ -18,6 +18,7 @@ import {
   AtSign,
   Pin,
   Star,
+  Timer,
   EyeOff,
 } from "@lucide/vue";
 import { useStore } from "../../store";
@@ -161,6 +162,14 @@ function onAccount(a: { host: string; login: string } | null): void {
         :aria-label="$t('repo.badge.starred')"
       >
         <Star :size="11" class="fill-current" />
+      </span>
+      <span
+        v-if="repo.autoCommit"
+        class="flex shrink-0 items-center rounded-md bg-emerald-400/15 px-1.5 py-0.5 text-emerald-400"
+        :title="$t('repo.badge.autoCommit')"
+        :aria-label="$t('repo.badge.autoCommit')"
+      >
+        <Timer :size="11" />
       </span>
       <span
         v-if="repo.hidden"
