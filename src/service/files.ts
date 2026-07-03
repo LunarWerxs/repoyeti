@@ -41,11 +41,12 @@ function looksBinary(bytes: Uint8Array): boolean {
   return false;
 }
 
-/** Last-committed contents of a path (used for files deleted from the working tree). */
-async function readFromHead(absPath: string, clean: string): Promise<FileContentResult> {
+/** Contents of a path at an arbitrary git rev (`git show <rev>:<path>`). A missing blob — the
+ *  path doesn't exist at that rev (a deletion, an add-from-nothing, or a root commit's parent) —
+ *  comes back NOT_FOUND. Binary/oversized blobs are flagged + capped, like the working-tree reader. */
+async function readBlobAtRev(absPath: string, rev: string, clean: string): Promise<FileContentResult> {
   try {
-    // `git show HEAD:<path>` decodes to a string; good enough for the deleted-file case.
-    const content = await gitFor(absPath).raw(["show", `HEAD:${clean}`]);
+    const content = await gitFor(absPath).raw(["show", `${rev}:${clean}`]);
     const binary = content.includes("\u0000");
     const size = Buffer.byteLength(content, "utf8");
     const truncated = size > MAX_FILE_BYTES;
@@ -62,6 +63,11 @@ async function readFromHead(absPath: string, clean: string): Promise<FileContent
   } catch {
     return { ok: false, code: "NOT_FOUND", message: "file not found" };
   }
+}
+
+/** Last-committed (HEAD) contents of a path — the deleted-file fallback for the working-tree viewer. */
+async function readFromHead(absPath: string, clean: string): Promise<FileContentResult> {
+  return readBlobAtRev(absPath, "HEAD", clean);
 }
 
 interface TextRead {
@@ -351,6 +357,46 @@ export async function readFileDiff(repoId: string, relPath: string): Promise<Fil
       modified: work?.content ?? "",
       binary: (head.binary ?? false) || (work?.binary ?? false),
       truncated: (head.truncated ?? false) || (work?.truncated ?? false),
+    };
+  } catch (e) {
+    return { ok: false, code: "ERROR", message: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * Both sides of a file's change AT ONE COMMIT — for the history viewer's "click a changed file →
+ * open it in the Monaco diff". Same models shape as readFileDiff, but the two sides come from git
+ * revs instead of HEAD↔working-tree: `original` = the file at the commit's FIRST PARENT (`<hash>^`),
+ * `modified` = the file AT the commit (`<hash>`). A file added in the commit has no parent blob →
+ * original ""; a deletion has no commit blob → modified ""; a root commit has no parent → original
+ * "". Read-only + untrusted-path safe (path confined to the repo; hash shape-guarded before use).
+ */
+export async function readCommitFile(repoId: string, hash: string, relPath: string): Promise<FileDiffResult> {
+  const repo = getRepo(repoId);
+  if (!repo) return { ok: false, code: "NOT_FOUND", message: "repo not found" };
+  // The hash is interpolated into a git rev — shape-guard it exactly like readCommit does.
+  if (!/^[0-9a-fA-F]{4,64}$/.test(hash)) return { ok: false, code: "ERROR", message: "invalid commit hash" };
+  const r = resolveRepoPath(repo.absPath, relPath);
+  if ("error" in r) return { ok: false, code: "ERROR", message: r.error };
+  // Per-rev blob reconstruction is a git concept; Lore has no arbitrary-rev blob view.
+  if (!backendFor(repo.vcs).capabilities.fileModels) {
+    return { ok: false, code: "ERROR", message: "commit file view isn't available for this repository" };
+  }
+  try {
+    const [parent, atCommit] = await Promise.all([
+      readBlobAtRev(repo.absPath, `${hash}^`, r.clean),
+      readBlobAtRev(repo.absPath, hash, r.clean),
+    ]);
+    if (!parent.ok && !atCommit.ok) return { ok: false, code: "NOT_FOUND", message: "file not found in this commit" };
+    return {
+      ok: true,
+      code: "OK",
+      path: r.clean,
+      mode: "models",
+      original: parent.ok ? (parent.content ?? "") : "",
+      modified: atCommit.ok ? (atCommit.content ?? "") : "",
+      binary: (parent.binary ?? false) || (atCommit.binary ?? false),
+      truncated: (parent.truncated ?? false) || (atCommit.truncated ?? false),
     };
   } catch (e) {
     return { ok: false, code: "ERROR", message: e instanceof Error ? e.message : String(e) };

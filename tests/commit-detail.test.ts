@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
-import { registerRepo, getLog, getCommit, stopWatching } from "../src/service/index.ts";
+import { registerRepo, getLog, getCommit, readCommitFile, stopWatching } from "../src/service/index.ts";
 
 // Covers the commit-detail read path (the History "tap a commit → see its changed files + diff"
 // feature): readCommit → VcsBackend → service.getCommit → GET /api/repos/:id/commit/:hash.
@@ -39,6 +39,21 @@ test("getCommit returns a commit's changed files + bounded diff", async () => {
     expect(detail.diff).toContain("b.txt");
     expect(detail.diff).toContain("+second");
     expect(detail.truncated).toBe(false);
+
+    // readCommitFile: the file's two sides AT the commit (first-parent ↔ commit) for the Monaco
+    // viewer opened from the history graph.
+    const aDiff = await readCommitFile(id, head.hash, "a.txt");
+    expect(aDiff.ok).toBe(true);
+    expect(aDiff.mode).toBe("models");
+    expect(aDiff.original).toBe("first\n"); // the parent's version
+    expect(aDiff.modified).toBe("first\nsecond\n"); // this commit's version
+    const bDiff = await readCommitFile(id, head.hash, "b.txt");
+    expect(bDiff.ok).toBe(true);
+    expect(bDiff.original).toBe(""); // added in this commit — no parent blob
+    expect(bDiff.modified).toBe("new file\n");
+    // Path confinement still applies on the commit-file route.
+    const escaped = await readCommitFile(id, head.hash, "../etc/passwd");
+    expect(escaped.ok).toBe(false);
 
     // A well-formed but nonexistent hash → graceful error, not a throw.
     const bad = await getCommit(id, "deadbeef");

@@ -129,9 +129,10 @@ const remoteEditBlocked = computed(() => !store.canContinueLocal && !store.remot
 // working-tree string in hand) rather than a compact unified patch — patch mode ships only
 // the hunks, so there's no whole-file text here to seed an editor with.
 const diffEditable = computed(() => viewerMode.value === "diff" && !patchMode.value);
-const showEditControls = computed(() => viewerMode.value === "content" || diffEditable.value);
+const showEditControls = computed(() => !props.target?.commit && (viewerMode.value === "content" || diffEditable.value));
 
 const canEdit = computed(() => {
+  if (props.target?.commit) return false; // a historical commit view is read-only
   if (loading.value || !!errorMsg.value || binary.value || truncated.value || remoteEditBlocked.value) return false;
   if (viewerMode.value === "content") return !fromHead.value;
   // Diff tab: patch mode has no whole-file text (see diffEditable); a Deleted file has
@@ -145,13 +146,15 @@ const editableSource = computed(() => (viewerMode.value === "content" ? content.
 // Identity of the request in flight — repo + path + mode. Re-fetches when any changes,
 // and lets a returning request bail if a newer open/toggle has superseded it.
 const fetchKey = (): string | null =>
-  props.target ? `${props.target.repoId}::${props.target.path}::${viewerMode.value}` : null;
+  props.target
+    ? `${props.target.repoId}::${props.target.path}::${props.target.commit ?? ""}::${viewerMode.value}`
+    : null;
 
 watch(
   fetchKey,
   async (key) => {
     if (!key || !props.target) return;
-    const { repoId, path } = props.target;
+    const { repoId, path, commit } = props.target;
     loading.value = true;
     errorMsg.value = null;
     binary.value = false;
@@ -161,7 +164,19 @@ watch(
     editing.value = false; // a new file/mode drops any in-progress edit
     dirty.value = false;
     try {
-      if (viewerMode.value === "diff") {
+      if (commit) {
+        // History file: the first-parent↔commit models diff (read-only). Both tabs come from one
+        // fetch — the Content tab shows the file as it was AT the commit (its `modified` side).
+        const res = await api.commitFile(repoId, commit, path);
+        if (fetchKey() !== key) return; // superseded mid-flight
+        original.value = res.original ?? "";
+        modified.value = res.modified ?? "";
+        content.value = res.modified ?? "";
+        patch.value = res.patch ?? "";
+        patchMode.value = res.mode === "patch";
+        binary.value = !!res.binary;
+        truncated.value = !!res.truncated;
+      } else if (viewerMode.value === "diff") {
         const res = await api.fileDiff(repoId, path);
         if (fetchKey() !== key) return; // superseded mid-flight
         original.value = res.original ?? "";
@@ -275,7 +290,8 @@ onBeforeUnmount(() => {
           />
         </div>
         <div class="mono truncate text-[11px] text-muted-foreground" :title="target?.path">
-          {{ dirName ? `${repoName} · ${dirName}` : repoName }}
+          {{ dirName ? `${repoName} · ${dirName}` : repoName
+          }}<span v-if="target?.commit" class="text-primary"> · @{{ target.commit.slice(0, 7) }}</span>
         </div>
       </div>
       <!-- Content ↔ Diff toggle -->

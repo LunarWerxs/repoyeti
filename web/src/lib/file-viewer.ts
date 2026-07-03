@@ -14,6 +14,9 @@ export interface ViewerTarget {
   path: string;
   status?: string;
   staged?: boolean;
+  /** When set, view the file's change AT this commit (first-parent ↔ commit), read-only,
+   *  instead of the working-tree diff. Drives the history graph's "open a changed file". */
+  commit?: string;
 }
 
 interface ViewerState {
@@ -60,7 +63,10 @@ export function confirmDiscardEdits(): Promise<boolean> {
 
 export async function openFile(target: ViewerTarget): Promise<void> {
   const same =
-    state.open && state.target?.repoId === target.repoId && state.target?.path === target.path;
+    state.open &&
+    state.target?.repoId === target.repoId &&
+    state.target?.path === target.path &&
+    state.target?.commit === target.commit;
   if (!same && !(await confirmDiscardEdits())) return; // unsaved edits — user kept them
   if (!same) editorDirty.value = false;
   state.target = target;
@@ -74,8 +80,13 @@ export async function closeFile(): Promise<void> {
 }
 
 /** True when this exact file is the one currently shown (drives the row's active tint). */
-export function isViewing(repoId: string, path: string): boolean {
-  return state.open && state.target?.repoId === repoId && state.target?.path === path;
+export function isViewing(repoId: string, path: string, commit?: string): boolean {
+  return (
+    state.open &&
+    state.target?.repoId === repoId &&
+    state.target?.path === path &&
+    state.target?.commit === commit
+  );
 }
 
 /** Content (whole file) vs Diff (HEAD ↔ working tree). Persisted, so the tab sticks.

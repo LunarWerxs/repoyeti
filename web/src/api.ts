@@ -287,6 +287,13 @@ export const api = {
     ),
   commitDetail: (id: string, hash: string) =>
     req<CommitDetail>("GET", `/api/repos/${id}/commit/${encodeURIComponent(hash)}`),
+  /** Both sides of a file's change AT a commit (first-parent ↔ commit) — powers opening a
+   *  history file in the Monaco diff viewer. Same FileDiff shape as `fileDiff`. */
+  commitFile: (id: string, hash: string, path: string) =>
+    req<FileDiff>(
+      "GET",
+      `/api/repos/${id}/commit/${encodeURIComponent(hash)}/file?path=${encodeURIComponent(path)}`,
+    ),
   stashes: (id: string) => req<StashList>("GET", `/api/repos/${id}/stashes`),
   stashSave: (id: string, message?: string) =>
     req<ActionResult>("POST", `/api/repos/${id}/stash`, message ? { message } : {}),

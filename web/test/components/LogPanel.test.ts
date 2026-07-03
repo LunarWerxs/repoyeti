@@ -8,6 +8,7 @@ import { i18n } from "@/i18n";
 import { useStore } from "@/store";
 import { api } from "@/api";
 import LogPanel from "@/components/LogPanel.vue";
+import { fileViewer } from "@/lib/file-viewer";
 import type { CommitDetail } from "@/types";
 
 const repoId = "repo-1";
@@ -117,7 +118,7 @@ describe("LogPanel.vue", () => {
     expect(detailSpy).toHaveBeenLastCalledWith(repoId, "bbb222");
   });
 
-  it("renders the expanded detail as a file list + colored diff + message (no raw blob)", async () => {
+  it("expanded detail shows the message + a file list that opens the Monaco viewer at this commit", async () => {
     const store = useStore();
     store.logByRepo[repoId] = {
       ok: true,
@@ -142,13 +143,19 @@ describe("LogPanel.vue", () => {
     await flush();
 
     const text = wrapper.text();
-    expect(text).toContain("Extended body line."); // message body rendered
+    expect(text).toContain("Extended body line."); // commit message body rendered
     expect(text).toContain("src/foo.ts"); // file listed
-    expect(text).toContain("+1"); // additions stat
-    expect(text).toContain("old line"); // deletion diff row
-    expect(text).toContain("new line"); // addition diff row
-    // The old raw <pre> diff blob must be gone.
+    expect(text).toContain("+1"); // additions stat (from splitUnifiedDiff)
+    // No raw diff blob inline anymore — the diff lives in the Monaco viewer on click.
     expect(wrapper.find("pre").exists()).toBe(false);
+    expect(text).not.toContain("old line");
+
+    // Clicking the file opens the shared viewer scoped to THIS commit.
+    const fileBtn = wrapper.findAll("button").find((b) => b.text().includes("src/foo.ts"))!;
+    await fileBtn.trigger("click");
+    await flush();
+    expect(fileViewer.open).toBe(true);
+    expect(fileViewer.target).toMatchObject({ repoId, path: "src/foo.ts", commit: "c1" });
   });
 });
 

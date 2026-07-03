@@ -369,7 +369,6 @@
       "loadMore": "Load more",
       "copyHash": "Copy commit hash",
       "copied": "Commit hash copied",
-      "noDiff": "(no textual diff)",
       "diffTruncated": "Diff truncated — open the repo to see the rest.",
       "detailUnavailable": "Commit detail isn't available for this repository.",
       "colDescription": "Description",
@@ -392,7 +391,6 @@
       "scopeLocalShort": "Local",
       "scopeHeadShort": "Current",
       "root": "Root commit",
-      "binaryFile": "Binary file — no textual diff",
       "noChanges": "No file changes"
     },
     "stash": {

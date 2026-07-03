@@ -9,6 +9,7 @@ import {
   searchChangedContent,
   readFileContent,
   readFileDiff,
+  readCommitFile,
   writeFileContent,
   forceRefresh,
 } from "../../service/index.ts";
@@ -53,6 +54,16 @@ export function register(app: Hono, { cfg }: Deps): void {
     if (id instanceof Response) return id;
     const path = c.req.query("path") ?? "";
     const result = await readFileDiff(id, path);
+    if (result.ok) return c.json(result);
+    return c.json(result, result.code === "NOT_FOUND" ? 404 : 400);
+  });
+
+  // A file's two sides AT ONE COMMIT (first-parent ↔ commit), for opening a history file in the
+  // Monaco viewer. `:hash` is a path param, the file path is ?path=… (confined in readCommitFile).
+  app.get("/api/repos/:id/commit/:hash/file", async (c) => {
+    const id = requireId(c);
+    if (id instanceof Response) return id;
+    const result = await readCommitFile(id, c.req.param("hash"), c.req.query("path") ?? "");
     if (result.ok) return c.json(result);
     return c.json(result, result.code === "NOT_FOUND" ? 404 : 400);
   });
