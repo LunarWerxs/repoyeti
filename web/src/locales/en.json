@@ -9,12 +9,9 @@
     "tabContent": "Content",
     "tabDiff": "Diff",
     "wordDiff": "Word diff",
-    "wordDiffTooltip": "Highlight changed words within lines",
-    "viewModeTooltip": "Toggle split / unified view",
     "truncated": "Large file — showing a truncated preview",
     "compactDiff": "Large file — showing a compact diff",
     "edit": "Edit",
-    "editTooltip": "Edit this file",
     "cancel": "Cancel",
     "save": "Save",
     "saving": "Saving…",
@@ -24,8 +21,7 @@
     "discardTitle": "Discard changes?",
     "discardBody": "You have unsaved changes. They'll be lost if you continue.",
     "keepEditing": "Keep editing",
-    "discard": "Discard",
-    "editRemoteOff": "Editing is turned off for remote access"
+    "discard": "Discard"
   },
   "addRepo": {
     "cancel": "Cancel",
@@ -146,7 +142,6 @@
     "fetchAllNone": "No repos with a remote to fetch",
     "fetchAllFailed": "Couldn't fetch",
     "checkUpdates": "Check for updates",
-    "updateAvailable": "Update available",
     "updateCheckFailed": "Couldn't check for updates",
     "updateNone": "RepoYeti is up to date",
     "updateBlocked": "Update cannot be applied yet",
@@ -283,7 +278,6 @@
       "button": "Auto",
       "buttonTitle": "Let AI split your changes into separate, scoped commits",
       "buttonTitleYolo": "YOLO: split and commit immediately, no review",
-      "yoloTag": "YOLO",
       "title": "Smart commit",
       "subtitle": "{name} — group these changes into clean, scoped commits.",
       "generating": "Analyzing your changes…",
@@ -373,10 +367,8 @@
       "loading": "Loading history…",
       "empty": "No commits yet",
       "loadMore": "Load more",
-      "by": "by {author}",
       "copyHash": "Copy commit hash",
       "copied": "Commit hash copied",
-      "viewChanges": "Show this commit's changes",
       "noDiff": "(no textual diff)",
       "diffTruncated": "Diff truncated — open the repo to see the rest.",
       "detailUnavailable": "Commit detail isn't available for this repository.",
@@ -387,25 +379,18 @@
       "uncommitted": "Uncommitted changes ({count})",
       "noUncommitted": "Uncommitted changes",
       "parents": "Parents",
-      "parent": "Parent",
       "author": "Author",
       "committer": "Committer",
-      "authored": "Authored",
-      "committed": "Committed",
       "scopeAll": "All branches",
       "scopeLocal": "Local branches",
       "scopeHead": "Current branch",
-      "showRemotes": "Show remote branches",
       "branchScope": "Branches",
       "refresh": "Refresh history",
-      "head": "HEAD",
       "mergeCommit": "Merge commit",
-      "showGraph": "Show graph",
       "jumpToParent": "Jump to parent commit",
       "scopeAllShort": "All",
       "scopeLocalShort": "Local",
       "scopeHeadShort": "Current",
-      "filesChanged": "{n} file changed | {n} files changed",
       "root": "Root commit"
     },
     "stash": {
@@ -456,7 +441,6 @@
       "setTitle": "Set git identity"
     },
     "syncAccount": {
-      "label": "Syncs as",
       "dropdownLabel": "GitHub account to sync this repo as",
       "machineDefault": "Active account"
     }
