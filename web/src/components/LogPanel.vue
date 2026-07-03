@@ -283,8 +283,8 @@ watch(
         >
           <span aria-hidden="true" />
           <span>{{ $t("repo.history.colDescription") }}</span>
-          <span>{{ $t("repo.history.colAuthor") }}</span>
           <span class="text-right">{{ $t("repo.history.colDate") }}</span>
+          <span class="pl-2">{{ $t("repo.history.colAuthor") }}</span>
           <span class="pl-3 text-right">{{ $t("repo.history.colCommit") }}</span>
         </div>
 
@@ -417,8 +417,8 @@ watch(
                     </span>
                     <span class="truncate text-[12.5px] text-foreground" :title="item.commit!.subject">{{ item.commit!.subject }}</span>
                   </div>
-                  <span class="truncate pl-2 text-[11.5px] text-muted-foreground" :title="item.commit!.authorEmail">{{ item.commit!.authorName }}</span>
                   <span class="whitespace-nowrap pl-2 text-right text-[11px] text-muted-foreground">{{ fromNow(item.commit!.date) }}</span>
+                  <span class="truncate pl-2 text-[11.5px] text-muted-foreground" :title="item.commit!.authorEmail">{{ item.commit!.authorName }}</span>
                   <button
                     type="button"
                     class="mono pl-3 text-right text-[11px] text-info/80 outline-none hover:underline focus-visible:underline"

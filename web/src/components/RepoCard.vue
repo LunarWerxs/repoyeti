@@ -25,6 +25,16 @@ const caps = computed(() => VCS_CAPABILITIES[props.repo.vcs] ?? VCS_CAPABILITIES
 // ── collapse + changed-files tree ─────────────────────────────────────────────
 const expanded = ref(false);
 
+// Owned here (not in the children below) because RepoCardChanges/RepoCardCommit render inside
+// <CollapsibleContent>, which unmounts its content on collapse (reka-ui's default
+// unmountOnHide) — a ref living there would reset every time the card is collapsed and
+// re-expanded. RepoCard's own scope never unmounts, so a half-typed commit message or an
+// active changed-files search survives across a collapse/expand cycle, matching the
+// pre-split behavior (these were plain local refs in the single-file RepoCard).
+const commitMsg = ref("");
+const treeQuery = ref("");
+const contentMode = ref(false);
+
 // Per-file selection (the checkboxes in ChangesTree) → drives the "Commit selected (N)" bar in
 // RepoCardCommit. Shared with the recursive tree via provide/inject, persisted per repo (see
 // @/lib/changes-selection). Provided here (not in a child) so both RepoCardChanges' ChangesTree
@@ -85,10 +95,15 @@ watch(
     <CollapsibleContent>
       <div class="flex flex-col gap-3 border-t border-border/60 px-3 pt-3 pb-3.5">
         <!-- path/branch/error + changed-files tree — see repo-card/RepoCardChanges.vue -->
-        <RepoCardChanges :repo="repo" />
+        <RepoCardChanges :repo="repo" v-model:tree-query="treeQuery" v-model:content-mode="contentMode" />
 
         <!-- commit message box + smart-commit — see repo-card/RepoCardCommit.vue -->
-        <RepoCardCommit ref="commitRef" :repo="repo" :tree-selection="treeSelection" />
+        <RepoCardCommit
+          ref="commitRef"
+          :repo="repo"
+          :tree-selection="treeSelection"
+          v-model:commit-msg="commitMsg"
+        />
 
         <!-- fetch/pull/push/stash/refresh + overflow menu — see repo-card/RepoCardActions.vue -->
         <RepoCardActions :repo="repo" />

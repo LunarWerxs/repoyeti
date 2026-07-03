@@ -72,10 +72,14 @@ function toggleCollapseAll(): void {
 // ── changed-files search ──────────────────────────────────────────────────────
 // Filename filtering is instant + local. The "Search content" toggle additionally greps
 // inside the changed files via the daemon — debounced, cancellable, and only at ≥3 chars.
-const treeQuery = ref("");
+// Lifted to RepoCard (v-model) rather than a plain local ref: RepoCardChanges lives inside
+// <CollapsibleContent>, which unmounts its content on collapse (reka-ui's default
+// unmountOnHide), so state owned here would otherwise reset every time the card is
+// collapsed/re-expanded — RepoCard's own scope doesn't unmount, so it survives there.
+const treeQuery = defineModel<string>("treeQuery", { required: true });
 const searching = computed(() => treeQuery.value.trim().length > 0);
 
-const contentMode = ref(false);
+const contentMode = defineModel<boolean>("contentMode", { required: true });
 const contentMatches = ref<Set<string>>(new Set());
 const contentLoading = ref(false);
 // Server-owned threshold (from /api/status) so the UI gate can't drift from the daemon's.

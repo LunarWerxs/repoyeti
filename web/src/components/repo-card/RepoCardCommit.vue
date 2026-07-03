@@ -49,7 +49,11 @@ const selectedCount = computed(() => props.treeSelection.count.value); // a Comp
 // (commit + any follow-on pull/push) so the button stays busy throughout, not just
 // for the commit leg.
 type CommitMode = "commit" | "amend" | "push" | "sync";
-const commitMsg = ref("");
+// Lifted to RepoCard (v-model) rather than a plain local ref: RepoCardCommit lives inside
+// <CollapsibleContent>, which unmounts its content on collapse (reka-ui's default
+// unmountOnHide), so a plain local ref would lose a half-typed message every time the card
+// is collapsed/re-expanded — RepoCard's own scope doesn't unmount, so it survives there.
+const commitMsg = defineModel<string>("commitMsg", { required: true });
 const generating = ref(false);
 const committing = ref(false);
 // Smart-commit (AI multi-commit splitter) — opt-in plan editor in a modal, or YOLO mode
