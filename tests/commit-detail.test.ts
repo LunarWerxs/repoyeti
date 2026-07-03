@@ -19,7 +19,7 @@ test("getCommit returns a commit's changed files + bounded diff", async () => {
     writeFileSync(join(dir, "a.txt"), "first\nsecond\n");
     writeFileSync(join(dir, "b.txt"), "new file\n");
     await $`git -C ${dir} add -A`.quiet();
-    await $`git -C ${dir} commit -q -m "feat: edit a, add b"`.quiet();
+    await $`git -C ${dir} commit -q -m "feat: edit a, add b" -m "Adds b.txt and a second line."`.quiet();
 
     const reg = await registerRepo(dir);
     expect(reg.ok).toBe(true);
@@ -33,6 +33,7 @@ test("getCommit returns a commit's changed files + bounded diff", async () => {
     expect(detail.ok).toBe(true);
     expect(detail.hash).toBe(head.hash);
     expect(detail.subject).toBe("feat: edit a, add b");
+    expect(detail.body).toBe("Adds b.txt and a second line.");
     expect(detail.authorName).toBe("T");
     expect(detail.files.map((f) => `${f.status} ${f.path}`).sort()).toEqual(["A b.txt", "M a.txt"]);
     expect(detail.diff).toContain("b.txt");

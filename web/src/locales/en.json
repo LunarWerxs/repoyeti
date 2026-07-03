@@ -391,7 +391,9 @@
       "scopeAllShort": "All",
       "scopeLocalShort": "Local",
       "scopeHeadShort": "Current",
-      "root": "Root commit"
+      "root": "Root commit",
+      "binaryFile": "Binary file — no textual diff",
+      "noChanges": "No file changes"
     },
     "stash": {
       "stash": "Stash",

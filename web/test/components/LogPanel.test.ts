@@ -19,6 +19,7 @@ function detailFor(hash: string): CommitDetail {
     hash,
     shortHash: hash.slice(0, 7),
     subject: "s",
+    body: "",
     authorName: "a",
     authorEmail: "e",
     date: 0,
@@ -114,6 +115,40 @@ describe("LogPanel.vue", () => {
     await flush();
     expect(detailSpy).toHaveBeenCalledTimes(2);
     expect(detailSpy).toHaveBeenLastCalledWith(repoId, "bbb222");
+  });
+
+  it("renders the expanded detail as a file list + colored diff + message (no raw blob)", async () => {
+    const store = useStore();
+    store.logByRepo[repoId] = {
+      ok: true,
+      code: "OK",
+      hasMore: false,
+      commits: [entry("c1", "subject one")],
+    };
+    const detail: CommitDetail = {
+      ...detailFor("c1"),
+      subject: "subject one",
+      body: "Extended body line.",
+      files: [{ status: "M", path: "src/foo.ts" }],
+      diff: "diff --git a/src/foo.ts b/src/foo.ts\n--- a/src/foo.ts\n+++ b/src/foo.ts\n@@ -1 +1 @@\n-old line\n+new line\n",
+    };
+    vi.spyOn(api, "commitDetail").mockResolvedValue(detail);
+
+    const wrapper = mount(LogPanel, { props: { repoId }, global: { plugins: [i18n] } });
+    const historyBtn = wrapper.findAll("button").find((b) => b.text().includes("History"))!;
+    await historyBtn.trigger("click");
+    await wrapper.vm.$nextTick();
+    await wrapper.findAll("div[aria-expanded]")[0]!.trigger("click");
+    await flush();
+
+    const text = wrapper.text();
+    expect(text).toContain("Extended body line."); // message body rendered
+    expect(text).toContain("src/foo.ts"); // file listed
+    expect(text).toContain("+1"); // additions stat
+    expect(text).toContain("old line"); // deletion diff row
+    expect(text).toContain("new line"); // addition diff row
+    // The old raw <pre> diff blob must be gone.
+    expect(wrapper.find("pre").exists()).toBe(false);
   });
 });
 

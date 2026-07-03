@@ -169,3 +169,48 @@ export function renderFileDiff(d: FileDiffLike): RenderedDiff {
   if (raw === null) return { rows: [], binary: false, tooLarge: true };
   return { rows: collapseContext(raw), binary: false, tooLarge: false };
 }
+
+/** One file's slice of a multi-file `git show`/`git diff` patch. */
+export interface ParsedFile {
+  /** New path (the `b/…` side); the old path for a pure deletion. */
+  path: string;
+  /** Old path — present only for a rename/copy (when it differs from `path`). */
+  oldPath?: string;
+  /** Binary file — no textual rows. */
+  binary: boolean;
+  /** Added / removed line counts (for the "+N −N" stat). */
+  adds: number;
+  dels: number;
+  /** Colourised rows (via parsePatch), ready to render. */
+  rows: DiffRow[];
+}
+
+/**
+ * Split a multi-file unified diff — one big `git show -p` string, as the commit-detail endpoint
+ * returns — into per-file slices, each already parsed into render-ready rows + an add/del stat.
+ * Files are delimited by their `diff --git a/<old> b/<new>` header. A trailing "…[truncated]"
+ * marker (the daemon caps huge commits) just means the last file's rows are partial — still valid.
+ */
+export function splitUnifiedDiff(diff: string): ParsedFile[] {
+  if (!diff.trim()) return [];
+  const out: ParsedFile[] = [];
+  for (const block of diff.split(/\r?\n(?=diff --git )/)) {
+    if (!block.startsWith("diff --git")) continue;
+    const nl = block.indexOf("\n");
+    const header = nl === -1 ? block : block.slice(0, nl);
+    const m = /^diff --git a\/(.+?) b\/(.+)$/.exec(header);
+    const oldPath = m?.[1];
+    const path = m?.[2] ?? oldPath ?? "";
+    const rows = parsePatch(block);
+    let adds = 0;
+    let dels = 0;
+    let binary = false;
+    for (const r of rows) {
+      if (r.kind === "add") adds++;
+      else if (r.kind === "del") dels++;
+      else if (r.kind === "meta" && r.text.startsWith("Binary files")) binary = true;
+    }
+    out.push({ path, oldPath: oldPath && oldPath !== path ? oldPath : undefined, binary, adds, dels, rows });
+  }
+  return out;
+}

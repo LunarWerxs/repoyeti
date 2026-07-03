@@ -243,6 +243,8 @@ export interface CommitDetail {
   committerEmail: string;
   /** Committer date as epoch milliseconds (distinct from author date after a rebase/cherry-pick). */
   committerDate: number;
+  /** Commit message body (everything after the subject line); "" when the commit has none. */
+  body: string;
   files: CommitFile[];
   diff: string;
   truncated: boolean;
@@ -258,6 +260,7 @@ const emptyCommitDetail = (hash: string, code: "OK" | "ERROR", message?: string)
   hash,
   shortHash: hash.slice(0, 12),
   subject: "",
+  body: "",
   authorName: "",
   authorEmail: "",
   date: 0,
@@ -302,12 +305,16 @@ export async function readCommit(absPath: string, hash: string): Promise<CommitD
       let diff = await git.raw(["show", "--no-color", "-p", "--format=", hash]);
       const truncated = diff.length > COMMIT_DIFF_CAP;
       if (truncated) diff = `${diff.slice(0, COMMIT_DIFF_CAP)}\n…[truncated]`;
+      // The message BODY (everything after the subject) — a separate `-s` call because %b is
+      // multi-line and can't share the unit-separated single-line header parsed above.
+      const body = (await git.raw(["show", "--no-color", "-s", "--format=%b", hash])).trim();
       return {
         ok: true,
         code: "OK" as const,
         hash: full || hash,
         shortHash: short || hash.slice(0, 12),
         subject,
+        body,
         authorName: an,
         authorEmail: ae,
         date: Number(at) * 1000,

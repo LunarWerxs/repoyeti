@@ -16,6 +16,7 @@ import { fromNow } from "@/lib/util";
 import { cn } from "@/lib/utils";
 import { useRepoFeedback } from "@/lib/repo-feedback";
 import { computeGraph, type GraphCommit, type GraphLink } from "@/lib/git-graph";
+import { splitUnifiedDiff, type DiffRow } from "@/lib/unified-diff";
 import type { CommitDetail, LogEntry } from "../types";
 
 const props = defineProps<{ repoId: string }>();
@@ -152,7 +153,7 @@ async function toggleCommit(hash: string): Promise<void> {
       ...commitCache.value,
       [hash]: {
         ok: false, code: "ERROR", message,
-        hash, shortHash: hash.slice(0, 12), subject: "", authorName: "", authorEmail: "", date: 0,
+        hash, shortHash: hash.slice(0, 12), subject: "", body: "", authorName: "", authorEmail: "", date: 0,
         parents: [], isMerge: false, committerName: "", committerEmail: "", committerDate: 0,
         files: [], diff: "", truncated: false,
       },
@@ -160,6 +161,39 @@ async function toggleCommit(hash: string): Promise<void> {
   } finally {
     loadingCommit.value = null;
   }
+}
+
+// ── expanded-commit rendering: file list + per-file colored diff (Git-Graph style) ────
+// VS Code-style git-status colours (match ChangesTree / SmartCommitCommitDiff).
+const STATUS_COLOR: Record<string, string> = { M: "#e2c08d", A: "#73c991", U: "#73c991", D: "#f14c4c", R: "#6cb6ff", C: "#d18616" };
+const statusColor = (s: string): string => STATUS_COLOR[s] ?? "#9aa0a6";
+const rowBg = (k: DiffRow["kind"]): string => (k === "add" ? "bg-success/10" : k === "del" ? "bg-destructive/10" : "");
+const rowSign = (k: DiffRow["kind"]): string => (k === "add" ? "+" : k === "del" ? "−" : "");
+function splitPath(p: string): { dir: string; name: string } {
+  const i = p.lastIndexOf("/");
+  return i === -1 ? { dir: "", name: p } : { dir: p.slice(0, i + 1), name: p.slice(i + 1) };
+}
+
+interface DetailFile { status: string; path: string; from?: string; adds: number; dels: number; binary: boolean; rows: DiffRow[]; hasDiff: boolean }
+/** The open commit's changed files, each joined to its slice of the commit's unified diff. */
+const detailFiles = computed<DetailFile[]>(() => {
+  const h = expandedCommit.value;
+  const d = h ? commitCache.value[h] : null;
+  if (!d?.ok) return [];
+  const byPath = new Map(splitUnifiedDiff(d.diff).map((f) => [f.path, f] as const));
+  return d.files.map((f) => {
+    const pf = byPath.get(f.path);
+    return { status: f.status, path: f.path, from: f.from, adds: pf?.adds ?? 0, dels: pf?.dels ?? 0, binary: pf?.binary ?? false, rows: pf?.rows ?? [], hasDiff: !!pf };
+  });
+});
+
+// Per-file fold state within the open commit (default open; click a file header to collapse it).
+const collapsedFiles = ref<Record<string, boolean>>({});
+const fileKey = (path: string): string => `${expandedCommit.value}::${path}`;
+const isFileOpen = (path: string): boolean => !collapsedFiles.value[fileKey(path)];
+function toggleFile(path: string): void {
+  const k = fileKey(path);
+  collapsedFiles.value = { ...collapsedFiles.value, [k]: !collapsedFiles.value[k] };
 }
 
 // ── uncommitted-files expand (reuses the store's changed-file read) ──────────────────
@@ -205,6 +239,7 @@ watch(
   () => {
     expandedCommit.value = null;
     commitCache.value = {};
+    collapsedFiles.value = {};
     wtOpen.value = false;
     rowEls.clear();
   },
@@ -505,18 +540,53 @@ watch(
                       {{ commitCache[item.commit!.hash].committerName }} · {{ fromNow(commitCache[item.commit!.hash].committerDate) }}
                     </div>
                   </div>
-                  <!-- changed files -->
-                  <div v-if="commitCache[item.commit!.hash].files.length" class="mb-1.5 flex flex-wrap gap-1">
-                    <span
-                      v-for="f in commitCache[item.commit!.hash].files"
-                      :key="f.path"
-                      class="mono inline-flex max-w-full items-center gap-1 rounded bg-secondary px-1.5 py-0.5 text-[11px]"
-                    >
-                      <span class="font-semibold text-muted-foreground">{{ f.status }}</span>
-                      <span class="truncate" :title="f.path">{{ f.path }}</span>
-                    </span>
+                  <!-- commit message (subject + body) -->
+                  <div class="mb-2 rounded bg-secondary/20 px-2 py-1.5">
+                    <div class="whitespace-pre-wrap text-[12px] font-medium text-foreground">{{ commitCache[item.commit!.hash].subject }}</div>
+                    <div
+                      v-if="commitCache[item.commit!.hash].body"
+                      class="mt-1 whitespace-pre-wrap text-[11px] leading-snug text-muted-foreground"
+                    >{{ commitCache[item.commit!.hash].body }}</div>
                   </div>
-                  <pre class="mono max-h-64 overflow-auto rounded bg-background/60 p-2 text-[11px] leading-snug">{{ commitCache[item.commit!.hash].diff || $t("repo.history.noDiff") }}</pre>
+                  <!-- changed files, each with its own colored diff (Git-Graph style) -->
+                  <div v-if="detailFiles.length" class="overflow-hidden rounded-md border border-border">
+                    <div v-for="f in detailFiles" :key="f.path" class="border-b border-border last:border-b-0">
+                      <button
+                        type="button"
+                        class="flex w-full items-center gap-2 bg-card/60 px-2 py-1 text-left transition-colors hover:bg-accent/30"
+                        @click.stop="toggleFile(f.path)"
+                      >
+                        <span class="mono shrink-0 text-[11px] font-bold" :style="{ color: statusColor(f.status) }">{{ f.status }}</span>
+                        <span class="mono min-w-0 flex-1 truncate text-[11.5px]" :title="f.from ? `${f.from} → ${f.path}` : f.path">
+                          <span class="text-muted-foreground/60">{{ splitPath(f.path).dir }}</span><span class="text-foreground">{{ splitPath(f.path).name }}</span>
+                        </span>
+                        <span v-if="f.adds" class="mono shrink-0 text-[10.5px] text-success">+{{ f.adds }}</span>
+                        <span v-if="f.dels" class="mono shrink-0 text-[10.5px] text-destructive">−{{ f.dels }}</span>
+                        <ChevronDown :size="12" :class="cn('shrink-0 text-muted-foreground transition-transform', isFileOpen(f.path) && 'rotate-180')" />
+                      </button>
+                      <div v-if="isFileOpen(f.path)">
+                        <div v-if="f.binary" class="px-3 py-1.5 text-[11px] text-muted-foreground">{{ $t("repo.history.binaryFile") }}</div>
+                        <div v-else-if="!f.rows.length" class="px-3 py-1.5 text-[11px] text-muted-foreground">
+                          {{ f.hasDiff ? $t("repo.history.noDiff") : $t("repo.history.diffTruncated") }}
+                        </div>
+                        <div v-else class="max-h-80 overflow-auto">
+                          <div class="mono w-max min-w-full text-[11px] leading-normal">
+                            <template v-for="(row, ri) in f.rows" :key="ri">
+                              <div
+                                v-if="row.kind === 'meta'"
+                                class="select-none bg-secondary/30 px-2.5 py-0.5 text-[10.5px] text-muted-foreground"
+                              >{{ row.text }}</div>
+                              <div v-else :class="cn('flex', rowBg(row.kind))">
+                                <span class="w-5 shrink-0 select-none text-center text-muted-foreground/50">{{ rowSign(row.kind) }}</span>
+                                <span class="whitespace-pre pr-3">{{ row.text }}</span>
+                              </div>
+                            </template>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div v-else class="text-[11px] text-muted-foreground">{{ $t("repo.history.noChanges") }}</div>
                   <p v-if="commitCache[item.commit!.hash].truncated" class="mt-1 text-[11px] text-muted-foreground">
                     {{ $t("repo.history.diffTruncated") }}
                   </p>

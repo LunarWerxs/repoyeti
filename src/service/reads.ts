@@ -41,6 +41,7 @@ export function getCommit(repoId: string, hash: string): Promise<CommitDetail> {
       hash,
       shortHash: hash.slice(0, 12),
       subject: "",
+      body: "",
       authorName: "",
       authorEmail: "",
       date: 0,

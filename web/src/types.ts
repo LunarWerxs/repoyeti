@@ -251,6 +251,8 @@ export interface CommitDetail {
   committerEmail: string;
   /** Committer date as epoch milliseconds. */
   committerDate: number;
+  /** Commit message body (everything after the subject line); "" when none. */
+  body: string;
   files: CommitFile[];
   diff: string;
   truncated: boolean;

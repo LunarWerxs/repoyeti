@@ -598,6 +598,7 @@ export const loreBackend: VcsBackend = {
     hash,
     shortHash: hash.slice(0, 12),
     subject: "",
+    body: "",
     authorName: "",
     authorEmail: "",
     date: 0,
