@@ -46,7 +46,9 @@ function mountHeader() {
 }
 
 async function clickFetchAll(wrapper: ReturnType<typeof mount>): Promise<void> {
-  await wrapper.find('[aria-haspopup="menu"]').trigger("click");
+  // Target the actions (⋯) menu specifically — other header controls (the notifications bell,
+  // the account switcher) also carry aria-haspopup="menu", so a generic selector is ambiguous.
+  await wrapper.find('[aria-label="More actions"]').trigger("click");
   await wrapper.vm.$nextTick();
   const fetchButton = wrapper.findAll("button").find((b) => b.text().includes("Fetch all"));
   expect(fetchButton).toBeTruthy();

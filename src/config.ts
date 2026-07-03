@@ -231,6 +231,13 @@ export interface RepoYetiConfig {
    * the working copy, so it stays strictly opt-in. Only acts when `syncCheck` is on.
    */
   keepInSync?: boolean;
+  /**
+   * Auto-scan the whole machine on every app start. Absent/false = OFF (opt-in) — a fresh
+   * install never sweeps the filesystem unasked. Purely a stored flag: the WEB client reads
+   * it at boot and decides whether to fire `POST /api/scan`; the daemon itself takes no
+   * action on it. See AppShell.vue's `autoScanOnStart`.
+   */
+  autoScan?: boolean;
   /** OIDC config. Always present (the public Connections client is baked into DEFAULTS),
    *  so "Sign in with Connections" works with zero setup; the owner just clicks the button. */
   oauth?: OAuthConfig;

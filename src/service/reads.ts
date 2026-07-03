@@ -12,7 +12,7 @@ import { backendFor } from "../vcs/index.ts";
 import type { VcsBackend } from "../vcs/types.ts";
 import { collectCommitPlanInput } from "../git-actions.ts";
 import type { CommitPlanInput, PlanInputFile } from "../ai.ts";
-import { readTags, type BranchList, type LogResult, type StashList, type TagList, type CommitDetail, type MergeFilter } from "../read/inspect.ts";
+import { readTags, type BranchList, type LogResult, type StashList, type TagList, type CommitDetail, type MergeFilter, type RefScope } from "../read/inspect.ts";
 import { guardRepo } from "./guards.ts";
 
 // ── read-only inspection (branches / log / stashes) ───────────────────────────────
@@ -25,10 +25,10 @@ export function getBranches(repoId: string): Promise<BranchList> {
   return backendFor(repo.vcs).listBranches(repo.absPath);
 }
 
-export function getLog(repoId: string, limit?: number, skip?: number, merges?: MergeFilter): Promise<LogResult> {
+export function getLog(repoId: string, limit?: number, skip?: number, merges?: MergeFilter, refScope?: RefScope): Promise<LogResult> {
   const repo = getRepo(repoId);
   if (!repo) return Promise.resolve({ ok: false, code: "ERROR", message: "repo not found", commits: [], hasMore: false });
-  return backendFor(repo.vcs).readLog(repo.absPath, limit, skip, merges);
+  return backendFor(repo.vcs).readLog(repo.absPath, limit, skip, merges, refScope);
 }
 
 export function getCommit(repoId: string, hash: string): Promise<CommitDetail> {
@@ -46,6 +46,9 @@ export function getCommit(repoId: string, hash: string): Promise<CommitDetail> {
       date: 0,
       parents: [],
       isMerge: false,
+      committerName: "",
+      committerEmail: "",
+      committerDate: 0,
       files: [],
       diff: "",
       truncated: false,

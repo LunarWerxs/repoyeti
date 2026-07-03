@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { RefreshCw, Plus, Settings, Cloud, CloudOff, CircleUser, Check, DownloadCloud, FolderSearch, Loader2, MoreVertical, Power } from "@lucide/vue";
+import { RefreshCw, Plus, Settings, Cloud, CloudOff, CircleUser, Check, DownloadCloud, FolderSearch, Loader2, MoreVertical, Power, Bell } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,21 @@ const shuttingDown = ref(false);
 const accountsOpen = ref(false);
 const accountsMenuRef = ref<HTMLElement | null>(null);
 const showAccounts = computed(() => store.ghAvailable && store.ghAccounts.length >= 1);
+// Notifications bell (persistent list; scan results are the only producer today — see store.notifyNewProjects).
+const notifOpen = ref(false);
+const notifMenuRef = ref<HTMLElement | null>(null);
+function toggleNotif(): void {
+  notifOpen.value = !notifOpen.value;
+  if (notifOpen.value) {
+    actionsOpen.value = false;
+    accountsOpen.value = false;
+    store.markNotificationsRead();
+  }
+}
+function openScanFromNotif(): void {
+  notifOpen.value = false;
+  store.scanOpen = true;
+}
 
 function firstFetchFailureDescription(failed: Array<{ name: string; code: string }>): string | undefined {
   const first = failed[0];
@@ -104,12 +119,18 @@ async function updateApp(): Promise<void> {
 
 function toggleActions(): void {
   actionsOpen.value = !actionsOpen.value;
-  if (actionsOpen.value) accountsOpen.value = false;
+  if (actionsOpen.value) {
+    accountsOpen.value = false;
+    notifOpen.value = false;
+  }
 }
 
 function toggleAccounts(): void {
   accountsOpen.value = !accountsOpen.value;
-  if (accountsOpen.value) actionsOpen.value = false;
+  if (accountsOpen.value) {
+    actionsOpen.value = false;
+    notifOpen.value = false;
+  }
 }
 
 // Switch the machine's active GitHub account, then toast the outcome. Closes the menu first so the
@@ -135,12 +156,14 @@ function onWindowPointerDown(e: PointerEvent): void {
   if (!(target instanceof Node)) return;
   if (actionsOpen.value && !actionsMenuRef.value?.contains(target)) actionsOpen.value = false;
   if (accountsOpen.value && !accountsMenuRef.value?.contains(target)) accountsOpen.value = false;
+  if (notifOpen.value && !notifMenuRef.value?.contains(target)) notifOpen.value = false;
 }
 
 function onWindowKeydown(e: KeyboardEvent): void {
   if (e.key === "Escape") {
     actionsOpen.value = false;
     accountsOpen.value = false;
+    notifOpen.value = false;
   }
 }
 
@@ -239,6 +262,66 @@ onBeforeUnmount(() => {
               :class="connected ? 'bg-emerald-500' : 'bg-red-500'"
             />
           </span>
+        </div>
+
+        <!-- notifications bell (scan results surface here + as a toast) -->
+        <div ref="notifMenuRef" class="relative">
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <Button
+                variant="ghost"
+                size="icon"
+                class="relative text-muted-foreground"
+                :aria-label="$t('header.notifications')"
+                :aria-expanded="notifOpen"
+                aria-haspopup="menu"
+                @click.stop="toggleNotif"
+              >
+                <Bell />
+                <span
+                  v-if="store.unreadCount"
+                  class="absolute top-1 right-1 grid min-w-4 place-items-center rounded-full bg-primary px-1 text-[10px] leading-4 font-semibold text-primary-foreground"
+                >{{ store.unreadCount > 9 ? "9+" : store.unreadCount }}</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{{ $t("header.notifications") }}</TooltipContent>
+          </Tooltip>
+          <div
+            v-if="notifOpen"
+            role="menu"
+            class="absolute top-[calc(100%+0.375rem)] right-0 z-50 w-72 rounded-xl border bg-popover p-1 text-popover-foreground shadow-xl shadow-black/40"
+            @click.stop
+          >
+            <div class="px-2 py-1.5 text-xs font-medium text-muted-foreground">{{ $t("header.notifications") }}</div>
+            <div
+              v-if="!store.notifications.length"
+              class="px-2 py-6 text-center text-[12.5px] text-muted-foreground"
+            >
+              {{ $t("header.notificationsEmpty") }}
+            </div>
+            <template v-else>
+              <button
+                v-for="n in store.notifications"
+                :key="n.id"
+                type="button"
+                role="menuitem"
+                class="flex w-full flex-col items-start gap-0.5 rounded-sm px-2 py-2 text-left outline-hidden transition-colors hover:bg-accent focus:bg-accent"
+                @click="openScanFromNotif"
+              >
+                <span class="text-[13px] font-medium text-foreground">{{ n.title }}</span>
+                <span v-if="n.body" class="text-[12px] text-muted-foreground">{{ n.body }}</span>
+              </button>
+              <div class="-mx-1 my-1 h-px bg-border" />
+              <button
+                type="button"
+                role="menuitem"
+                class="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-sm text-muted-foreground outline-hidden transition-colors hover:bg-accent focus:bg-accent"
+                @click="store.clearNotifications()"
+              >
+                {{ $t("header.notificationsClear") }}
+              </button>
+            </template>
+          </div>
         </div>
 
         <!-- GitHub account quick-switcher -->
@@ -385,14 +468,17 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
+        <!-- square by default; the label reveals on hover/focus (mirrors DevWebUI) -->
         <Button
-          size="icon-sm"
-          class="ml-1 transition-transform hover:scale-105 sm:w-auto sm:gap-1.5 sm:px-2.5"
+          size="sm"
+          class="group/add ml-1 h-8 gap-0 overflow-hidden transition-all"
           :aria-label="$t('header.addRepository')"
           @click="$emit('add')"
         >
-          <Plus />
-          <span class="hidden sm:inline">{{ $t("header.addRepository") }}</span>
+          <Plus class="size-4 shrink-0" />
+          <span
+            class="max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-200 ease-out group-hover/add:ml-1.5 group-hover/add:max-w-32 group-hover/add:opacity-100 group-focus-visible/add:ml-1.5 group-focus-visible/add:max-w-32 group-focus-visible/add:opacity-100"
+          >{{ $t("header.addRepository") }}</span>
         </Button>
       </div>
     </div>

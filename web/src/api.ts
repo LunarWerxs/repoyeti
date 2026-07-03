@@ -113,6 +113,8 @@ export interface RuntimeStatus {
   syncIntervalSecs: number;
   /** Whether the check also auto fast-forwards safe repos ("keep in sync"; owner setting). */
   keepInSync: boolean;
+  /** Whether the whole machine is auto-scanned for repos on every app start (owner setting). */
+  autoScan: boolean;
 }
 
 export interface ModeResult {
@@ -192,6 +194,9 @@ export const api = {
   /** Toggle "keep in sync" auto fast-forward (owner setting; persisted). */
   setKeepInSync: (enabled: boolean) =>
     req<{ ok: boolean; keepInSync: boolean }>("PUT", "/api/settings", { keepInSync: enabled }),
+  /** Toggle auto-scanning the whole machine on every app start (owner setting; persisted). */
+  setAutoScan: (enabled: boolean) =>
+    req<{ ok: boolean; autoScan: boolean }>("PUT", "/api/settings", { autoScan: enabled }),
 
   listRepos: () => req<{ repos: Repo[] }>("GET", "/api/repos").then((r) => r.repos),
   listIdentities: () => req<{ identities: Identity[] }>("GET", "/api/identities").then((r) => r.identities),
@@ -275,8 +280,11 @@ export const api = {
   deleteBranch: (id: string, name: string) =>
     req<ActionResult>("DELETE", `/api/repos/${id}/branch`, { name }),
   /** Commit history of the current branch, newest first. Paginate with `skip`. */
-  log: (id: string, limit = 50, skip = 0) =>
-    req<LogResult>("GET", `/api/repos/${id}/log?limit=${limit}&skip=${skip}`),
+  log: (id: string, limit = 50, skip = 0, refs?: "head" | "local" | "all") =>
+    req<LogResult>(
+      "GET",
+      `/api/repos/${id}/log?limit=${limit}&skip=${skip}${refs ? `&refs=${refs}` : ""}`,
+    ),
   commitDetail: (id: string, hash: string) =>
     req<CommitDetail>("GET", `/api/repos/${id}/commit/${encodeURIComponent(hash)}`),
   stashes: (id: string) => req<StashList>("GET", `/api/repos/${id}/stashes`),

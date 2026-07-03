@@ -12,12 +12,17 @@ export function register(app: Hono, _deps: Deps): void {
       // ?merges=only → just merge commits · ?merges=exclude → drop them · absent → all.
       const m = c.req.query("merges");
       const merges = m === "only" || m === "exclude" ? m : undefined;
+      // ?refs=head (default, current branch) · local (all local branches+tags) · all (+remotes).
+      // The graph view's branch-scope toggle drives this; anything else falls back to head-only.
+      const r = c.req.query("refs");
+      const refs = r === "all" || r === "local" || r === "head" ? r : undefined;
       return c.json(
         await getLog(
           id,
           Number.isFinite(limit) ? limit : undefined,
           Number.isFinite(skip) ? skip : undefined,
           merges,
+          refs,
         ),
       );
     }),

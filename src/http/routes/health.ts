@@ -53,6 +53,9 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       syncIntervalSecs: getSyncIntervalSecs(),
       // "Keep in sync": whether the check also auto fast-forwards safe repos.
       keepInSync: keepInSyncEnabled(),
+      // Auto-scan the whole machine on every app start (owner setting; off by default). A pure
+      // stored flag — the web client acts on it at boot; the daemon has no runtime side effect.
+      autoScan: cfg.autoScan === true,
     }),
   );
 
@@ -108,6 +111,12 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       saveConfig(cfg);
       broadcast("settings_changed", { keepInSync: cfg.keepInSync });
     }
+    if (typeof b.autoScan === "boolean") {
+      // Pure stored flag — no runtime call (the web client is what acts on it at boot).
+      cfg.autoScan = b.autoScan;
+      saveConfig(cfg);
+      broadcast("settings_changed", { autoScan: cfg.autoScan });
+    }
     return c.json({
       ok: true,
       diffStats: diffStatsEnabled(),
@@ -117,6 +126,7 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       syncCheck: syncCheckEnabled(),
       syncIntervalSecs: getSyncIntervalSecs(),
       keepInSync: keepInSyncEnabled(),
+      autoScan: cfg.autoScan === true,
     });
   });
 }

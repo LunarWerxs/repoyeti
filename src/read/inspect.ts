@@ -112,6 +112,13 @@ export async function readBranches(absPath: string): Promise<BranchList> {
 /** Optional log filter: only merge commits, or exclude them entirely. */
 export type MergeFilter = "only" | "exclude";
 
+/**
+ * Which refs the log walks. "head" (default) = just the current branch (HEAD), the historical
+ * linear behavior. "local" adds every local branch + tag; "all" also adds remote-tracking
+ * branches — the two that produce a real multi-lane DAG for the graph view's branch-scope toggle.
+ */
+export type RefScope = "head" | "local" | "all";
+
 export interface LogEntry {
   /** Full 40-char commit hash. */
   hash: string;
@@ -151,6 +158,7 @@ export async function readLog(
   limit = LOG_PAGE_DEFAULT,
   skip = 0,
   merges?: MergeFilter,
+  refScope: RefScope = "head",
 ): Promise<LogResult> {
   const cap = Math.min(Math.max(1, Math.floor(limit)), LOG_PAGE_MAX);
   const off = Math.max(0, Math.floor(skip));
@@ -160,11 +168,21 @@ export async function readLog(
       // odd character in it can't shift earlier fields when we split on the unit separator.
       const fmt = ["%H", "%h", "%an", "%ae", "%at", "%P", "%D", "%s"].join(US);
       const mergeFlag = merges === "only" ? ["--merges"] : merges === "exclude" ? ["--no-merges"] : [];
+      // Which refs to walk. HEAD-only stays the historical default (linear current-branch log).
+      // local/all add the other branch tips (+ remotes) plus --date-order, so the graph's lanes
+      // stay stable across pages. HEAD is passed explicitly so a detached checkout still appears.
+      const scopeArgs =
+        refScope === "all"
+          ? ["HEAD", "--branches", "--tags", "--remotes", "--date-order"]
+          : refScope === "local"
+            ? ["HEAD", "--branches", "--tags", "--date-order"]
+            : [];
       let raw = "";
       try {
         raw = await gitFor(absPath).raw([
           "log",
           "--no-color",
+          ...scopeArgs,
           ...mergeFlag,
           `--max-count=${cap}`,
           `--skip=${off}`,
@@ -221,6 +239,10 @@ export interface CommitDetail {
   parents: string[];
   /** True when this commit has 2+ parents (a merge). */
   isMerge: boolean;
+  committerName: string;
+  committerEmail: string;
+  /** Committer date as epoch milliseconds (distinct from author date after a rebase/cherry-pick). */
+  committerDate: number;
   files: CommitFile[];
   diff: string;
   truncated: boolean;
@@ -241,6 +263,9 @@ const emptyCommitDetail = (hash: string, code: "OK" | "ERROR", message?: string)
   date: 0,
   parents: [],
   isMerge: false,
+  committerName: "",
+  committerEmail: "",
+  committerDate: 0,
   files: [],
   diff: "",
   truncated: false,
@@ -256,11 +281,12 @@ export async function readCommit(absPath: string, hash: string): Promise<CommitD
   try {
     return await readGate.run(async () => {
       const git = gitFor(absPath);
-      const fmt = ["%H", "%h", "%an", "%ae", "%at", "%P", "%s"].join(US);
+      const fmt = ["%H", "%h", "%an", "%ae", "%at", "%cn", "%ce", "%ct", "%P", "%s"].join(US);
       // Header (first line) + name-status lines (the rest).
       const metaOut = await git.raw(["show", "--no-color", "--name-status", `--format=${fmt}`, hash]);
       const lines = metaOut.split("\n");
-      const [full = "", short = "", an = "", ae = "", at = "0", parentsRaw = "", ...subjRest] = (lines[0] ?? "").split(US);
+      const [full = "", short = "", an = "", ae = "", at = "0", cn = "", ce = "", ct = "0", parentsRaw = "", ...subjRest] =
+        (lines[0] ?? "").split(US);
       const subject = subjRest.join(US);
       const parents = parentsRaw.trim() ? parentsRaw.trim().split(" ") : [];
       const files: CommitFile[] = [];
@@ -287,6 +313,9 @@ export async function readCommit(absPath: string, hash: string): Promise<CommitD
         date: Number(at) * 1000,
         parents,
         isMerge: parents.length > 1,
+        committerName: cn,
+        committerEmail: ce,
+        committerDate: Number(ct) * 1000,
         files,
         diff: diff.trim(),
         truncated,

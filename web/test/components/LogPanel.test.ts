@@ -22,10 +22,21 @@ function detailFor(hash: string): CommitDetail {
     authorName: "a",
     authorEmail: "e",
     date: 0,
+    parents: [],
+    isMerge: false,
+    committerName: "a",
+    committerEmail: "e",
+    committerDate: 0,
     files: [],
     diff: "d",
     truncated: false,
   };
+}
+
+// A LogEntry as the graph view needs it (parents/isMerge/refs drive the DAG). Commit rows are
+// clickable <div>s (each carries aria-expanded), so we select them with `div[aria-expanded]`.
+function entry(hash: string, subject: string) {
+  return { hash, shortHash: hash.slice(0, 7), subject, authorName: "a", authorEmail: "e", date: 0, refs: "", parents: [], isMerge: false };
 }
 
 describe("LogPanel.vue", () => {
@@ -38,9 +49,7 @@ describe("LogPanel.vue", () => {
       ok: true,
       code: "OK",
       hasMore: false,
-      commits: [
-        { hash: "abc123def", shortHash: "abc123d", subject: "first", authorName: "a", date: 0 },
-      ],
+      commits: [entry("abc123def", "first")],
     };
     const detailSpy = vi
       .spyOn(api, "commitDetail")
@@ -56,20 +65,20 @@ describe("LogPanel.vue", () => {
     await historyBtn.trigger("click");
     await wrapper.vm.$nextTick();
 
-    // Click the commit's subject button (toggleCommit) → fetch #1.
-    const subjectBtn = wrapper.findAll("button").find((b) => b.text().includes("first"))!;
-    await subjectBtn.trigger("click");
+    // Click the commit row (toggleCommit) → fetch #1.
+    const row = wrapper.findAll("div[aria-expanded]")[0]!;
+    await row.trigger("click");
     await flush();
     expect(detailSpy).toHaveBeenCalledOnce();
     expect(detailSpy).toHaveBeenCalledWith(repoId, "abc123def");
 
     // Click again to collapse — no fetch.
-    await subjectBtn.trigger("click");
+    await row.trigger("click");
     await flush();
     expect(detailSpy).toHaveBeenCalledOnce();
 
     // Click again to re-expand — cache hit, still no second fetch.
-    await subjectBtn.trigger("click");
+    await row.trigger("click");
     await flush();
     expect(detailSpy).toHaveBeenCalledOnce();
   });
@@ -80,10 +89,7 @@ describe("LogPanel.vue", () => {
       ok: true,
       code: "OK",
       hasMore: false,
-      commits: [
-        { hash: "aaa111", shortHash: "aaa111", subject: "first", authorName: "a", date: 0 },
-        { hash: "bbb222", shortHash: "bbb222", subject: "second", authorName: "a", date: 0 },
-      ],
+      commits: [entry("aaa111", "first"), entry("bbb222", "second")],
     };
     const detailSpy = vi.spyOn(api, "commitDetail").mockImplementation(async (_id, hash) =>
       detailFor(hash),
@@ -98,14 +104,13 @@ describe("LogPanel.vue", () => {
     await historyBtn.trigger("click");
     await wrapper.vm.$nextTick();
 
-    const firstBtn = wrapper.findAll("button").find((b) => b.text().includes("first"))!;
-    await firstBtn.trigger("click");
+    const rows = wrapper.findAll("div[aria-expanded]");
+    await rows[0]!.trigger("click");
     await flush();
     expect(detailSpy).toHaveBeenCalledTimes(1);
     expect(detailSpy).toHaveBeenLastCalledWith(repoId, "aaa111");
 
-    const secondBtn = wrapper.findAll("button").find((b) => b.text().includes("second"))!;
-    await secondBtn.trigger("click");
+    await rows[1]!.trigger("click");
     await flush();
     expect(detailSpy).toHaveBeenCalledTimes(2);
     expect(detailSpy).toHaveBeenLastCalledWith(repoId, "bbb222");

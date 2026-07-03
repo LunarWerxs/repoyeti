@@ -31,12 +31,27 @@ const needsSignIn = computed(
   () => store.authReady && store.mode === "remote" && !store.authenticated && !store.localBypass,
 );
 
+/** Run work when the browser is idle (or shortly after) — keeps it off the startup path. */
+function scheduleIdle(fn: () => void): void {
+  const ric = (
+    window as unknown as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => void }
+  ).requestIdleCallback;
+  if (ric) ric(fn, { timeout: 4000 });
+  else window.setTimeout(fn, 1500);
+}
+
 onMounted(async () => {
   await store.loadAuth();
   if (needsSignIn.value) return; // show the sign-in gate instead of loading data
   void store.loadAll();
   void store.loadAccounts();
   store.connect();
+  // Sweep the whole machine for repos on launch, if the owner opted in — deferred so it never
+  // competes with the initial paint. Found repos stream in live (repo_added) and a finished scan
+  // raises the "new projects" notification via notifyNewProjects() — both already wired in connect().
+  scheduleIdle(() => {
+    if (store.autoScan) void store.startScan();
+  });
 });
 </script>
 

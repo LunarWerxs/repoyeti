@@ -3,7 +3,7 @@
 // push-drawer or the mobile bottom sheet. Owns the fetch + the lazily-loaded editor.
 import { computed, defineAsyncComponent, h, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { usePreferredDark } from "@vueuse/core";
-import { X, Loader2, FileWarning, Columns2, AlignJustify, Pencil, Save } from "@lucide/vue";
+import { X, Loader2, FileWarning, Columns2, AlignJustify, Pencil, Save, MoreVertical, Check } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { t } from "@/i18n";
 import { api, ApiError } from "@/api";
@@ -11,6 +11,13 @@ import { fileVisual } from "@/lib/file-icons";
 import { cn } from "@/lib/utils";
 import type { EditorTheme } from "@/lib/monaco-setup";
 import { useRepoYetiColorMode } from "@/lib/theme";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 import {
   viewerMode,
   wordLevelDiff,
@@ -303,25 +310,8 @@ onBeforeUnmount(() => {
         </button>
       </div>
 
-      <!-- Edit / Save / Cancel — Content tab, or the Diff tab's side-by-side view (not patch mode) -->
-      <button
-        v-if="showEditControls && !editing"
-        type="button"
-        :disabled="!canEdit"
-        :class="
-          cn(
-            'flex h-[26px] shrink-0 items-center gap-1 rounded-md border px-2 text-[12px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/40',
-            'border-border bg-secondary/40 text-muted-foreground hover:text-foreground',
-            'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-muted-foreground',
-          )
-        "
-        :title="remoteEditBlocked ? $t('fileViewer.editRemoteOff') : $t('fileViewer.editTooltip')"
-        @click="startEdit"
-      >
-        <Pencil :size="13" />
-        {{ $t("fileViewer.edit") }}
-      </button>
-      <template v-else-if="showEditControls && editing">
+      <!-- Cancel / Save — while editing (Content tab, or the Diff tab's side-by-side view) -->
+      <template v-if="showEditControls && editing">
         <button
           type="button"
           class="flex h-[26px] shrink-0 items-center rounded-md border border-border bg-secondary/40 px-2 text-[12px] font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
@@ -347,36 +337,28 @@ onBeforeUnmount(() => {
         </button>
       </template>
 
-      <!-- word-level vs line-level diff highlight (side-by-side diff mode only, not while editing) -->
-      <button
-        v-if="diffEditable && !editing"
-        type="button"
-        :class="
-          cn(
-            'shrink-0 rounded-md border px-2 py-1 text-[12px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/40',
-            wordLevelDiff
-              ? 'border-primary/40 bg-primary/15 text-foreground'
-              : 'border-border bg-secondary/40 text-muted-foreground hover:text-foreground',
-          )
-        "
-        :aria-pressed="wordLevelDiff"
-        :title="$t('fileViewer.wordDiffTooltip')"
-        @click="wordLevelDiff = !wordLevelDiff"
-      >
-        {{ $t("fileViewer.wordDiff") }}
-      </button>
-
-      <!-- split (side-by-side) ↔ unified (inline) diff layout; icon shows current mode -->
-      <button
-        v-if="diffEditable && !editing"
-        type="button"
-        class="flex h-[26px] shrink-0 items-center rounded-md border border-border bg-secondary/40 px-1.5 text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
-        :aria-label="$t('fileViewer.viewModeTooltip')"
-        :title="$t('fileViewer.viewModeTooltip')"
-        @click="diffSplitView = !diffSplitView"
-      >
-        <component :is="diffSplitView ? Columns2 : AlignJustify" :size="15" />
-      </button>
+      <!-- overflow menu: Edit, word-level diff toggle, split/unified layout toggle -->
+      <DropdownMenu v-if="!editing && (showEditControls || diffEditable)">
+        <DropdownMenuTrigger as-child>
+          <Button variant="ghost" size="icon-sm" :aria-label="'View options'">
+            <MoreVertical />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" class="w-44">
+          <DropdownMenuItem v-if="showEditControls" @select="startEdit">
+            <Pencil :size="14" />
+            {{ $t("fileViewer.edit") }}
+          </DropdownMenuItem>
+          <DropdownMenuItem v-if="diffEditable" @select.prevent="wordLevelDiff = !wordLevelDiff">
+            {{ $t("fileViewer.wordDiff") }}
+            <Check v-if="wordLevelDiff" :size="14" class="ml-auto text-primary" />
+          </DropdownMenuItem>
+          <DropdownMenuItem v-if="diffEditable" @select="diffSplitView = !diffSplitView">
+            <component :is="diffSplitView ? AlignJustify : Columns2" :size="14" />
+            {{ diffSplitView ? "Unified view" : "Split view" }}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
 
       <button
         v-if="props.showClose"

@@ -125,6 +125,24 @@ export const useStore = defineStore("repoyeti", () => {
   const scanDone = ref(false); // a scan has finished (or was stopped) → show the summary
   const lastScanCancelled = ref(false); // the finished scan ended via the Stop (X) control
 
+  // ── persistent notifications (header bell) ───────────────────────────────────
+  // In-memory only (not persisted across reloads) — each is a lightweight rolling record
+  // raised alongside a toast; see notifyNewProjects() below for the one producer today.
+  const NEW_PROJECTS_NOTIFICATION_ID = "scan-new-projects";
+  const notifications = ref<{ id: string; title: string; body?: string; ts: number; read: boolean }[]>(
+    [],
+  );
+  const unreadCount = computed(() => notifications.value.filter((n) => !n.read).length);
+  function markNotificationsRead(): void {
+    for (const n of notifications.value) n.read = true;
+  }
+  function dismissNotification(id: string): void {
+    notifications.value = notifications.value.filter((n) => n.id !== id);
+  }
+  function clearNotifications(): void {
+    notifications.value = [];
+  }
+
   // BYOK AI settings (redacted — never holds a key). `aiEnabled` gates the Generate button.
   // Style is hardcoded to Conventional Commits (no UI picker); owners can still override
   // it in ~/.repoyeti/config.json. The daemon mirrors this default.
@@ -189,6 +207,10 @@ export const useStore = defineStore("repoyeti", () => {
   // Owner setting: after the check, auto fast-forward repos that can safely take new commits.
   // From /api/status, kept live via `settings_changed`; off until status loads (opt-in).
   const keepInSync = ref(false);
+  // Owner setting: sweep the whole machine for repos on every app start. From /api/status,
+  // kept live via `settings_changed`; off until status loads (opt-in) — see AppShell.vue's
+  // scheduleIdle(() => autoScan && startScan()) on mount.
+  const autoScan = ref(false);
   // Client-only (per browser): also raise an OS notification on a fresh fall-behind. Persisted
   // in localStorage; only fires when the browser's Notification permission is granted.
   const desktopNotify = ref(loadDesktopNotifyPref());
@@ -386,6 +408,7 @@ export const useStore = defineStore("repoyeti", () => {
       syncCheckEnabled.value = s.syncCheck ?? true;
       syncIntervalSecs.value = s.syncIntervalSecs ?? 120;
       keepInSync.value = s.keepInSync ?? false;
+      autoScan.value = s.autoScan ?? false;
       contentSearchMin.value = s.minContentSearch ?? 3;
     } catch {
       /* status is optional — leave whatever we have */
@@ -476,6 +499,17 @@ export const useStore = defineStore("repoyeti", () => {
     }
   }
 
+  /** Toggle auto-scanning the whole machine on every app start (optimistic; rolls back). */
+  async function setAutoScan(enabled: boolean): Promise<void> {
+    autoScan.value = enabled;
+    try {
+      await api.setAutoScan(enabled);
+    } catch (e) {
+      autoScan.value = !enabled; // roll back
+      throw e;
+    }
+  }
+
   /** Opt into OS notifications: request the browser permission (must run from a user gesture),
    *  persist the preference, and reflect the resulting permission. Returns the new permission. */
   async function enableDesktopNotify(): Promise<NotificationPermission | "unsupported"> {
@@ -539,12 +573,23 @@ export const useStore = defineStore("repoyeti", () => {
     toast.success(t("notify.syncedTitle"), { description: body });
   }
 
-  /** A finished scan found repos we didn't know about. Toast (with a "View" action that opens the
-   *  scan modal — handy when the scan ran while the modal was closed) plus an opt-in OS notification. */
+  /** A finished scan found repos we didn't know about. Upserts the one rolling "new projects"
+   *  notification (a re-scan refreshes it rather than stacking), plus the existing toast (with a
+   *  "View" action that opens the scan modal) and an opt-in OS notification. */
   function notifyNewProjects(count: number): void {
     if (count < 1) return;
-    toast.success(t("notify.newProjectsTitle"), {
-      description: t("notify.newProjectsBody", { count }, count),
+    const title = t("notify.newProjectsTitle");
+    const body = t("notify.newProjectsBody", { count }, count);
+    const existing = notifications.value.find((n) => n.id === NEW_PROJECTS_NOTIFICATION_ID);
+    if (existing) {
+      existing.body = body;
+      existing.ts = Date.now();
+      existing.read = false;
+    } else {
+      notifications.value.unshift({ id: NEW_PROJECTS_NOTIFICATION_ID, title, body, ts: Date.now(), read: false });
+    }
+    toast.success(title, {
+      description: body,
       action: {
         label: t("notify.newProjectsView"),
         onClick: () => {
@@ -554,10 +599,7 @@ export const useStore = defineStore("repoyeti", () => {
     });
     if (desktopNotify.value && typeof Notification !== "undefined" && Notification.permission === "granted") {
       try {
-        new Notification(t("notify.newProjectsTitle"), {
-          body: t("notify.newProjectsBody", { count }, count),
-          tag: "repoyeti-new-projects",
-        });
+        new Notification(title, { body, tag: "repoyeti-new-projects" });
       } catch {
         /* notification construction can throw on some platforms — never break the SSE loop */
       }
@@ -729,6 +771,7 @@ export const useStore = defineStore("repoyeti", () => {
           if (typeof payload.diffPatchEnabled === "boolean") diffPatchEnabled.value = payload.diffPatchEnabled;
           if (typeof payload.syncCheck === "boolean") syncCheckEnabled.value = payload.syncCheck;
           if (typeof payload.syncIntervalSecs === "number") syncIntervalSecs.value = payload.syncIntervalSecs;
+          if (typeof payload.autoScan === "boolean") autoScan.value = payload.autoScan;
           if (payload.tunnel) tunnelConfig.value = payload.tunnel as TunnelStatus;
         } else if (event.value === "scan_started") {
           // A rescan began (from the modal, or another device) — reset the live counters.
@@ -923,10 +966,16 @@ export const useStore = defineStore("repoyeti", () => {
     }
   }
 
-  /** Load (or append, when `skip`>0) the commit log for a repo. */
-  async function loadLog(repoId: string, limit = 50, skip = 0): Promise<void> {
+  /** Load (or append, when `skip`>0) the commit log for a repo. `refs` picks the branch scope
+   *  the graph view walks (head/local/all); switching it reloads from skip 0 (replace, not append). */
+  async function loadLog(
+    repoId: string,
+    limit = 50,
+    skip = 0,
+    refs?: "head" | "local" | "all",
+  ): Promise<void> {
     try {
-      const res = await api.log(repoId, limit, skip);
+      const res = await api.log(repoId, limit, skip, refs);
       if (skip > 0 && logByRepo[repoId]) {
         logByRepo[repoId] = {
           ...res,
@@ -1344,6 +1393,13 @@ export const useStore = defineStore("repoyeti", () => {
     setSyncCheck,
     setSyncInterval,
     setKeepInSync,
+    autoScan,
+    setAutoScan,
+    notifications,
+    unreadCount,
+    markNotificationsRead,
+    dismissNotification,
+    clearNotifications,
     desktopNotify,
     notifyPermission,
     enableDesktopNotify,

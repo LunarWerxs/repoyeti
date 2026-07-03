@@ -23,6 +23,7 @@ import {
   GripHorizontal,
   User,
   AtSign,
+  History,
   Loader2,
   MoreVertical,
   EyeOff,
@@ -332,6 +333,7 @@ function onGripMove(e: PointerEvent): void {
 function onGripUp(): void {
   window.removeEventListener("pointermove", onGripMove);
   window.removeEventListener("pointerup", onGripUp);
+  window.removeEventListener("pointercancel", onGripUp);
   if (dragHeight.value != null) {
     setChangesOverride(props.repo.id, dragHeight.value); // commit the final height
     dragHeight.value = null;
@@ -345,6 +347,10 @@ function onGripDown(e: PointerEvent): void {
   (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
   window.addEventListener("pointermove", onGripMove);
   window.addEventListener("pointerup", onGripUp);
+  // Also release on pointercancel — the browser fires that (not pointerup) on a
+  // touch/gesture takeover or capture loss, and without it the move listener would
+  // stay live and the drag "sticks" to the cursor forever.
+  window.addEventListener("pointercancel", onGripUp);
   e.preventDefault();
 }
 function resetTreeHeight(): void {
@@ -733,49 +739,77 @@ async function confirmDiscard(): Promise<void> {
            stacking two as-child triggers on one element breaks reka's popper anchor) -->
       <DropdownMenu>
         <DropdownMenuTrigger
-          :title="identity ? `${identity.displayName} · ${identity.gitEmail}` : $t('repo.identity.setTitle')"
+          :title="[
+            repo.syncAccountLogin ? `Syncs as ${repo.syncAccountLogin}` : null,
+            identity ? `${identity.displayName} · ${identity.gitEmail}` : null,
+          ].filter(Boolean).join(' · ') || $t('repo.identity.setTitle')"
           :class="
             cn(
               'flex size-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold outline-none transition hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring/50',
-              identity ? identityTint(identity.id) : 'bg-secondary text-muted-foreground hover:bg-accent',
+              repo.syncAccountLogin
+                ? 'bg-primary/15 text-primary'
+                : identity
+                  ? identityTint(identity.id)
+                  : 'bg-secondary text-muted-foreground hover:bg-accent',
             )
           "
           :aria-label="$t('repo.identity.setTitle')"
           @click.stop
         >
-          <span v-if="identity">{{ identityInitials(identity.displayName) }}</span>
+          <span v-if="repo.syncAccountLogin">{{ identityInitials(repo.syncAccountLogin) }}</span>
+          <span v-else-if="identity">{{ identityInitials(identity.displayName) }}</span>
           <User v-else :size="15" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" class="w-64">
+          <!-- which GitHub account this repo pushes / pulls as (auto-switched on sync) -->
+          <template v-if="store.ghAccounts.length">
+            <DropdownMenuLabel>{{ $t("repo.syncAccount.dropdownLabel") }}</DropdownMenuLabel>
+            <DropdownMenuItem class="text-muted-foreground" @select="onAccount(null)">
+              <AtSign :size="15" />
+              <span class="flex-1">{{ $t("repo.syncAccount.machineDefault") }}</span>
+              <Check v-if="!repo.syncAccountLogin" :size="15" class="text-primary" />
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              v-for="a in store.ghAccounts"
+              :key="`${a.host}/${a.login}`"
+              @select="onAccount(a)"
+            >
+              <span class="flex size-6 shrink-0 items-center justify-center rounded-full bg-secondary text-[10px] font-semibold text-muted-foreground">{{ identityInitials(a.login) }}</span>
+              <div class="min-w-0 flex-1">
+                <div class="truncate text-[13px]">{{ a.login }}</div>
+                <div class="mono truncate text-[11px] text-muted-foreground">{{ a.host }}</div>
+              </div>
+              <Check
+                v-if="repo.syncAccountLogin === a.login && (repo.syncAccountHost || 'github.com') === a.host"
+                :size="15"
+                class="ml-1 shrink-0 text-primary"
+              />
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </template>
+
+          <!-- git commit author (the name/email commits are made under) -->
           <DropdownMenuLabel>{{ $t("repo.identity.dropdownLabel") }}</DropdownMenuLabel>
           <DropdownMenuItem class="text-muted-foreground" @select="onIdentity(null)">
             <User :size="15" />
-            <span>{{ $t("repo.identity.noIdentity") }}</span>
-            <Check v-if="!repo.identityId" :size="15" class="ml-auto text-primary" />
+            <span class="flex-1">{{ $t("repo.identity.noIdentity") }}</span>
+            <Check v-if="!repo.identityId" :size="15" class="text-primary" />
           </DropdownMenuItem>
-          <template v-if="store.identities.length">
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              v-for="i in store.identities"
-              :key="i.id"
-              @select="onIdentity(i.id)"
+          <DropdownMenuItem
+            v-for="i in store.identities"
+            :key="i.id"
+            @select="onIdentity(i.id)"
+          >
+            <span
+              :class="cn('flex size-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold', identityTint(i.id))"
+              >{{ identityInitials(i.displayName) }}</span
             >
-              <span
-                :class="
-                  cn(
-                    'flex size-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold',
-                    identityTint(i.id),
-                  )
-                "
-                >{{ identityInitials(i.displayName) }}</span
-              >
-              <div class="min-w-0 flex-1">
-                <div class="truncate text-[13px]">{{ i.displayName }}</div>
-                <div class="mono truncate text-[11px] text-muted-foreground">{{ i.gitEmail }}</div>
-              </div>
-              <Check v-if="repo.identityId === i.id" :size="15" class="ml-1 shrink-0 text-primary" />
-            </DropdownMenuItem>
-          </template>
+            <div class="min-w-0 flex-1">
+              <div class="truncate text-[13px]">{{ i.displayName }}</div>
+              <div class="mono truncate text-[11px] text-muted-foreground">{{ i.gitEmail }}</div>
+            </div>
+            <Check v-if="repo.identityId === i.id" :size="15" class="ml-1 shrink-0 text-primary" />
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -811,44 +845,6 @@ async function confirmDiscard(): Promise<void> {
             </TooltipTrigger>
             <TooltipContent>{{ hasRemote ? st?.remote : $t("repo.badge.noRemote") }}</TooltipContent>
           </Tooltip>
-        </div>
-
-        <!-- sync account: the GitHub account this repo fetches/pulls/pushes as (auto-switched on sync) -->
-        <div v-if="store.ghAccounts.length" class="flex items-center gap-2">
-          <AtSign :size="14" class="shrink-0 text-muted-foreground" />
-          <span class="shrink-0 text-[11.5px] text-muted-foreground">{{ $t("repo.syncAccount.label") }}</span>
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              class="flex min-w-0 items-center gap-1 rounded-md border border-border/60 bg-secondary/40 px-2 py-1 text-[12px] outline-none transition hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/50"
-              @click.stop
-            >
-              <span class="truncate">{{ repo.syncAccountLogin || $t("repo.syncAccount.machineDefault") }}</span>
-              <ChevronDown :size="13" class="shrink-0 text-muted-foreground" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" class="w-60">
-              <DropdownMenuLabel>{{ $t("repo.syncAccount.dropdownLabel") }}</DropdownMenuLabel>
-              <DropdownMenuItem class="text-muted-foreground" @select="onAccount(null)">
-                <span class="flex-1">{{ $t("repo.syncAccount.machineDefault") }}</span>
-                <Check v-if="!repo.syncAccountLogin" :size="15" class="text-primary" />
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                v-for="a in store.ghAccounts"
-                :key="`${a.host}/${a.login}`"
-                @select="onAccount(a)"
-              >
-                <div class="min-w-0 flex-1">
-                  <div class="truncate text-[13px]">{{ a.login }}</div>
-                  <div class="mono truncate text-[11px] text-muted-foreground">{{ a.host }}</div>
-                </div>
-                <Check
-                  v-if="repo.syncAccountLogin === a.login && (repo.syncAccountHost || 'github.com') === a.host"
-                  :size="15"
-                  class="ml-1 shrink-0 text-primary"
-                />
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
         </div>
 
         <!-- branch switcher + inline create form — see BranchPanel.vue -->
@@ -989,21 +985,6 @@ async function confirmDiscard(): Promise<void> {
           </button>
         </div>
 
-        <!-- recent commit subjects → one-tap fill (phone typing is slow) -->
-        <div v-if="st && st.dirty > 0 && recentMsgs.length" class="flex flex-wrap items-center gap-1.5">
-          <span class="text-[11px] text-muted-foreground">{{ $t("repo.commit.recent") }}</span>
-          <button
-            v-for="(m, i) in recentMsgs"
-            :key="i"
-            type="button"
-            class="max-w-[14rem] truncate rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-[11.5px] text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
-            :title="$t('repo.commit.useRecentTitle')"
-            @click="commitMsg = m"
-          >
-            {{ m }}
-          </button>
-        </div>
-
         <!-- commit: auto-growing message box with an inline AI draft button, then a
              split Commit button whose chevron opens the other commit modes. Items align
              to the top so the buttons stay put as the textarea grows downward. -->
@@ -1017,21 +998,45 @@ async function confirmDiscard(): Promise<void> {
               :placeholder="$t('repo.commit.placeholder')"
               :maxlength="300"
               rows="1"
-              :class="cn('max-h-40 min-h-9 resize-none py-1.5 leading-snug', aiHere && 'pr-10')"
+              :class="cn('max-h-40 min-h-9 resize-none py-1.5 leading-snug', aiHere && recentMsgs.length ? 'pr-17' : aiHere || recentMsgs.length ? 'pr-10' : '')"
               @keydown="onCommitKey"
             />
-            <button
-              v-if="aiHere"
-              type="button"
-              :disabled="generating"
-              :title="$t('repo.commit.generateTitle')"
-              :aria-label="$t('repo.commit.generateTitle')"
-              class="absolute top-1 right-1 flex size-7 items-center justify-center rounded-md text-primary outline-none transition-colors hover:bg-accent disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-ring/40"
-              @click="generate"
-            >
-              <Loader2 v-if="generating" :size="16" class="animate-spin" />
-              <Sparkles v-else :size="16" />
-            </button>
+            <div class="absolute top-1 right-1 flex items-center gap-0.5">
+              <!-- recent commit messages, tucked behind a small history dropdown -->
+              <DropdownMenu v-if="recentMsgs.length">
+                <DropdownMenuTrigger
+                  class="flex size-7 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+                  :title="$t('repo.commit.recent')"
+                  :aria-label="$t('repo.commit.recent')"
+                  @click.stop
+                >
+                  <History :size="16" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" class="max-w-[min(22rem,80vw)]">
+                  <DropdownMenuLabel>{{ $t("repo.commit.recent") }}</DropdownMenuLabel>
+                  <DropdownMenuItem
+                    v-for="(m, i) in recentMsgs"
+                    :key="i"
+                    :title="$t('repo.commit.useRecentTitle')"
+                    @select="commitMsg = m"
+                  >
+                    <span class="truncate text-[12.5px]">{{ m }}</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <button
+                v-if="aiHere"
+                type="button"
+                :disabled="generating"
+                :title="$t('repo.commit.generateTitle')"
+                :aria-label="$t('repo.commit.generateTitle')"
+                class="flex size-7 items-center justify-center rounded-md text-primary outline-none transition-colors hover:bg-accent disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-ring/40"
+                @click="generate"
+              >
+                <Loader2 v-if="generating" :size="16" class="animate-spin" />
+                <Sparkles v-else :size="16" />
+              </button>
+            </div>
           </div>
 
           <div class="flex shrink-0 items-start gap-1.5">

@@ -27,6 +27,7 @@ function onMove(e: PointerEvent): void {
 function onUp(): void {
   window.removeEventListener("pointermove", onMove);
   window.removeEventListener("pointerup", onUp);
+  window.removeEventListener("pointercancel", onUp);
   commitViewerWidth(viewerWidth.value);
 }
 function onGripDown(e: PointerEvent): void {
@@ -35,6 +36,9 @@ function onGripDown(e: PointerEvent): void {
   (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
   window.addEventListener("pointermove", onMove);
   window.addEventListener("pointerup", onUp);
+  // Release on pointercancel too (touch/gesture takeover or capture loss fires cancel,
+  // not pointerup) — otherwise the move listener sticks and the resize never releases.
+  window.addEventListener("pointercancel", onUp);
   e.preventDefault();
 }
 

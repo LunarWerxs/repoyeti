@@ -211,6 +211,10 @@ export interface LogEntry {
   date: number;
   /** Ref decorations, e.g. "HEAD -> main, origin/main". */
   refs: string;
+  /** Parent commit hashes (full); a root has none, a merge has 2+. */
+  parents: string[];
+  /** True when this commit has 2+ parents (a merge). */
+  isMerge: boolean;
 }
 
 export interface LogResult {
@@ -239,6 +243,14 @@ export interface CommitDetail {
   authorName: string;
   authorEmail: string;
   date: number;
+  /** Parent commit hashes (full); 2+ ⇒ this is a merge. */
+  parents: string[];
+  /** True when this commit has 2+ parents (a merge). */
+  isMerge: boolean;
+  committerName: string;
+  committerEmail: string;
+  /** Committer date as epoch milliseconds. */
+  committerDate: number;
   files: CommitFile[];
   diff: string;
   truncated: boolean;
