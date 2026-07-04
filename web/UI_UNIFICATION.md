@@ -23,12 +23,14 @@ the shadcn-vue **`reka-mira`** style (compact / dense):
   it pushes page content left with **no backdrop**; on mobile it's a bottom sheet.
 - **Icons:** `@lucide/vue` everywhere (`lucide-vue-next` dropped from Reimagine).
 - Each app carries a real `components.json` (`style: reka-mira`, `baseColor: neutral`).
+- **One theme composable** (2026-07-04): all three apps use the kit's `lib/theme.ts`
+  (`useTheme`, synced via `sync.mjs`) — light/dark/system persisted under
+  `lunarwerx-theme`, **dark by default everywhere** (DevWebUI no longer follows the OS),
+  with a shared crossfade transition and the mobile `<meta name="theme-color">` sync
+  (per-app chrome colours via `data-theme-color-*`). Each app's `index.html` no-flash
+  boot script uses the same key + resolve logic.
 
 ## Not yet unified (tracked follow-ups)
-- **Theme composable.** Each app still keeps its own color-mode composable
-  (`useRepoYetiColorMode` / `useColorMode` / `useTheme`); a shared `lib/theme.ts`
-  exists in the kit but is intentionally **not synced yet**. Dark-default is not
-  uniform (DevWebUI still follows the OS).
 - **Runtime / visual QA** across the three apps is still pending (the builds and
   type-checks pass, but the running UIs haven't been eyeballed together).
 
