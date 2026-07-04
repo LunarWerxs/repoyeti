@@ -403,7 +403,7 @@ async function confirmDiscard(): Promise<void> {
       <!-- Server capped an oversized changed-file list (MAX_CHANGED_FILES) — say so. -->
       <div
         v-if="store.changesMeta[repo.id]?.truncated"
-        class="px-2.5 py-1.5 text-[11.5px] text-amber-500/80"
+        class="px-2.5 py-1.5 text-[11.5px] text-warning/80"
       >
         {{
           $t("repo.changes.truncated", {

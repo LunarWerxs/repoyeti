@@ -195,7 +195,8 @@ async function onStyle(style: string): Promise<void> {
                 </Badge>
                 <Badge
                   v-if="settings.defaultProvider === p.id"
-                  class="border-violet-500/30 bg-violet-500/15 px-1.5 py-0 text-[10px] font-medium text-violet-700 dark:text-violet-300"
+                  variant="primary"
+                  class="px-1.5 py-0 text-[10px]"
                 >
                   {{ $t("settings.badgeDefault") }}
                 </Badge>

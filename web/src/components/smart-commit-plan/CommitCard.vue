@@ -98,7 +98,7 @@ function statusVariant(letter: string | undefined): "success" | "warning" | "des
       <button
         type="button"
         :disabled="regenBusy"
-        class="flex size-8 shrink-0 items-center justify-center rounded-md text-violet-300 outline-none transition-colors hover:bg-accent disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-ring/40"
+        class="flex size-8 shrink-0 items-center justify-center rounded-md text-primary outline-none transition-colors hover:bg-accent disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-ring/40"
         :title="$t('repo.smartCommit.regen')"
         :aria-label="$t('repo.smartCommit.regen')"
         @click="emit('regenerate')"

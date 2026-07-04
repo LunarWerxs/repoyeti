@@ -157,7 +157,7 @@ function onAccount(a: { host: string; login: string } | null): void {
       </span>
       <span
         v-if="repo.starred"
-        class="flex shrink-0 items-center rounded-md bg-amber-400/15 px-1.5 py-0.5 text-amber-400"
+        class="flex shrink-0 items-center rounded-md bg-warning/15 px-1.5 py-0.5 text-warning"
         :title="$t('repo.badge.starred')"
         :aria-label="$t('repo.badge.starred')"
       >
@@ -165,7 +165,7 @@ function onAccount(a: { host: string; login: string } | null): void {
       </span>
       <span
         v-if="repo.autoCommit"
-        class="flex shrink-0 items-center rounded-md bg-emerald-400/15 px-1.5 py-0.5 text-emerald-400"
+        class="flex shrink-0 items-center rounded-md bg-success/15 px-1.5 py-0.5 text-success"
         :title="$t('repo.badge.autoCommit')"
         :aria-label="$t('repo.badge.autoCommit')"
       >

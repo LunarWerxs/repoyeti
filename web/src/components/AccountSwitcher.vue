@@ -74,7 +74,7 @@ async function onMap(a: GhAccount, value: string): Promise<void> {
           v-for="a in store.ghAccounts"
           :key="`${a.host}/${a.login}`"
           class="flex items-center gap-3 rounded-xl border p-2.5"
-          :class="a.active ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-border bg-secondary/40'"
+          :class="a.active ? 'border-success/40 bg-success/5' : 'border-border bg-secondary/40'"
         >
           <span
             :class="cn('flex size-9 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold', identityTint(a.login))"
@@ -86,7 +86,7 @@ async function onMap(a: GhAccount, value: string): Promise<void> {
               <div class="truncate text-[14px] font-medium">{{ a.login }}</div>
               <span
                 v-if="a.active"
-                class="inline-flex shrink-0 items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
+                class="inline-flex shrink-0 items-center gap-1 rounded border border-success/40 bg-success/10 px-1.5 py-0.5 text-[10px] font-medium text-success"
               >
                 <Check :size="11" /> {{ $t("accounts.active") }}
               </span>

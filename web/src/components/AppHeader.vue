@@ -255,11 +255,11 @@ onBeforeUnmount(() => {
           >
             <span
               v-if="connected"
-              class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-60"
+              class="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60"
             />
             <span
               class="relative inline-flex size-2 rounded-full ring-2 ring-background"
-              :class="connected ? 'bg-emerald-500' : 'bg-red-500'"
+              :class="connected ? 'bg-success' : 'bg-destructive'"
             />
           </span>
         </div>
@@ -364,7 +364,7 @@ onBeforeUnmount(() => {
               @click="switchAccount(a.login, a.host)"
             >
               <Loader2 v-if="store.switchingAccount === a.login" class="animate-spin" />
-              <Check v-else-if="a.active" class="text-emerald-500" />
+              <Check v-else-if="a.active" class="text-success" />
               <CircleUser v-else class="text-muted-foreground" />
               <span class="min-w-0 flex-1 truncate">{{ a.login }}</span>
               <span v-if="a.active" class="shrink-0 text-[10px] text-muted-foreground">{{ $t("accounts.active") }}</span>

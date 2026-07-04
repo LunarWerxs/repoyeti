@@ -89,7 +89,7 @@ onBeforeUnmount(() => {
       <div
         class="mb-2 flex items-center gap-1.5 px-0.5 text-[12px] font-semibold tracking-wide text-muted-foreground uppercase"
       >
-        <Star :size="13" class="fill-current text-amber-400" />
+        <Star :size="13" class="fill-current text-warning" />
         {{ $t("shell.sectionStarred") }}
         <span class="text-muted-foreground/60">{{ starredList.length }}</span>
       </div>

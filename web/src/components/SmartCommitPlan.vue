@@ -277,7 +277,7 @@ async function execute(sync: boolean): Promise<void> {
     <DialogContent class="flex max-h-[85vh] flex-col gap-0 p-0 sm:max-w-2xl">
       <DialogHeader class="border-b border-border px-5 py-4">
         <DialogTitle class="flex items-center gap-2">
-          <Sparkles :size="18" class="text-violet-300" />
+          <Sparkles :size="18" class="text-primary" />
           {{ $t("repo.smartCommit.title") }}
         </DialogTitle>
         <DialogDescription>{{ $t("repo.smartCommit.subtitle", { name: repoName }) }}</DialogDescription>
@@ -287,7 +287,7 @@ async function execute(sync: boolean): Promise<void> {
       <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         <!-- loading -->
         <div v-if="loading" class="flex flex-col items-center justify-center gap-3 py-12 text-muted-foreground">
-          <Loader2 :size="28" class="animate-spin text-violet-300" />
+          <Loader2 :size="28" class="animate-spin text-primary" />
           <span class="text-sm">{{ $t("repo.smartCommit.generating") }}</span>
         </div>
 
