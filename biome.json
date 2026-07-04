@@ -25,5 +25,11 @@
         "noAssignInExpressions": "warn"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["web/src/components/ui/**"],
+      "linter": { "enabled": false }
+    }
+  ]
 }

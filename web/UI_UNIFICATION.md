@@ -17,7 +17,7 @@ the shadcn-vue **`reka-mira`** style (compact / dense):
 - **Per-app accent only:** RepoYeti green, DevWebUI indigo, Reimagine violet.
   Everything else — the neutral palette, `--radius: 0.625rem`, Inter type, and the
   component set — is identical.
-- **Unified content width:** **1180px** via the `--container-max` token /
+- **Unified content width:** **800px** via the `--container-max` token /
   `AppContainer` (was RepoYeti `max-w-3xl`, DevWebUI `max-w-7xl`).
 - **Settings = pure-push slide-in** (`SettingsPanel` + `usePushPanel`): on desktop
   it pushes page content left with **no backdrop**; on mobile it's a bottom sheet.

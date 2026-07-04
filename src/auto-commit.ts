@@ -293,16 +293,6 @@ async function tick(): Promise<{ done: AutoCommittedRepo[]; blocked: AutoCommitB
   return { done, blocked };
 }
 
-/**
- * Run ONE auto-commit pass right now, regardless of the timer/enabled state, and return what it
- * did. Backs a possible future "run auto-commit now" action and lets tests drive the real
- * commit/pull/push path without waiting on the interval. Still only touches opted-in repos, and
- * still broadcasts the same events a scheduled tick would.
- */
-export function runAutoCommitOnce(): Promise<{ done: AutoCommittedRepo[]; blocked: AutoCommitBlockedRepo[] }> {
-  return tick();
-}
-
 // ── timer plumbing (mirrors remote-sync.ts) ─────────────────────────────────────────────────
 function nextDelayMs(): number {
   return mode === "daily" ? msUntilDailyAt(dailyAt, Date.now()) : intervalSecs * 1000;

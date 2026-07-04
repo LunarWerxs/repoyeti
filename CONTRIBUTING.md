@@ -55,13 +55,15 @@ and any locale that has drifted out of key-parity with `en.json`.
 
 ### Adding a language
 
-1. Copy `web/src/locales/en.json` to `web/src/locales/<code>.json` and translate the values
-   (keep the keys, the `{tokens}`, and the `|` plural separators exactly).
-2. Add `{ code: "<code>", label: "<Native name>" }` to `SUPPORTED_LOCALES` in `web/src/i18n.ts`.
-3. Run `bun run i18n:check` — it confirms the new locale is complete and in parity.
+RepoYeti currently ships **English only**. The `vue-i18n` layer above exists so locales *can*
+be added later, but there is no locale switcher yet — adding a language means building that,
+not just registering it somewhere. In short:
 
-The switcher (Settings → Appearance), persistence, and lazy-loading pick it up automatically.
-Non-English locales currently shipped are **machine-translated drafts** — human review welcome.
+1. Create `web/src/locales/<code>.json` with full key parity with `en.json` (same keys, the
+   same `{tokens}`, and the same `|` plural separators).
+2. Build a locale switcher (there isn't one today) and wire the new locale into
+   `createI18n({ messages })` in `web/src/i18n.ts`.
+3. Run `bun run i18n:check` to confirm the new locale is complete and in parity.
 
 ## License
 
