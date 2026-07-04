@@ -367,7 +367,7 @@ onBeforeUnmount(() => {
           </DropdownMenuItem>
           <DropdownMenuItem v-if="diffEditable" @select="diffSplitView = !diffSplitView">
             <component :is="diffSplitView ? AlignJustify : Columns2" :size="14" />
-            {{ diffSplitView ? "Unified view" : "Split view" }}
+            {{ diffSplitView ? $t("fileViewer.unifiedView") : $t("fileViewer.splitView") }}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

@@ -85,11 +85,27 @@ const flagText = (raw, file, line) => {
   if (!text || !hasLetter(text) || TEXT_ALLOWLIST.has(text)) return;
   errors.push(`HARDCODED     ${rel(file)}:${line} → template text "${text.slice(0, 60)}"`);
 };
+// A string literal "looks like prose" if it has whitespace or ends with sentence
+// punctuation — used to flag display text hidden inside an interpolation expression
+// (e.g. `{{ ok ? 'Saved' : '' }}`) while ignoring identifier-ish keys.
+const looksLikeProse = (s) => hasLetter(s) && (/\s/.test(s) || /[.…!?:]$/.test(s));
+const flagExprLiterals = (expr, file, line) => {
+  for (const m of expr.matchAll(/(['"`])((?:\\.|(?!\1).)*)\1/g)) {
+    const lit = m[2];
+    if (lit.includes("${")) continue; // composed code, not static prose
+    if (looksLikeProse(lit) && !TEXT_ALLOWLIST.has(lit.trim())) {
+      warnings.push(`IN-EXPR       ${rel(file)}:${line} → prose literal in expression "${lit.slice(0, 50)}" — verify it isn't UI copy`);
+    }
+  }
+};
 const walkNode = (node, file, parentTag) => {
   if (!node) return;
   switch (node.type) {
     case 2: // TEXT
       if (!SKIP_TEXT_TAGS.has(parentTag)) flagText(node.content, file, node.loc?.start?.line ?? 0);
+      return;
+    case 5: // INTERPOLATION — {{ expr }}
+      flagExprLiterals(node.content?.content ?? "", file, node.loc?.start?.line ?? 0);
       return;
     case 1: // ELEMENT
       for (const prop of node.props || []) {

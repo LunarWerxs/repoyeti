@@ -9,6 +9,8 @@
     "tabContent": "Content",
     "tabDiff": "Diff",
     "wordDiff": "Word diff",
+    "unifiedView": "Unified view",
+    "splitView": "Split view",
     "truncated": "Large file — showing a truncated preview",
     "compactDiff": "Large file — showing a compact diff",
     "edit": "Edit",
