@@ -4,7 +4,7 @@ import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { useStore } from "../../store";
 import { changesViewSize } from "@/lib/changes-view";
-import { useRepoYetiColorMode } from "@/lib/theme";
+import { useTheme } from "@/lib/theme";
 import SettingsGroup from "@/shell/SettingsGroup.vue";
 import SettingsRow from "@/shell/SettingsRow.vue";
 import { Switch } from "@/components/ui/switch";
@@ -19,8 +19,8 @@ import {
 const store = useStore();
 const { t } = useI18n();
 
-// Shared light/dark/system theme — writes to the same store App.vue reads. §3.
-const theme = useRepoYetiColorMode();
+// Shared kit light/dark/system theme — writes to the same store App.vue reads.
+const { mode: theme } = useTheme();
 
 // Toggle the per-file/per-repo diff statistics (server setting; rolls back + toasts on fail).
 async function onDiffStats(enabled: boolean): Promise<void> {
@@ -73,7 +73,7 @@ async function onAlwaysSideBySide(always: boolean): Promise<void> {
           <SelectContent>
             <SelectItem value="light">{{ $t("settings.themeLight") }}</SelectItem>
             <SelectItem value="dark">{{ $t("settings.themeDark") }}</SelectItem>
-            <SelectItem value="auto">{{ $t("settings.themeSystem") }}</SelectItem>
+            <SelectItem value="system">{{ $t("settings.themeSystem") }}</SelectItem>
           </SelectContent>
         </Select>
       </template>

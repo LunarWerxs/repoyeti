@@ -1,21 +1,20 @@
 <script setup lang="ts">
-import { computed } from "vue";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { useRepoYetiColorMode } from "@/lib/theme";
+import { useTheme } from "@/lib/theme";
 import AppShell from "./AppShell.vue";
 
-// Shared light/dark/system theme. RepoYeti defaults to dark (see index.html and
-// web/UI_UNIFICATION.md §3); the switcher in Settings writes to the same store.
-const mode = useRepoYetiColorMode();
-const toasterTheme = computed(() => (mode.value === "auto" ? "system" : mode.value));
+// Shared kit light/dark/system theme (defaults to dark — see index.html and the kit
+// README "Theme boot snippet"). The Settings switcher writes the same store. `mode`
+// ("light" | "dark" | "system") maps 1:1 to vue-sonner's theme prop.
+const { mode } = useTheme();
 </script>
 
 <template>
   <TooltipProvider>
     <AppShell />
     <Toaster
-      :theme="toasterTheme"
+      :theme="mode"
       position="bottom-center"
       :duration="3500"
       :offset="16"

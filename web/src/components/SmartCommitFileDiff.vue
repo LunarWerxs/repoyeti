@@ -12,12 +12,11 @@
  *    preview matches the drawer. Large modified files arrive as a compact unified patch instead.
  */
 import { computed, defineAsyncComponent, h, ref, watch } from "vue";
-import { usePreferredDark } from "@vueuse/core";
 import { Loader2, FileWarning } from "@lucide/vue";
 import { t } from "@/i18n";
 import { api, ApiError } from "@/api";
 import type { EditorTheme } from "@/lib/monaco-setup";
-import { useRepoYetiColorMode } from "@/lib/theme";
+import { useTheme } from "@/lib/theme";
 import { wordLevelDiff, diffSplitView } from "@/lib/file-viewer";
 
 const props = defineProps<{ repoId: string; path: string; status?: string }>();
@@ -51,11 +50,8 @@ const MonacoViewer = defineAsyncComponent({
 });
 
 // Mirror the app's resolved light/dark for the editor (same as FileViewerInner).
-const mode = useRepoYetiColorMode();
-const prefersDark = usePreferredDark();
-const editorTheme = computed<EditorTheme>(() =>
-  (mode.value === "auto" ? prefersDark.value : mode.value === "dark") ? "dark" : "light",
-);
+const { isDark } = useTheme();
+const editorTheme = computed<EditorTheme>(() => (isDark.value ? "dark" : "light"));
 
 const loading = ref(true);
 const errorMsg = ref<string | null>(null);
