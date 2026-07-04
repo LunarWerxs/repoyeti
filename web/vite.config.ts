@@ -65,7 +65,9 @@ export default defineConfig({
         // on demand the first time a file is opened. The core app shell still precaches.
         // NB: glob the viewer component chunks (Monaco*.js) and monaco-setup.{js,css} too —
         // an earlier "monaco-setup-*.js"-only pattern silently let the viewer chunks precache.
-        globIgnores: ["**/*.worker-*.js", "**/monaco-setup-*", "**/Monaco*.js"],
+        // vite 8's rolldown-vite bundler emits the Monaco core under "editor.api2-*.js" instead
+        // of bundling it into monaco-setup — exclude that chunk too so it stays out of precache.
+        globIgnores: ["**/*.worker-*.js", "**/monaco-setup-*", "**/Monaco*.js", "**/editor.api2-*.js"],
         runtimeCaching: [
           { urlPattern: /\/api\//, handler: "NetworkOnly" },
           { urlPattern: /\/oauth\//, handler: "NetworkOnly" },

@@ -3,7 +3,6 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "baseUrl": ".",
     "paths": { "@/*": ["./src/*"] },
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "jsx": "preserve",
