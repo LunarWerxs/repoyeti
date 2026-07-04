@@ -26,6 +26,7 @@ import { startAutoCommit, stopAutoCommit } from "../auto-commit.ts";
 import { broadcast } from "../bus.ts";
 import { setServerPort, startManagedTunnel, stopManagedTunnel } from "../runtime.ts";
 import { clearInstanceInfo, findLiveInstance, writeInstanceInfo } from "../instance.ts";
+import { findFreePort } from "../find-free-port.mjs";
 
 // ── commands ──────────────────────────────────────────────────────────────────
 
@@ -133,7 +134,7 @@ export async function start(rest: string[]): Promise<void> {
   startWatching(known);
 
   // 3) serve immediately.
-  let server: ReturnType<typeof listen> | null = null;
+  let server: Awaited<ReturnType<typeof listen>> | null = null;
   let shuttingDown = false;
   const shutdown = (): void => {
     if (shuttingDown) return;
@@ -148,7 +149,7 @@ export async function start(rest: string[]): Promise<void> {
   };
 
   const app = createApp(liveCfg, { requestShutdown: shutdown });
-  server = listen(app, port);
+  server = await listen(app, port);
   const url = `http://127.0.0.1:${server.port}`;
   // Advertise where we actually landed (the port may have hopped) so the launcher
   // opens the right URL and a second launch can detect us. Cleared on clean exit.
@@ -247,19 +248,14 @@ async function runDiscovery(cfg: RepoYetiConfig, knownIds: Set<string>): Promise
 }
 
 /** Bind on 127.0.0.1, auto-incrementing the port if it's taken. */
-function listen(app: ReturnType<typeof createApp>, startPort: number) {
-  let lastErr: unknown;
-  for (let p = startPort; p < startPort + 20; p++) {
-    try {
-      return Bun.serve({
-        port: p,
-        hostname: "127.0.0.1",
-        idleTimeout: 0, // long-lived SSE; we send our own keepalive
-        fetch: app.fetch,
-      });
-    } catch (err) {
-      lastErr = err;
-    }
-  }
-  throw lastErr ?? new Error("no free port");
+async function listen(app: ReturnType<typeof createApp>, startPort: number) {
+  // Race-free probe via the shared kit helper (synced in as find-free-port.mjs),
+  // then bind for real. Same 20-candidate walk the old inline Bun.serve loop did.
+  const port = await findFreePort(startPort, 20, "127.0.0.1");
+  return Bun.serve({
+    port,
+    hostname: "127.0.0.1",
+    idleTimeout: 0, // long-lived SSE; we send our own keepalive
+    fetch: app.fetch,
+  });
 }

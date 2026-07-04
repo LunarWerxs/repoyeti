@@ -1,5 +1,11 @@
 # RepoYeti burndown — design-alignment & consolidation hitlist
 
+> **STATUS 2026-07-04: COMPLETE.** Every item below (A1–G17, including this repo's part
+> of every cross-repo item) is implemented, verified, and committed. Shared pieces
+> landed in the lunarwerx-ui kit (lib/: relativeTime, httpClient, useSelfUpdate,
+> i18n-core, theme; server-lib/: mcp-stdio, instance-pointer, updater-engine,
+> find-free-port) and were adopted here. Do not re-work items from this list.
+
 Generated 2026-07-03 by a cross-repo audit of the three sibling apps (RepoYeti, DevWebUI, Reimagine) against the shared `lunarwerx-ui` design kit; every item below was independently re-verified against the working tree. Work items top-to-bottom within each section; quick wins (S effort) are sorted first, then M, then L.
 
 ## How to work this list (guardrails)
