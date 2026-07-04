@@ -82,7 +82,7 @@ export async function handleRpc(msg, ctx) {
         // A tool-level failure → an MCP error RESULT (not a JSON-RPC protocol error) the agent can
         // read and react to, exactly like a normal tool output.
         return rpcResult(id, {
-          content: [{ type: "text", text: e && e.message ? e.message : String(e) }],
+          content: [{ type: "text", text: e?.message ? e.message : String(e) }],
           isError: true,
         });
       }
@@ -123,11 +123,11 @@ export async function runMcpStdio(ctx) {
       buffer = buffer.slice(nl + 1);
       try {
         const out = await processLine(line, ctx);
-        if (out !== null) process.stdout.write(out + "\n");
+        if (out !== null) process.stdout.write(`${out}\n`);
       } catch (e) {
         // A processing failure is logged to stderr only — never poison stdout with non-protocol text.
         process.stderr.write(
-          `${ctx.serverInfo.name} mcp: error handling line: ${e && e.message ? e.message : e}\n`,
+          `${ctx.serverInfo.name} mcp: error handling line: ${e?.message ? e.message : e}\n`,
         );
       }
     }
@@ -135,6 +135,6 @@ export async function runMcpStdio(ctx) {
   // Stream closed: flush any final line that lacked a trailing newline.
   if (buffer.trim() !== "") {
     const out = await processLine(buffer, ctx);
-    if (out !== null) process.stdout.write(out + "\n");
+    if (out !== null) process.stdout.write(`${out}\n`);
   }
 }
