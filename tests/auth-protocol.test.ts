@@ -141,7 +141,7 @@ test("[2a] a valid signed state whose nonce is NOT in txs yields 400 (expired li
 
   // Build a request to /oauth/finish?code=xxx&state=<signed-state>
   const app = new Hono();
-  app.get("/oauth/finish", (c) => handleComplete(c, cfg));
+  app.get("/oauth/finish", (c) => handleComplete(c, cfg.oauth!));
   const req = new Request(`http://localhost/oauth/finish?code=any-code&state=${encodeURIComponent(state)}`);
   const res = await app.request(req.url);
 
@@ -171,7 +171,7 @@ test("[2b] a valid signed state whose nonce IS in txs passes the nonce check (re
   };
 
   const app = new Hono();
-  app.get("/oauth/finish", (c) => handleComplete(c, cfg));
+  app.get("/oauth/finish", (c) => handleComplete(c, cfg.oauth!));
   const req = new Request(`http://localhost/oauth/finish?code=any-code&state=${encodeURIComponent(state)}`);
   const res = await app.request(req.url);
 
@@ -194,7 +194,7 @@ test("[2c] handleComplete with missing code AND state returns 400 (missing autho
     oauth: OWNER_OAUTH,
   };
   const app = new Hono();
-  app.get("/oauth/finish", (c) => handleComplete(c, cfg));
+  app.get("/oauth/finish", (c) => handleComplete(c, cfg.oauth!));
   const res = await app.request("http://localhost/oauth/finish");
   expect(res.status).toBe(400);
 });

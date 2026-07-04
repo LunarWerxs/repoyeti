@@ -1,6 +1,6 @@
 import type { Hono, Context } from "hono";
 import type { Deps } from "../deps.ts";
-import { authEnforced, accessMode, ownerConfigured } from "../../config.ts";
+import { authEnforced, accessMode, ownerConfigured, saveConfig } from "../../config.ts";
 import {
   handleLogin,
   handleComplete,
@@ -10,6 +10,7 @@ import {
   readSession,
   isRemoteRequest,
   hasLocalBypass,
+  type AuthOptions,
 } from "../../auth.ts";
 
 export function register(app: Hono, { cfg }: Deps): void {
@@ -40,10 +41,15 @@ export function register(app: Hono, { cfg }: Deps): void {
   // "Continue local for now" — grant a localhost-only bypass (refused over the tunnel).
   app.post("/api/auth/continue-local", (c) => handleContinueLocal(c));
 
-  // OIDC dance (only meaningful when configured).
+  // Adapter: the generic OIDC handlers take a bare OAuthConfig + an AuthOptions bag (not the whole
+  // RepoYetiConfig). RepoYeti passes cfg.oauth and persists a first-use ("TOFU") ownership claim back
+  // to config.json; cookie names + signing secret fall back to the module defaults (RepoYeti's own).
+  const authOpts: AuthOptions = { onOwnerClaimed: () => saveConfig(cfg) };
+
+  // OIDC dance (only meaningful when configured). oauthGuard guarantees cfg.oauth is present.
   const oauthGuard = (h: (c: Context) => Promise<Response>) => (c: Context) =>
     authEnforced(cfg) ? h(c) : c.text("Sign-in is not configured for this daemon.", 404);
-  app.get("/oauth/login", oauthGuard((c) => handleLogin(c, cfg)));
-  app.get("/oauth/finish", oauthGuard((c) => handleComplete(c, cfg)));
-  app.get("/oauth/callback", oauthGuard((c) => handleComplete(c, cfg)));
+  app.get("/oauth/login", oauthGuard((c) => handleLogin(c, cfg.oauth!, authOpts)));
+  app.get("/oauth/finish", oauthGuard((c) => handleComplete(c, cfg.oauth!, authOpts)));
+  app.get("/oauth/callback", oauthGuard((c) => handleComplete(c, cfg.oauth!, authOpts)));
 }

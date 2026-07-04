@@ -164,7 +164,7 @@ async function runHandleComplete(idToken: string): Promise<Response> {
 
   const app = new Hono();
   app.get("/oauth/finish", (c) =>
-    handleComplete(c, BASE_CFG, {
+    handleComplete(c, BASE_CFG.oauth!, {
       fetchImpl: makeMockFetch(idToken),
       jwksSet: localJwksSet,
     }),

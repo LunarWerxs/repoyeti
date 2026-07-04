@@ -14,6 +14,12 @@
  *   embeds this daemon's origin → IdP → shim 302s to <origin>/oauth/finish?code&state
  *   → token exchange → verify id_token (JWKS) → owner check → signed session cookie.
  * Path B (loopback) registers /oauth/callback as the redirect and skips the shim.
+ *
+ * Reusable across apps: the OIDC handlers (handleLogin/handleComplete/handleLogout/…) take a bare
+ * `OAuthConfig` plus an optional `AuthOptions` bag (cookie names, signing secret, a TOFU-persist
+ * hook) — NOT the whole `RepoYetiConfig`. RepoYeti supplies its own values through a thin adapter
+ * at its HTTP routes (see src/http/routes/auth.ts); a sibling app adopts this by passing its own.
+ * Only `authMiddleware` (RepoYeti's local-vs-remote access policy) still takes the full config.
  */
 import { randomBytes, createHmac, createHash, timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -26,7 +32,6 @@ import {
   ensureConfigDir,
   authEnforced,
   accessMode,
-  saveConfig,
   type RepoYetiConfig,
   type OAuthConfig,
 } from "./config.ts";
@@ -40,6 +45,28 @@ export interface Session {
   sub: string;
   email: string;
   exp: number;
+}
+
+/**
+ * Host-app-specific knobs for the otherwise-generic OIDC handlers. Every field is optional
+ * and falls back to this module's defaults, so RepoYeti's call sites stay a one-line adapter
+ * while a *different* adopter (DevWebUI / Reimagine / a future app) overrides only what it needs.
+ *
+ * This is the seam that lets `handleLogin` / `handleComplete` (and the session/bypass helpers)
+ * depend on a bare `OAuthConfig` + these knobs instead of the whole `RepoYetiConfig`.
+ */
+export interface AuthOptions {
+  /** Signed-session cookie name (default "gm_session"). */
+  cookieName?: string;
+  /** Local-bypass cookie name (default "gm_local"). */
+  localCookieName?: string;
+  /** HMAC secret signing the session / state / bypass cookies. Defaults to the per-install key
+   *  persisted under the app's config dir (see `key()`) — every app that vendors this module
+   *  gets its own isolated key for free, which is why RepoYeti never passes this. */
+  secret?: Buffer;
+  /** Called after a first-use ("TOFU") ownership claim mutates `oauth.ownerSub`, so the host can
+   *  persist the change. No-op if omitted. RepoYeti wires this to `saveConfig`. */
+  onOwnerClaimed?: (oauth: OAuthConfig) => void;
 }
 
 // ── signing key (persisted so sessions survive a restart) ──────────────────────
@@ -58,17 +85,17 @@ function key(): Buffer {
 }
 
 /** @internal exported for security tests only — not part of the public API. */
-export function sign(payload: string): string {
+export function sign(payload: string, secret?: Buffer): string {
   const body = Buffer.from(payload).toString("base64url");
-  const mac = createHmac("sha256", key()).update(body).digest("base64url");
+  const mac = createHmac("sha256", secret ?? key()).update(body).digest("base64url");
   return `${body}.${mac}`;
 }
 /** @internal exported for security tests only — not part of the public API. */
-export function unsign(token: string | undefined): string | null {
+export function unsign(token: string | undefined, secret?: Buffer): string | null {
   if (!token) return null;
   const [body, mac] = token.split(".");
   if (!body || !mac) return null;
-  const expected = createHmac("sha256", key()).update(body).digest("base64url");
+  const expected = createHmac("sha256", secret ?? key()).update(body).digest("base64url");
   const a = Buffer.from(mac);
   const b = Buffer.from(expected);
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
@@ -137,8 +164,8 @@ function publicOrigin(c: Context): string {
   u.protocol = `${clientProto(c)}:`;
   return u.origin;
 }
-function setSession(c: Context, s: Session): void {
-  setCookie(c, COOKIE, sign(JSON.stringify(s)), {
+function setSession(c: Context, s: Session, opts?: AuthOptions): void {
+  setCookie(c, opts?.cookieName ?? COOKIE, sign(JSON.stringify(s), opts?.secret), {
     httpOnly: true,
     sameSite: "Lax",
     secure: isHttps(c),
@@ -146,8 +173,8 @@ function setSession(c: Context, s: Session): void {
     maxAge: Math.floor(SESSION_TTL_MS / 1000),
   });
 }
-export function readSession(c: Context, o: OAuthConfig): Session | null {
-  const raw = unsign(getCookie(c, COOKIE));
+export function readSession(c: Context, o: OAuthConfig, opts?: AuthOptions): Session | null {
+  const raw = unsign(getCookie(c, opts?.cookieName ?? COOKIE), opts?.secret);
   if (!raw) return null;
   try {
     const s = JSON.parse(raw) as Session;
@@ -187,8 +214,8 @@ export function isRemoteRequest(c: Context): boolean {
   );
 }
 
-function setLocalBypass(c: Context): void {
-  setCookie(c, LOCAL_COOKIE, sign(JSON.stringify({ exp: Date.now() + LOCAL_TTL_MS })), {
+function setLocalBypass(c: Context, opts?: AuthOptions): void {
+  setCookie(c, opts?.localCookieName ?? LOCAL_COOKIE, sign(JSON.stringify({ exp: Date.now() + LOCAL_TTL_MS }), opts?.secret), {
     httpOnly: true,
     sameSite: "Lax",
     secure: false, // local http only — never sent over the tunnel anyway
@@ -198,8 +225,8 @@ function setLocalBypass(c: Context): void {
 }
 
 /** A live local-bypass cookie — only meaningful for a local request (callers gate on that). */
-export function hasLocalBypass(c: Context): boolean {
-  const raw = unsign(getCookie(c, LOCAL_COOKIE));
+export function hasLocalBypass(c: Context, opts?: AuthOptions): boolean {
+  const raw = unsign(getCookie(c, opts?.localCookieName ?? LOCAL_COOKIE), opts?.secret);
   if (!raw) return false;
   try {
     const { exp } = JSON.parse(raw) as { exp: number };
@@ -210,11 +237,11 @@ export function hasLocalBypass(c: Context): boolean {
 }
 
 /** POST /api/auth/continue-local — grant the local bypass. Refused for tunnel traffic. */
-export function handleContinueLocal(c: Context): Response {
+export function handleContinueLocal(c: Context, opts?: AuthOptions): Response {
   if (isRemoteRequest(c)) {
     return c.json({ ok: false, code: "REMOTE_FORBIDDEN", message: "local bypass is not available remotely" }, 403);
   }
-  setLocalBypass(c);
+  setLocalBypass(c, opts);
   return c.json({ ok: true });
 }
 
@@ -232,15 +259,25 @@ function errPage(message: string): string {
 }
 
 // ── handlers ────────────────────────────────────────────────────────────────────
-export async function handleLogin(c: Context, cfg: RepoYetiConfig): Promise<Response> {
-  const o = cfg.oauth!;
-  const doc = await discover(o.issuer);
+
+/** Minimal fetch signature used by the auth seam — a subset of the global fetch. */
+type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
+/** Options accepted by handleLogin — the AuthOptions knobs plus a fetch seam for tests. */
+export interface HandleLoginOptions extends AuthOptions {
+  /** Override the fetch used for OIDC discovery (lets a unit test avoid a live network). */
+  fetchImpl?: FetchLike;
+}
+
+export async function handleLogin(c: Context, oauth: OAuthConfig, opts?: HandleLoginOptions): Promise<Response> {
+  const o = oauth;
+  const doc = await discover(o.issuer, opts?.fetchImpl ?? authFetch);
   const { verifier, challenge } = pkce();
   const nonce = randomBytes(16).toString("base64url");
   txs.set(nonce, { verifier, ts: Date.now() });
   gcTx();
   const origin = publicOrigin(c);
-  const state = sign(JSON.stringify({ n: nonce, o: origin }));
+  const state = sign(JSON.stringify({ n: nonce, o: origin }), opts?.secret);
   const url = new URL(doc.authorization_endpoint!);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", o.clientId);
@@ -254,11 +291,9 @@ export async function handleLogin(c: Context, cfg: RepoYetiConfig): Promise<Resp
   return c.redirect(url.toString());
 }
 
-/** Minimal fetch signature used by the auth seam — a subset of the global fetch. */
-type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
-
-/** Options accepted by handleComplete for testing.  Production callers omit both. */
-export interface HandleCompleteOptions {
+/** Options accepted by handleComplete — the AuthOptions knobs plus two test seams.
+ *  Production callers pass only `onOwnerClaimed` (via the host adapter); tests add the fetch/JWKS seams. */
+export interface HandleCompleteOptions extends AuthOptions {
   /** Override the fetch implementation used for OIDC discovery + token exchange. */
   fetchImpl?: FetchLike;
   /** Override the JWKS key resolver passed to jwtVerify (skips createRemoteJWKSet). */
@@ -268,15 +303,15 @@ export interface HandleCompleteOptions {
 /** Shared by /oauth/finish (shim bounce) and /oauth/callback (loopback). */
 export async function handleComplete(
   c: Context,
-  cfg: RepoYetiConfig,
+  oauth: OAuthConfig,
   opts?: HandleCompleteOptions,
 ): Promise<Response> {
-  const o = cfg.oauth!;
+  const o = oauth;
   const code = c.req.query("code");
   const state = c.req.query("state");
   if (!code || !state) return c.html(errPage("Missing authorization code."), 400);
 
-  const sp = unsign(state);
+  const sp = unsign(state, opts?.secret);
   if (!sp) return c.html(errPage("Invalid or tampered sign-in state."), 400);
   let nonce: string;
   let stateOrigin: string;
@@ -328,22 +363,22 @@ export async function handleComplete(
     // identity. Lets the owner bootstrap without hunting down their Cognito `sub`.
     if (!o.ownerSub && !o.ownerEmail && sub) {
       o.ownerSub = sub;
-      saveConfig(cfg);
+      opts?.onOwnerClaimed?.(o);
       console.log(`[repoyeti] ownership claimed by ${email || sub}`);
     }
 
     if (!ownerMatches(o, sub, email)) {
       return c.html(errPage("This Connections account isn't the owner of this RepoYeti."), 403);
     }
-    setSession(c, { sub, email, exp: Date.now() + SESSION_TTL_MS });
+    setSession(c, { sub, email, exp: Date.now() + SESSION_TTL_MS }, opts);
     return c.redirect("/");
   } catch {
     return c.html(errPage("Couldn't verify your Connections sign-in."), 401);
   }
 }
 
-export function handleLogout(c: Context): Response {
-  deleteCookie(c, COOKIE, { path: "/" });
+export function handleLogout(c: Context, opts?: AuthOptions): Response {
+  deleteCookie(c, opts?.cookieName ?? COOKIE, { path: "/" });
   return c.json({ ok: true });
 }
 
@@ -363,31 +398,34 @@ export function rotateKey(): Buffer {
   return fresh;
 }
 
-/** POST /api/auth/logout-all — invalidate sessions on ALL devices, then clear this one. */
-export function handleLogoutAll(c: Context): Response {
+/** POST /api/auth/logout-all — invalidate sessions on ALL devices, then clear this one.
+ *  Note: rotateKey() rotates the module's persisted per-install key — the default signing secret.
+ *  An adopter that injects its OWN `opts.secret` would rotate that out-of-band and override this. */
+export function handleLogoutAll(c: Context, opts?: AuthOptions): Response {
   rotateKey();
-  deleteCookie(c, COOKIE, { path: "/" });
-  deleteCookie(c, LOCAL_COOKIE, { path: "/" });
+  deleteCookie(c, opts?.cookieName ?? COOKIE, { path: "/" });
+  deleteCookie(c, opts?.localCookieName ?? LOCAL_COOKIE, { path: "/" });
   return c.json({ ok: true });
 }
 
 /**
  * OPTIONAL API Bearer token check. Validates `Authorization: Bearer <token>` against the owner's
- * minted `cfg.apiToken`, constant-time. OFF BY DEFAULT: when `cfg.apiToken` is unset this ALWAYS
+ * minted `apiToken`, constant-time. OFF BY DEFAULT: when `apiToken` is unset/empty this ALWAYS
  * returns false — so an unconfigured daemon never matches a bearer header and auth behaves exactly
  * as OIDC-only (zero behavior change). The token is a separate, LOCAL credential (never touches
- * connections.icu); it lets a remote/headless agent authenticate over the tunnel.
+ * connections.icu); it lets a remote/headless agent authenticate over the tunnel. The host passes
+ * its own token (RepoYeti: `cfg.apiToken`), keeping this decoupled from the full config shape.
  */
-export function validBearerToken(c: Context, cfg: RepoYetiConfig): boolean {
+export function validBearerToken(c: Context, apiToken?: string): boolean {
   const header = c.req.header("authorization");
   if (!header?.startsWith("Bearer ")) return false;
   const presented = header.slice("Bearer ".length);
   // UNSET ⇒ never matches ⇒ no behavior change.
-  if (!cfg.apiToken) return false;
+  if (!apiToken) return false;
   // timingSafeEqual throws on a length mismatch, so length-guard first (a length-only side channel
   // is acceptable here, and unsign() in this file uses the same pattern). Compare over UTF-8 bytes.
-  if (Buffer.byteLength(presented) !== Buffer.byteLength(cfg.apiToken)) return false;
-  return timingSafeEqual(Buffer.from(presented), Buffer.from(cfg.apiToken));
+  if (Buffer.byteLength(presented) !== Buffer.byteLength(apiToken)) return false;
+  return timingSafeEqual(Buffer.from(presented), Buffer.from(apiToken));
 }
 
 /** Middleware gating /api/*. The invariants:
@@ -417,12 +455,12 @@ export function authMiddleware(cfg: RepoYetiConfig) {
 
     if (isRemoteRequest(c)) {
       // Over-the-tunnel: owner session required (or a valid API Bearer token, when configured).
-      if (!readSession(c, cfg.oauth!) && !validBearerToken(c, cfg)) return c.body(null, 401);
+      if (!readSession(c, cfg.oauth!) && !validBearerToken(c, cfg.apiToken)) return c.body(null, 401);
       return next();
     }
     // Local request.
     if (accessMode(cfg) !== "remote") return next(); // local mode → open on this machine
-    if (readSession(c, cfg.oauth!) || hasLocalBypass(c) || validBearerToken(c, cfg)) return next();
+    if (readSession(c, cfg.oauth!) || hasLocalBypass(c) || validBearerToken(c, cfg.apiToken)) return next();
     return c.body(null, 401);
   };
 }
