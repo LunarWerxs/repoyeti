@@ -167,6 +167,8 @@ export const META: Record<string, RouteMeta> = {
     query: [{ name: "path", description: "Repo-relative file path.", required: true }],
   },
   "POST /api/repos/:id/discard": { summary: "Discard one changed file's working-tree changes.", body: DiscardSchema, tags: ["files"] },
+  "GET /api/editors": { summary: "List detected \"Open with…\" editors + the effective default (loopback convenience).", tags: ["files"] },
+  "POST /api/repos/:id/open": { summary: "Open a repo folder (and optional file) in an external editor. Loopback-only.", tags: ["files"] },
 
   // ── repo display flags / identity ──────────────────────────────────────────────────
   "POST /api/repos/:id/identity": { summary: "Assign (or clear) a commit identity for a repo.", body: AssignIdentitySchema, tags: ["repos"] },

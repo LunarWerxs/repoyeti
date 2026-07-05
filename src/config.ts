@@ -283,6 +283,14 @@ export interface RepoYetiConfig {
    * action on it. See AppShell.vue's `autoScanOnStart`.
    */
   autoScan?: boolean;
+  /**
+   * "Open with…" default external editor id (see src/service/editors.ts CATALOG — "vscode",
+   * "cursor", "notepad++", the "system" file-manager pseudo-editor, …). The file viewer's
+   * Open-with button launches this when the owner doesn't pick a specific editor from the
+   * dropdown. Absent ⇒ the first installed editor is used. Purely a local convenience: editors
+   * are launched on the daemon's machine, so the feature is loopback-only.
+   */
+  defaultEditor?: string;
   /** OIDC config. Always present (the public Connections client is baked into DEFAULTS),
    *  so "Sign in with Connections" works with zero setup; the owner just clicks the button. */
   oauth?: OAuthConfig;

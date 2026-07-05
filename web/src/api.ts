@@ -121,6 +121,37 @@ export interface RuntimeStatus {
   mcpApprovalGate: boolean;
   /** Auto-deny timeout for a pending MCP approval, in seconds (owner setting; default 120). */
   mcpApprovalTimeoutSecs: number;
+  /** "Open with…" default external editor id, or null to auto-pick the first installed one. */
+  defaultEditor: string | null;
+}
+
+/** One "Open with…" editor's presence on the daemon's machine (from GET /api/editors). */
+export interface EditorInfo {
+  id: string;
+  label: string;
+  /** Opens a folder as a workspace (a file tree) vs a single file (Notepad). */
+  folder: boolean;
+  /** Detected as installed on this machine. */
+  available: boolean;
+}
+
+/** The "Open with…" catalogue for the current host (GET /api/editors). */
+export interface EditorsResult {
+  ok: boolean;
+  platform: string;
+  /** The stored preference (may be null / unavailable). */
+  defaultEditor: string | null;
+  /** The resolved default the Open-with button actually launches. */
+  effectiveDefault: string;
+  editors: EditorInfo[];
+}
+
+/** Result of an "Open with…" launch (POST /api/repos/:id/open). */
+export interface OpenResult {
+  ok: boolean;
+  code: string;
+  message?: string;
+  editor?: string;
 }
 
 export interface ModeResult {
@@ -270,6 +301,17 @@ export const api = {
     req<{ ok: boolean; mcpApprovalTimeoutSecs: number }>("PUT", "/api/settings", {
       mcpApprovalTimeoutSecs: secs,
     }),
+
+  // ── "Open with…" external editors (loopback-only) ─────────────────────────────
+  /** Detected editors on the daemon's machine + the effective default. */
+  editors: () => req<EditorsResult>("GET", "/api/editors"),
+  /** Set the default "Open with…" editor id (""=auto-pick first installed; persisted). */
+  setDefaultEditor: (id: string) =>
+    req<{ ok: boolean; defaultEditor: string | null }>("PUT", "/api/settings", { defaultEditor: id }),
+  /** Launch a repo folder (and optional changed file) in an external editor. `editor` omitted ⇒
+   *  the owner's default; `path` omitted ⇒ the folder alone. Loopback-only (403 over the tunnel). */
+  openInEditor: (repoId: string, body: { editor?: string; path?: string }) =>
+    req<OpenResult>("POST", `/api/repos/${repoId}/open`, body),
 
   // ── ⭐ Agent Safety Rail — pending MCP tool-call approvals ────────────────────
   /** Every MCP mutating tool call currently awaiting owner approve/deny. */

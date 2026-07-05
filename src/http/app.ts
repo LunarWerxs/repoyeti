@@ -54,6 +54,7 @@ import * as stash from "./routes/stash.ts";
 import * as tags from "./routes/tags.ts";
 import * as remote from "./routes/remote.ts";
 import * as files from "./routes/files.ts";
+import * as editors from "./routes/editors.ts";
 import * as ai from "./routes/ai.ts";
 import * as updates from "./routes/updates.ts";
 import * as events from "./routes/events.ts";
@@ -126,6 +127,7 @@ export function createApp(cfg: RepoYetiConfig, hooks: AppHooks = {}): Hono {
   tags.register(app, deps);
   remote.register(app, deps);
   files.register(app, deps);
+  editors.register(app, deps);
   ai.register(app, deps);
   updates.register(app, deps);
   events.register(app, deps);

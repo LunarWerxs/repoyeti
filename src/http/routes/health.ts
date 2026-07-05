@@ -40,6 +40,7 @@ import {
   setApprovalGateEnabled,
   setApprovalTimeoutSecs,
 } from "../../approvals.ts";
+import { isKnownEditor } from "../../service/index.ts";
 
 export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
   // ── auth surface ───────────────────────────────────────────────────────────
@@ -88,6 +89,9 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       // approve/deny (owner setting; default ON), and the auto-deny timeout in seconds.
       mcpApprovalGate: approvalGateEnabled(),
       mcpApprovalTimeoutSecs: getApprovalTimeoutSecs(),
+      // "Open with…" default external editor id (null = auto-pick the first installed). The
+      // catalogue + per-machine availability come from GET /api/editors.
+      defaultEditor: cfg.defaultEditor ?? null,
     }),
   );
 
@@ -200,6 +204,16 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       saveConfig(cfg);
       broadcast("settings_changed", { mcpApprovalTimeoutSecs: cfg.mcpApprovalTimeoutSecs });
     }
+    // "Open with…" default editor. An empty string clears the preference (auto-pick the first
+    // installed editor); any other value must be a known catalog id, else it's ignored.
+    if (typeof b.defaultEditor === "string") {
+      if (b.defaultEditor === "") cfg.defaultEditor = undefined;
+      else if (isKnownEditor(b.defaultEditor)) cfg.defaultEditor = b.defaultEditor;
+      if (b.defaultEditor === "" || isKnownEditor(b.defaultEditor)) {
+        saveConfig(cfg);
+        broadcast("settings_changed", { defaultEditor: cfg.defaultEditor ?? null });
+      }
+    }
     return c.json({
       ok: true,
       diffStats: diffStatsEnabled(),
@@ -218,6 +232,7 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       autoScan: cfg.autoScan === true,
       mcpApprovalGate: approvalGateEnabled(),
       mcpApprovalTimeoutSecs: getApprovalTimeoutSecs(),
+      defaultEditor: cfg.defaultEditor ?? null,
     });
   });
 }
