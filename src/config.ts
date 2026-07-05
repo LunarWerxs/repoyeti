@@ -304,6 +304,47 @@ export interface RepoYetiConfig {
    * hydrated at boot by `hydrateSecrets()` and stripped from config.json by `saveConfig()`.
    */
   apiToken?: string;
+  /**
+   * Agent Safety Rail (default ON): every MUTATING MCP tool call (git_commit, create_branch,
+   * git_checkout, git_push, git_pull, git_fetch — the readOnly:false tools in src/mcp/tools.ts)
+   * blocks pending a one-tap human approve/deny in the dashboard, over EITHER MCP transport
+   * (stdio or the in-process HTTP adapter). Read-only tool calls and dashboard-originated HTTP
+   * actions are never gated. Absent = ON (`b.mcpApprovalGate !== false` is the on-check). Set
+   * false to restore pre-gate behavior exactly. See src/approvals.ts + src/mcp/core.ts.
+   */
+  mcpApprovalGate?: boolean;
+  /**
+   * Auto-deny timeout for a pending MCP approval, in seconds. Clamped to [10, 3600] on read;
+   * absent = the built-in default (120s / src/approvals.ts APPROVAL_TIMEOUT_DEFAULT_MS). Owner
+   * setting (the Settings UI could expose it later; currently PUT /api/settings only).
+   */
+  mcpApprovalTimeoutSecs?: number;
+  /**
+   * Identity Firewall (default v1, kept dead simple): a list of rules pinning which saved
+   * identity MUST be used to commit/push in repos matching a filesystem-path glob. Every
+   * mutating action that resolves a commit identity (fetch/pull/push/commit/checkout/
+   * createBranch/stash/tag in src/service/core.ts's runAction, plus smart-commit +
+   * commit-selected in src/service/actions.ts) is preflight-checked against these rules — a
+   * matching repo whose resolved identity (src/identity.ts resolveRepoIdentity) isn't
+   * `requiredIdentityId` hard-blocks with IDENTITY_POLICY_VIOLATION, over BOTH the dashboard
+   * HTTP routes and MCP (which call the exact same service functions). Absent/empty = no
+   * rules — zero behavior change. See src/identity.ts matchIdentityRule / checkIdentityPolicy.
+   */
+  identityRules?: IdentityRule[];
+}
+
+/**
+ * One Identity Firewall rule: repos whose absolute path matches `pathPattern` (a glob — see
+ * src/identity.ts matchGlob for the tiny supported syntax) MUST resolve to `requiredIdentityId`
+ * for any commit/push. First-match-wins when a repo matches more than one rule (rules are
+ * checked in array order); a repo matching no rule is unrestricted (existing behavior).
+ */
+export interface IdentityRule {
+  /** Glob against the repo's absolute filesystem path (case-insensitive on Windows). E.g.
+   *  "D:/Work/**" or "**\/client-projects/*". */
+  pathPattern: string;
+  /** The only identity id allowed to commit/push in a matching repo. */
+  requiredIdentityId: string;
 }
 
 /** The redacted AI view safe to send to any client — keys are dropped entirely. */

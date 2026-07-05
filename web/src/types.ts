@@ -83,6 +83,14 @@ export interface Identity {
   sshKeyPath: string | null;
 }
 
+/** ⭐ Identity Firewall rule: repos whose absolute path matches `pathPattern` (a glob — see
+ *  src/identity.ts globMatch) MUST resolve to `requiredIdentityId`. Mirrors src/config.ts
+ *  IdentityRule. */
+export interface IdentityRule {
+  pathPattern: string;
+  requiredIdentityId: string;
+}
+
 export type DetectedIdentitySource =
   | "git-global"
   | "git-local"
@@ -320,6 +328,7 @@ export type ApiErrorCode =
   | "NOT_A_REPO"
   | "EXISTS"
   | "SUBMODULE_NOT_ACTIONABLE"
+  | "IDENTITY_POLICY_VIOLATION"
   | "INVALID_REF_NAME"
   | "BRANCH_EXISTS"
   | "UNMERGED_BRANCH"
@@ -483,4 +492,16 @@ export interface UpdateApplyResult {
   restartRequired: boolean;
   status: UpdateStatus;
   output: string[];
+}
+
+/** ⭐ Agent Safety Rail: one MCP mutating tool call awaiting owner approve/deny (mirrors
+ *  src/approvals.ts PendingApproval). Carried by GET /api/approvals and the
+ *  approval_pending/approval_resolved SSE events. */
+export interface PendingApproval {
+  id: string;
+  tool: string;
+  repo: string | null;
+  argsSummary: string;
+  requestedAt: number;
+  expiresAt: number;
 }

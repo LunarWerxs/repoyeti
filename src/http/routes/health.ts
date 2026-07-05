@@ -34,6 +34,12 @@ import {
   setAutoCommitPull,
   setAutoCommitPush,
 } from "../../auto-commit.ts";
+import {
+  approvalGateEnabled,
+  getApprovalTimeoutSecs,
+  setApprovalGateEnabled,
+  setApprovalTimeoutSecs,
+} from "../../approvals.ts";
 
 export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
   // ── auth surface ───────────────────────────────────────────────────────────
@@ -78,6 +84,10 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       // Auto-scan the whole machine on every app start (owner setting; off by default). A pure
       // stored flag — the web client acts on it at boot; the daemon has no runtime side effect.
       autoScan: cfg.autoScan === true,
+      // ⭐ Agent Safety Rail: whether mutating MCP tool calls are gated behind a human
+      // approve/deny (owner setting; default ON), and the auto-deny timeout in seconds.
+      mcpApprovalGate: approvalGateEnabled(),
+      mcpApprovalTimeoutSecs: getApprovalTimeoutSecs(),
     }),
   );
 
@@ -177,6 +187,19 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       saveConfig(cfg);
       broadcast("settings_changed", { autoScan: cfg.autoScan });
     }
+    // ── ⭐ Agent Safety Rail settings ────────────────────────────────────────
+    if (typeof b.mcpApprovalGate === "boolean") {
+      cfg.mcpApprovalGate = b.mcpApprovalGate;
+      setApprovalGateEnabled(b.mcpApprovalGate);
+      saveConfig(cfg);
+      broadcast("settings_changed", { mcpApprovalGate: cfg.mcpApprovalGate });
+    }
+    if (typeof b.mcpApprovalTimeoutSecs === "number" && Number.isFinite(b.mcpApprovalTimeoutSecs)) {
+      // setApprovalTimeoutSecs clamps to [10, 3600] → persist the clamped value.
+      cfg.mcpApprovalTimeoutSecs = setApprovalTimeoutSecs(b.mcpApprovalTimeoutSecs);
+      saveConfig(cfg);
+      broadcast("settings_changed", { mcpApprovalTimeoutSecs: cfg.mcpApprovalTimeoutSecs });
+    }
     return c.json({
       ok: true,
       diffStats: diffStatsEnabled(),
@@ -193,6 +216,8 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       autoCommitPull: autoCommitPullEnabled(),
       autoCommitPush: autoCommitPushEnabled(),
       autoScan: cfg.autoScan === true,
+      mcpApprovalGate: approvalGateEnabled(),
+      mcpApprovalTimeoutSecs: getApprovalTimeoutSecs(),
     });
   });
 }

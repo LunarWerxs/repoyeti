@@ -8,6 +8,7 @@ import CloudSyncSection from "./settings/CloudSyncSection.vue";
 import AppearanceSection from "./settings/AppearanceSection.vue";
 import SyncHotkeysSection from "./settings/SyncHotkeysSection.vue";
 import AutoCommitSection from "./settings/AutoCommitSection.vue";
+import AgentSafetySection from "./settings/AgentSafetySection.vue";
 import AiProvidersSection from "./settings/AiProvidersSection.vue";
 
 const open = defineModel<boolean>("open", { required: true });
@@ -47,6 +48,9 @@ const props = withDefaults(defineProps<{ side?: PushPanelSide; rightOffsetPx?: n
 
       <!-- Auto-commit timer (opt-in per repo on each card) ────────────────── -->
       <AutoCommitSection />
+
+      <!-- ⭐ Agent Safety Rail: MCP mutating-call approval gate + auto-deny timeout ── -->
+      <AgentSafetySection />
 
       <!-- AI commit-message providers, YOLO mode, and style ───────────────── -->
       <AiProvidersSection :open="open" />

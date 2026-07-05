@@ -1,6 +1,6 @@
 import { ref, computed, type Ref } from "vue";
 import { api } from "../api";
-import type { AccountsSnapshot, DetectedIdentity, GhAccount, Identity, Repo } from "../types";
+import type { AccountsSnapshot, DetectedIdentity, GhAccount, Identity, IdentityRule, Repo } from "../types";
 
 /**
  * Saved commit identities (CRUD + auto-detected candidates) and the machine-wide GitHub
@@ -51,6 +51,24 @@ export function useIdentities(repos: Ref<Repo[]>) {
       api.listRepos().then((r) => (repos.value = r)),
       loadAccounts(),
     ]);
+  }
+
+  // ── ⭐ Identity Firewall — rules pinning a required identity to a repo-path glob ──────
+  const identityRules = ref<IdentityRule[]>([]);
+  const identityRulesReady = ref(false);
+  async function loadIdentityRules(): Promise<void> {
+    try {
+      identityRules.value = await api.identityRules();
+    } catch {
+      identityRules.value = [];
+    } finally {
+      identityRulesReady.value = true;
+    }
+  }
+  /** Replace the full rule list. Throws ApiError (NOT_FOUND) → the caller toasts; adopts the
+   *  server's persisted list on success. */
+  async function setIdentityRules(rules: IdentityRule[]): Promise<void> {
+    identityRules.value = await api.setIdentityRules(rules);
   }
 
   // ── GitHub (gh) accounts — the machine-wide active-account switcher ────────────
@@ -113,6 +131,10 @@ export function useIdentities(repos: Ref<Repo[]>) {
     updateIdentity,
     removeIdentity,
     loadDetectedIdentities,
+    identityRules,
+    identityRulesReady,
+    loadIdentityRules,
+    setIdentityRules,
     ghAvailable,
     ghAccounts,
     gitCommitIdentity,

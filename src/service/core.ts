@@ -8,7 +8,7 @@ import { enqueue } from "../opqueue.ts";
 import { diffStatsEnabled } from "../read/diffstat.ts";
 import { broadcast } from "../bus.ts";
 import { getRepo, setRepoStatus, setRepoOrder } from "../db.ts";
-import { resolveRepoIdentity } from "../identity.ts";
+import { resolveRepoIdentity, enforceIdentityPolicy } from "../identity.ts";
 import { backendFor } from "../vcs/index.ts";
 import { switchGhAccount } from "../gh-cli.ts";
 import type { VcsBackend } from "../vcs/types.ts";
@@ -64,6 +64,11 @@ export async function runAction(
   if (repo.isSubmodule) {
     return { ok: false, code: "SUBMODULE_NOT_ACTIONABLE", message: "submodule worktree is not actionable", repoId };
   }
+  // ⭐ Identity Firewall: block before any network/commit op if this repo violates a pinned
+  // identity rule. Checked BEFORE ensureRepoAccount so a policy violation never even switches
+  // the machine's active gh account for a blocked repo.
+  const violation = enforceIdentityPolicy(repo);
+  if (violation) return { ...violation, repoId };
   if (syncAccount) await ensureRepoAccount(repo);
   const identity = resolveRepoIdentity(repo);
   const backend = backendFor(repo.vcs);

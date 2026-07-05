@@ -4,7 +4,7 @@
  */
 import { getWatchableRepos } from "../db.ts";
 import { enqueue } from "../opqueue.ts";
-import { resolveRepoIdentity } from "../identity.ts";
+import { resolveRepoIdentity, enforceIdentityPolicy } from "../identity.ts";
 import { backendFor } from "../vcs/index.ts";
 import {
   gitRemoteSet,
@@ -213,6 +213,10 @@ export async function smartCommitRepo(
   const g = guardRepo<"SUBMODULE_NOT_ACTIONABLE", { repoId: string }>(repoId, "SUBMODULE_NOT_ACTIONABLE", { repoId });
   if (g.fail) return g.fail;
   const repo = g.repo;
+  // ⭐ Identity Firewall: block before staging/committing anything if this repo violates a
+  // pinned identity rule (mirrors runAction's preflight in service/core.ts).
+  const violation = enforceIdentityPolicy(repo);
+  if (violation) return { ...violation, repoId };
   if (commits.length === 0) return { ok: false, code: "EMPTY_PLAN", message: "no commits in the plan", repoId };
   const identity = resolveRepoIdentity(repo);
   const backend = backendFor(repo.vcs);
@@ -277,6 +281,10 @@ export async function commitSelectedRepo(
   const g = guardRepo<"SUBMODULE_NOT_ACTIONABLE", { repoId: string }>(repoId, "SUBMODULE_NOT_ACTIONABLE", { repoId });
   if (g.fail) return g.fail;
   const repo = g.repo;
+  // ⭐ Identity Firewall: block before staging/committing anything if this repo violates a
+  // pinned identity rule (mirrors runAction's preflight in service/core.ts).
+  const violation = enforceIdentityPolicy(repo);
+  if (violation) return { ...violation, repoId };
   const identity = resolveRepoIdentity(repo);
   const backend = backendFor(repo.vcs);
 

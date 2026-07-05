@@ -53,6 +53,19 @@ export const IdentityUpdateSchema = z.object({
 
 export const AssignIdentitySchema = z.object({ identityId: z.string().trim().nullish() });
 
+// ── Identity Firewall (rules pinning a required identity to a path glob) ──────────
+const MAX_IDENTITY_RULES = 200;
+export const IdentityRulesSchema = z.object({
+  rules: z
+    .array(
+      z.object({
+        pathPattern: nonEmpty,
+        requiredIdentityId: nonEmpty,
+      }),
+    )
+    .max(MAX_IDENTITY_RULES),
+});
+
 // ── GitHub (gh) accounts ──────────────────────────────────────────────────────────
 // Switch the machine's active GitHub account. `host` defaults to github.com in the handler; `login`
 // is validated against the live `gh` account list there (an unknown login → NOT_FOUND).

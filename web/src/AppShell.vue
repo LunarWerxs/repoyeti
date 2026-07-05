@@ -5,6 +5,7 @@ import { useStore } from "./store";
 import { Button } from "@/components/ui/button";
 import AppHeader from "./components/AppHeader.vue";
 import ConflictConcierge from "./components/ConflictConcierge.vue";
+import AgentApprovalCard from "./components/AgentApprovalCard.vue";
 import RepoList from "./components/RepoList.vue";
 import RepoCard from "./components/RepoCard.vue";
 import RepoFilters from "./components/RepoFilters.vue";
@@ -81,6 +82,7 @@ onMounted(async () => {
 
     <main class="pt-3 pb-10">
       <AppContainer>
+      <AgentApprovalCard />
       <template v-if="store.loading">
         <div class="flex flex-col gap-2.5">
           <div

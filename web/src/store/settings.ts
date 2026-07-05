@@ -1,8 +1,9 @@
-import { ref, computed, watch, type Ref } from "vue";
+import { ref, reactive, computed, watch, type Ref } from "vue";
 import { toast } from "vue-sonner";
 import { api, ApiError, type AccessMode, type TunnelStatus, type SyncStatus } from "../api";
 import { t } from "../i18n";
 import { useTheme, type ThemeMode } from "@/lib/theme";
+import type { PendingApproval } from "../types";
 
 /** One repo that just fell further behind its remote (the `repo_behind` SSE payload). */
 export interface BehindRepo {
@@ -79,6 +80,8 @@ export function useSettings(deps: {
   autoCommitPull: Ref<boolean>;
   autoCommitPush: Ref<boolean>;
   autoScan: Ref<boolean>;
+  mcpApprovalGate: Ref<boolean>;
+  mcpApprovalTimeoutSecs: Ref<number>;
 }) {
   const {
     mode,
@@ -99,6 +102,8 @@ export function useSettings(deps: {
     autoCommitPull,
     autoCommitPush,
     autoScan,
+    mcpApprovalGate,
+    mcpApprovalTimeoutSecs,
   } = deps;
 
   // auth
@@ -311,6 +316,74 @@ export function useSettings(deps: {
     } catch (e) {
       autoScan.value = !enabled; // roll back
       throw e;
+    }
+  }
+
+  // ── ⭐ Agent Safety Rail (all optimistic; roll back on failure) ────────────────
+  /** Toggle whether mutating MCP tool calls are gated behind owner approve/deny. */
+  async function setMcpApprovalGate(enabled: boolean): Promise<void> {
+    mcpApprovalGate.value = enabled;
+    try {
+      await api.setMcpApprovalGate(enabled);
+    } catch (e) {
+      mcpApprovalGate.value = !enabled; // roll back
+      throw e;
+    }
+  }
+  /** Set the auto-deny timeout in seconds (adopts the server's clamped value). */
+  async function setMcpApprovalTimeoutSecs(secs: number): Promise<void> {
+    const prev = mcpApprovalTimeoutSecs.value;
+    mcpApprovalTimeoutSecs.value = secs;
+    try {
+      const r = await api.setMcpApprovalTimeoutSecs(secs);
+      mcpApprovalTimeoutSecs.value = r.mcpApprovalTimeoutSecs;
+    } catch (e) {
+      mcpApprovalTimeoutSecs.value = prev; // roll back
+      throw e;
+    }
+  }
+
+  // ── ⭐ Agent Safety Rail — pending approvals (SSE-driven; hydrated on boot) ────
+  const pendingApprovals = ref<PendingApproval[]>([]);
+  const approvalBusy = reactive<Record<string, boolean>>({});
+
+  /** Hydrate the pending-approvals list (app boot / reconnect). SSE keeps it live after that. */
+  async function loadApprovals(): Promise<void> {
+    try {
+      pendingApprovals.value = await api.listApprovals();
+    } catch {
+      /* best-effort — SSE will still deliver approval_pending for anything new */
+    }
+  }
+  /** Upsert one pending approval (approval_pending SSE event). */
+  function addPendingApproval(a: PendingApproval): void {
+    const i = pendingApprovals.value.findIndex((p) => p.id === a.id);
+    if (i === -1) pendingApprovals.value.push(a);
+    else pendingApprovals.value[i] = a;
+  }
+  /** Drop a resolved approval (approval_resolved SSE event, or after a manual approve/deny). */
+  function removePendingApproval(id: string): void {
+    pendingApprovals.value = pendingApprovals.value.filter((p) => p.id !== id);
+    delete approvalBusy[id];
+  }
+  /** Owner tapped Approve on the dashboard card. */
+  async function approveCall(id: string): Promise<void> {
+    approvalBusy[id] = true;
+    try {
+      await api.approveCall(id);
+      removePendingApproval(id);
+    } finally {
+      delete approvalBusy[id];
+    }
+  }
+  /** Owner tapped Deny on the dashboard card. */
+  async function denyCall(id: string): Promise<void> {
+    approvalBusy[id] = true;
+    try {
+      await api.denyCall(id);
+      removePendingApproval(id);
+    } finally {
+      delete approvalBusy[id];
     }
   }
 
@@ -676,6 +749,15 @@ export function useSettings(deps: {
     setAutoCommitPull,
     setAutoCommitPush,
     setAutoScan,
+    setMcpApprovalGate,
+    setMcpApprovalTimeoutSecs,
+    pendingApprovals,
+    approvalBusy,
+    loadApprovals,
+    addPendingApproval,
+    removePendingApproval,
+    approveCall,
+    denyCall,
     syncStatus,
     syncLoading,
     syncActionBusy,

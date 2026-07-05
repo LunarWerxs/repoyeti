@@ -46,23 +46,23 @@ phone-reachable.
       **Verified:** `resolveRepoIdentity` picks credentials on every commit/push path but nothing compares
       against a required identity — the enforcement layer is entirely absent. Keep v1 dead simple
       (path-pattern → required identity).
-- [ ] **Conflict Concierge — re-scoped** *(S)* — the original premise is stale: conflicted/mid-op repos
+- [x] **Conflict Concierge — re-scoped** *(S — DONE 2026-07-05: persistent state-driven triage card, per-session dismiss, click-through; E2E-verified live against a real conflicted repo)* — the original premise is stale: conflicted/mid-op repos
       are **no longer silently skipped**. `repo_auto_commit_blocked` SSE events + a warning toast already
       ship (`src/auto-commit.ts:124-292` → `web/src/store/settings.ts:552`). Remaining work: upgrade the
       transient toast to a persistent "3 repos need you" triage card with per-repo files/branches —
       triage, not resolution (the "no merge UI" non-goal stands).
-- [ ] **`triage_briefing` MCP tool** *(S)* — one structured "what needs attention across all repos" call
+- [x] **`triage_briefing` MCP tool** *(S — DONE 2026-07-05: readOnly tool in both stdio+HTTP adapters; conflicted/drifted/autoCommitBlocked/dirty groups)* — one structured "what needs attention across all repos" call
       for agents (conflicts + blocked auto-commits + behind). The `drift` tool already covers
       ahead/behind; extend from there. Natural bundle with the Safety Rail.
 
 ### Hygiene & debt (new — 2026-07-05 sweep)
 
-- [ ] **Sync auto-push covers only the theme** *(S)* — only `themeMode` has a debounce-push watcher
+- [x] **Sync auto-push covers only the theme** *(S — DONE 2026-07-05: silent debounced watcher over all 12 PREF_KEYS, mirrors the theme watcher's guards; 6 store tests)* — only `themeMode` has a debounce-push watcher
       (`web/src/store/settings.ts:439`); none of the 12 allowlisted `PREF_KEYS` setters push after a
       change, so device B sees nothing until a manual "Sync Now" — violating the feature's own spec
       (`docs/CONNECTIONS_SETTINGS_SYNC.md`: "on save, debounce and push"). Wire the remaining setters the
       same way theme already works.
-- [ ] **Cloud-sync has zero tests** *(M)* — `src/connections-sync.ts` (token refresh-on-401, rotation,
+- [x] **Cloud-sync has zero tests** *(M — DONE 2026-07-05: 19 connections-sync tests + 13 sync-route tests against a mocked Connections server; full suite 388 pass / 0 fail)* — `src/connections-sync.ts` (token refresh-on-401, rotation,
       allowlist filtering, enable/disable/forget lifecycle) and `src/http/routes/sync.ts` have no coverage,
       unlike every comparable route module in `tests/`. This is live auth/token code — test it before it
       calcifies.
@@ -93,7 +93,7 @@ MCP + CLI + GUI as equal clients of one daemon.
 
 ### Fix first (security — 2026-07-05 sweep)
 
-- [ ] **Close the wildcard-CORS / token-less shutdown hole** *(S)* — `app.use("/api/*", cors())`
+- [x] **Close the wildcard-CORS / token-less shutdown hole** *(S — DONE 2026-07-05: origin allowlist + a 403 Origin-check middleware on all mutating routes — closes the simple-request CSRF gap CORS alone can't; 4 new tests)* — `app.use("/api/*", cors())`
       (`server/src/http/index.ts:15`) allows all origins, and `POST /api/shutdown` accepts the
       `x-devwebui-shutdown-source: ui` header with no token at all (`core.ts:139`). Any website open in
       any browser tab can `fetch()` the local daemon cross-origin: shut it down, stop/restart managed
@@ -118,21 +118,21 @@ MCP + CLI + GUI as equal clients of one daemon.
 - [ ] **Dependency-ordered startup** *(S, cut down hard)* — manual declaration only ("wait for that
       process's port"), one readiness check via the existing `isPortListening()` TCP probe. No HTTP
       probes, no env-var auto-inference (it *will* misfire exactly where trust matters).
-- [ ] **Port-takeover residual** *(S)* — the guided free-port flow shipped since the audit (PID + name +
+- [x] **Port-takeover residual** *(S — DONE 2026-07-05: cmdline + uptime captured on Windows/unix, shown in the confirm toast; smoke-tested live)* — the guided free-port flow shipped since the audit (PID + name +
       managed-vs-stray + confirm, wired end-to-end); the remaining polish is capturing and showing
       **cmdline + uptime** in `portOwners()`. (The old blind `freePort()` sweep survives only behind the
       explicit "free port on start" toggle — intentional.)
 
 ### Hygiene & debt (new — 2026-07-05 sweep)
 
-- [ ] **README is stale on MCP** *(S)* — still claims the dropped `@modelcontextprotocol/sdk` dependency
+- [x] **README is stale on MCP** *(S — DONE 2026-07-05: mcp-stdio.mjs engine credited, full 17-tool list)* — still claims the dropped `@modelcontextprotocol/sdk` dependency
       (replaced by the shared `mcp-stdio.mjs` engine) and lists 12 of the 17 shipped tools —
       `enable_process`/`disable_process`/`enable_project`/`disable_project`/`take_over_autostart` are
       invisible to anyone reading the README.
-- [ ] **Windows FFI metrics path has zero CI** *(M)* — CI runs ubuntu-only and its own trailing comment
+- [x] **Windows FFI metrics path has zero CI** *(M — DONE 2026-07-05: 3-OS CI matrix added; the windows-latest leg now runs the launcher self-test + suite via the existing skipIf guards. Nice-to-have left: a dedicated FFI struct-offset unit test)* — CI runs ubuntu-only and its own trailing comment
       flags the missing `windows-latest` matrix leg. `server/src/metrics.ts` does raw Win32 struct-offset
       parsing that would regress silently (wrong CPU/mem numbers in the field, no CI failure).
-- [ ] **DEV-ONLY tray item is untracked** *(S)* — `misc/DevWebUI-Tray.ps1:285` self-flags "remove before
+- [x] **DEV-ONLY tray item is untracked** *(S — DONE 2026-07-05: Rebuild & Restart now only exists when DEVWEBUI_DEV=1 or a source tree is present; self-test still passes)* — `misc/DevWebUI-Tray.ps1:285` self-flags "remove before
       public distribution" (Rebuild & Restart assumes bun + source are present), but nothing tracks it.
       Remove or dev-gate it before any non-developer distribution.
 
@@ -168,11 +168,11 @@ mix them up**:
 | **`redesign`** (lowercase ASCII) | Everything a machine reads: package name, binary, CLI command, `REDESIGN_*` env vars, MCP server name, release asset names (`redesign-linux-x64` …) |
 | **ReDesign** (ASCII prose fallback) | Where prose must be ASCII: the GitHub repo name, URLs, filenames — and once in README prose so the name stays greppable/searchable without the macron |
 
-- [ ] **Prong 1 — display rename** *(S, anytime)* — swap user-visible strings to "RēDesign": Vue
+- [x] **Prong 1 — display rename** *(S — DONE 2026-07-05: web UI titles/i18n strings, CLI + boot banner "RēDesign", README title "RēDesign (ReDesign)")* — swap user-visible strings to "RēDesign": Vue
       `document.title` + header/app-title strings, README and docs titles (keep an ASCII "(ReDesign)"
       alias on first mention), CLI `--help` banner, the Connections app *display label* (the client_id
       itself does not change).
-- [ ] **Prong 2 — identifier rename** *(S–M, ride the Bun/TS migration window so names churn once)* —
+- [x] **Prong 2 — identifier rename** *(S–M — DONE 2026-07-05 with the migration: package/bin/binary `redesign`, `redesign-*` release assets, `REDESIGN_*` env vars, MCP serverInfo `redesign`; data paths untouched. Left for the owner: the GitHub repo rename Reimagine → ReDesign, and the optional local folder rename)* —
       `package.json` name → `redesign`, binary + release assets (`redesign.exe`, `redesign-linux-x64` …),
       any `REIMAGINE_*` env vars / `reimagine`-named data paths or storage keys (with a one-time fallback
       read of the old names so users' runs/settings aren't stranded), MCP server name, GitHub repo rename
@@ -197,20 +197,22 @@ mix them up**:
       (`run` accepts input/prompt selection strings, captions are stored per job, `get_run` returns the
       full manifest); only the composite MCP "recipe" tool (folder of screenshots + preset in → structured
       manifest + caption summaries out) is missing.
-- [ ] **Rolling star tally** *(S)* — the head-to-head star UI exists per-run, but stars don't survive the
+- [x] **Rolling star tally** *(S — DONE 2026-07-05: first-star-per-run persisted to localStorage, capped 20 runs, readout in the Viewer status section)* — the head-to-head star UI exists per-run, but stars don't survive the
       run (pruned in `viewer.ts:72`). "Starred first in 13 of your last 20 runs" needs cross-run
       persistence first. Keep it a tally, not a leaderboard.
 
 ### Hygiene & debt (new — 2026-07-05 sweep)
 
-- [ ] **`.env` written without 0600** *(S)* — `src/server/settings.js:136` writes the one file holding
+- [x] **`.env` written without 0600** *(S — DONE 2026-07-05 as a migration rider: `.env` writer + generic `writeJSON()` both 0o600 now)* — `src/server/settings.js:136` writes the one file holding
       every provider's plaintext API keys with default permissions, while `src/connections.js:50` already
       sets `mode: 0o600` for its own refresh token. Match that precedent there and in `src/util.js`'s
       generic `writeJSON()`.
 - [ ] **Connections OIDC/sync has zero tests** *(M)* — `src/connections.js` (PKCE, token
-      refresh/rotation, push/pull merge, `disable(forget)`) and `src/server/connections-routes.js` have no
-      coverage in the 96-test suite; every other subsystem does.
-- [ ] **Undo-toast for `deleteRun` was never actually tracked** *(S)* — the audit called
+      refresh/rotation, push/pull merge, `disable(forget)`) and its sync routes (now
+      `src/http/routes/connections.ts` post-migration) have no coverage. *(Post-migration note:
+      `connections.js` and `updater.js` are the last two CJS files — convert to TS and test in one
+      pass; RepoYeti's new FakeConnectionsServer test pattern is the template.)*
+- [x] **Undo-toast for `deleteRun` was never actually tracked** *(S — DONE 2026-07-05: 6s optimistic undo window before the API call, sendBeacon flush on tab close)* — the audit called
       "styled-dialogs/undo-toast" tracked maintenance, but only styled-dialogs had a ticket (done).
       `src/store.js:284` still `rmSync`s a run's outputs irrecoverably the instant confirm is clicked —
       add a few-second snackbar undo window (vue-sonner is already in use).
@@ -237,16 +239,16 @@ server in the path.
 
 ### Fix first (trust bugs — 2026-07-05 sweep)
 
-- [ ] **Clipboard paste clobbers the user's clipboard** *(S)* — anything over 80 chars (most real
+- [x] **Clipboard paste clobbers the user's clipboard** *(S — DONE 2026-07-05: prior text saved before EmptyClipboard, restored after the settle delay; non-text formats documented as unrestorable)* — anything over 80 chars (most real
       sentences) goes through `paste_via_clipboard` (`src/output.rs:191`), which empties and overwrites
       the clipboard and never restores it. A just-copied password/snippet/link is silently gone. Save the
       prior contents before `EmptyClipboard`, restore after the Ctrl+V settles.
-- [ ] **`enable_logging` writes full transcripts to plaintext** *(S)* — `src/stt/mod.rs:581,585` log the
+- [x] **`enable_logging` writes full transcripts to plaintext** *(S — DONE 2026-07-05: default logs are char-count-only; new opt-in `log_transcripts` flag + settings checkbox; README/SECURITY caveated)* — `src/stt/mod.rs:581,585` log the
       complete dictated text at info level into a non-rotating `quickdictate.log` whenever the documented
       debug toggle (or `QUICKDICTATE_LOG`) is on — while README and SECURITY.md say "no transcripts are
       collected" with no caveat. Redact transcript text from logs (or gate it behind its own explicit
       opt-in) and caveat the docs. This is the app's core trust promise.
-- [ ] **Dead config flags in the user-facing template** *(S)* — `voice_activation` and `bulk_insert` ship
+- [x] **Dead config flags in the user-facing template** *(S — DONE 2026-07-05: both removed; old user settings.json files still parse)* — `voice_activation` and `bulk_insert` ship
       in `settings.example.json` (which the README walks users through) and are read nowhere; toggling
       them is a no-op. Wire them up or strip them.
 
@@ -259,7 +261,7 @@ server in the path.
       focus-resolution code exists anywhere in the app. Real scope: Win32 foreground-window/exe detection
       + per-profile config schema + switch logic. Still the top feature (the single highest-frequency
       daily annoyance) — just don't budget it as "hook exists."
-- [ ] **Transcript History + Undo Stack** *(S)* — confirmed: `last_transcription` is a single
+- [x] **Transcript History + Undo Stack** *(S — DONE 2026-07-05: rolling 50-entry timestamped history + "Recent transcriptions" tray submenu with click-to-repaste; most-recent re-paste unchanged)* — confirmed: `last_transcription` is a single
       `Mutex<Option<String>>` slot (`src/state.rs:51`). Generalize to a rolling timestamped history with
       re-paste. Cheapest real feature on the list, and the substrate Voice Commands needs.
 - [ ] **Voice Commands, precision subset** *(M, capped hard)* — v1 = "scratch that" (undo last chunk) + a
@@ -282,7 +284,7 @@ server in the path.
 
 ## Cross-cutting
 
-- [ ] **Linux/Mac builds for the three web apps** *(S — mostly CI wiring, ~1–2 hrs each)* — RepoYeti,
+- [x] **Linux/Mac builds for the three web apps** *(S — WIRED 2026-07-05: DevWebUI got 3-OS ci.yml + release.yml (`devwebui-*` assets); RēDesign got both as migration Phase 6 (`redesign-*` assets); RepoYeti already had them. Remaining acceptance: first green Actions run, which needs an owner push)* — RepoYeti,
       DevWebUI, and (post-conversion) Reimagine are all Bun+Vue with no native addons, so they build for
       Linux/macOS via **host-native matrix compile** — each OS runner runs a bare `bun build --compile`
       (no `--target`), exactly as RepoYeti already does. The CI matrix doubles as the test rig for OSes we
@@ -291,7 +293,7 @@ server in the path.
       **DevWebUI** build script is release-ready but has **no `release.yml`** and an ubuntu-only CI — copy
       RepoYeti's two workflows, rename assets `devwebui-*`, add the `macos`/`windows` CI legs; **Reimagine**
       has no `.github` at all — lands as Phase 6 of its conversion below. No app code changes needed.
-- [ ] **⭐ Reimagine → Bun + TS + Hono** *(L — ~3–5 focused days)* — bring Reimagine's backend onto the
+- [x] **⭐ Reimagine → Bun + TS + Hono** *(L — DONE 2026-07-05: all 7 phases executed and verified with runtime evidence — typecheck clean, 66 bun tests green, daemon + compiled `dist/redesign.exe` + MCP stdio handshake all booted live; `.env` 0600 and `redesign` naming riders landed. Leftovers: `connections.js`/`updater.js` still CJS-bridged — see RēDesign hygiene)* — bring Reimagine's backend onto the
       same stack as RepoYeti/DevWebUI (its Vue/Vite/TS web is already there; this is server-side only). It's
       closer than it looks: **zero runtime npm deps** (Bun-native built-ins + `fetch`), the kit engines
       (`mcp-stdio`/`connections-locker`/`updater-engine`) are already vendored, MCP+CLI already match the

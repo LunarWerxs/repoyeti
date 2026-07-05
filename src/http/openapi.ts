@@ -35,6 +35,7 @@ import {
   IdentityCreateSchema,
   IdentityUpdateSchema,
   AssignIdentitySchema,
+  IdentityRulesSchema,
   AccountSwitchSchema,
   AccountIdentitySchema,
   TunnelSettingsSchema,
@@ -194,6 +195,17 @@ export const META: Record<string, RouteMeta> = {
   "PUT /api/identities/:id": { summary: "Update a commit identity.", body: IdentityUpdateSchema, tags: ["identities"] },
   "DELETE /api/identities/:id": { summary: "Delete a commit identity.", tags: ["identities"] },
 
+  // ── ⭐ Identity Firewall — rules pinning a required identity to a repo-path glob ────────────
+  "GET /api/identity-rules": {
+    summary: "List Identity Firewall rules (path glob → required identity).",
+    tags: ["identities"],
+  },
+  "PUT /api/identity-rules": {
+    summary: "Replace the full Identity Firewall rule list.",
+    body: IdentityRulesSchema,
+    tags: ["identities"],
+  },
+
   // ── GitHub (gh) accounts — machine-wide active account switcher ─────────────────────
   "GET /api/accounts": { summary: "List the machine's authenticated GitHub (gh) accounts + which is active.", tags: ["accounts"] },
   "POST /api/accounts/switch": { summary: "Switch the active GitHub (gh) account (and align the credential username pin).", body: AccountSwitchSchema, tags: ["accounts"] },
@@ -215,6 +227,11 @@ export const META: Record<string, RouteMeta> = {
 
   // ── MCP (Model Context Protocol) — AI agent tool access ────────────────────────────
   "POST /api/mcp": { summary: "MCP JSON-RPC endpoint (Streamable HTTP) — AI tool access.", tags: ["mcp"] },
+
+  // ── ⭐ Agent Safety Rail — pending MCP mutating-call approvals ──────────────────────
+  "GET /api/approvals": { summary: "List MCP tool calls currently pending owner approve/deny.", tags: ["mcp"] },
+  "POST /api/approvals/:id/approve": { summary: "Approve a pending MCP mutating tool call.", tags: ["mcp"] },
+  "POST /api/approvals/:id/deny": { summary: "Deny a pending MCP mutating tool call.", tags: ["mcp"] },
 };
 
 /** Hono path params (`:id`) → OpenAPI template params (`{id}`). */

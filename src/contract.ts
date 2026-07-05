@@ -32,6 +32,8 @@ export type ApiErrorCode =
   | "NOT_A_REPO"
   | "EXISTS"
   | "SUBMODULE_NOT_ACTIONABLE"
+  // ── Identity Firewall (mirror src/identity.ts checkIdentityPolicy) ──
+  | "IDENTITY_POLICY_VIOLATION"
   // ── branches / stash / discard (mirror inspect.ts + git-actions.ts) ──
   | "INVALID_REF_NAME"
   | "BRANCH_EXISTS"
@@ -164,6 +166,7 @@ export function statusForCode(code: ApiCode): ContentfulStatusCode {
     case "STASH_CONFLICT":
     case "STASH_EMPTY":
     case "PLAN_STALE":
+    case "IDENTITY_POLICY_VIOLATION":
       return 409;
     // 502 — an upstream (git remote / AI provider) failed.
     case "SSH_AUTH_FAILED":

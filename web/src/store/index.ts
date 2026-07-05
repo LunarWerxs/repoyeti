@@ -2,7 +2,14 @@ import { defineStore } from "pinia";
 import { ref, reactive, watch } from "vue";
 import { useEventSource } from "@vueuse/core";
 import { api, ApiError, type AccessMode, type TunnelStatus } from "../api";
-import type { ActionName, ActionResult, Repo, UpdateApplyResult, UpdateStatus } from "../types";
+import type {
+  ActionName,
+  ActionResult,
+  PendingApproval,
+  Repo,
+  UpdateApplyResult,
+  UpdateStatus,
+} from "../types";
 import { useSelfUpdate } from "@/lib/useSelfUpdate";
 import { useRepoActions, type StatusKey } from "./repo";
 import { useAi } from "./ai";
@@ -79,6 +86,11 @@ export const useStore = defineStore("repoyeti", () => {
   // kept live via `settings_changed`; off until status loads (opt-in) — see AppShell.vue's
   // scheduleIdle(() => autoScan && startScan()) on mount.
   const autoScan = ref(false);
+  // ⭐ Agent Safety Rail: whether mutating MCP tool calls are gated behind owner approve/deny.
+  // From /api/status, kept live via `settings_changed`; on until status loads (safe default).
+  const mcpApprovalGate = ref(true);
+  // Auto-deny timeout for a pending approval, in seconds. From /api/status; 120 until loaded.
+  const mcpApprovalTimeoutSecs = ref(120);
 
   // Min query length before the changed-files "search content" toggle greps. Server-owned
   // (from /api/status) so the UI gate never drifts from the daemon's; 3 until status loads.
@@ -203,6 +215,10 @@ export const useStore = defineStore("repoyeti", () => {
     updateIdentity,
     removeIdentity,
     loadDetectedIdentities,
+    identityRules,
+    identityRulesReady,
+    loadIdentityRules,
+    setIdentityRules,
     ghAvailable,
     ghAccounts,
     gitCommitIdentity,
@@ -242,6 +258,15 @@ export const useStore = defineStore("repoyeti", () => {
     setAutoCommitPull,
     setAutoCommitPush,
     setAutoScan,
+    setMcpApprovalGate,
+    setMcpApprovalTimeoutSecs,
+    pendingApprovals,
+    approvalBusy,
+    loadApprovals,
+    addPendingApproval,
+    removePendingApproval,
+    approveCall,
+    denyCall,
     syncStatus,
     syncLoading,
     syncActionBusy,
@@ -286,6 +311,8 @@ export const useStore = defineStore("repoyeti", () => {
     autoCommitPull,
     autoCommitPush,
     autoScan,
+    mcpApprovalGate,
+    mcpApprovalTimeoutSecs,
   });
 
   async function loadAll(): Promise<void> {
@@ -299,6 +326,8 @@ export const useStore = defineStore("repoyeti", () => {
         loadStatus(),
         loadAccounts(), // best-effort — populates the header account switcher on boot
         loadSyncStatus(), // best-effort — applies any synced appearance on boot
+        loadApprovals(), // best-effort — hydrates any already-pending MCP approvals on boot
+        loadIdentityRules(), // best-effort — hydrates the Identity Firewall rules on boot
       ]);
       repos.value = r;
       identities.value = i;
@@ -342,6 +371,8 @@ export const useStore = defineStore("repoyeti", () => {
       autoCommitPull.value = s.autoCommitPull ?? true;
       autoCommitPush.value = s.autoCommitPush ?? true;
       autoScan.value = s.autoScan ?? false;
+      mcpApprovalGate.value = s.mcpApprovalGate ?? true;
+      mcpApprovalTimeoutSecs.value = s.mcpApprovalTimeoutSecs ?? 120;
       contentSearchMin.value = s.minContentSearch ?? 3;
     } catch {
       /* status is optional — leave whatever we have */
@@ -359,6 +390,7 @@ export const useStore = defineStore("repoyeti", () => {
         "repo_added",
         "repo_removed",
         "repo_identity_changed",
+        "identity_rules_changed",
         "repo_account_changed",
         "repo_hidden_changed",
         "repo_pinned_changed",
@@ -374,6 +406,8 @@ export const useStore = defineStore("repoyeti", () => {
         "scan_progress",
         "scan_done",
         "scan_cancelled",
+        "approval_pending",
+        "approval_resolved",
       ],
       { autoReconnect: { retries: -1, delay: 2500 } },
     );
@@ -396,7 +430,10 @@ export const useStore = defineStore("repoyeti", () => {
           if (payload.id) repos.value = repos.value.filter((r) => r.id !== payload.id);
         } else if (event.value === "repo_identity_changed")
           patchRepo(payload.id, { identityId: payload.identityId });
-        else if (event.value === "repo_account_changed")
+        else if (event.value === "identity_rules_changed") {
+          // Another tab/device edited the rules — adopt the fresh list live.
+          if (Array.isArray(payload.rules)) identityRules.value = payload.rules;
+        } else if (event.value === "repo_account_changed")
           patchRepo(payload.id, {
             syncAccountHost: payload.syncAccountHost ?? null,
             syncAccountLogin: payload.syncAccountLogin ?? null,
@@ -442,10 +479,19 @@ export const useStore = defineStore("repoyeti", () => {
           if (typeof payload.autoCommitPull === "boolean") autoCommitPull.value = payload.autoCommitPull;
           if (typeof payload.autoCommitPush === "boolean") autoCommitPush.value = payload.autoCommitPush;
           if (typeof payload.autoScan === "boolean") autoScan.value = payload.autoScan;
+          if (typeof payload.mcpApprovalGate === "boolean") mcpApprovalGate.value = payload.mcpApprovalGate;
+          if (typeof payload.mcpApprovalTimeoutSecs === "number")
+            mcpApprovalTimeoutSecs.value = payload.mcpApprovalTimeoutSecs;
           if (payload.tunnel) tunnelConfig.value = payload.tunnel as TunnelStatus;
           // The daemon applied a pulled cloud-sync doc (possibly from another device) — re-fetch
           // status and re-apply the synced appearance (loadSyncStatus applies it internally).
           if (payload.cloudSync) void loadSyncStatus();
+        } else if (event.value === "approval_pending") {
+          // A headless agent's mutating MCP call is now awaiting owner approve/deny.
+          addPendingApproval(payload as PendingApproval);
+        } else if (event.value === "approval_resolved") {
+          // Approved/denied/timed out — elsewhere (another tab) or by the auto-deny timer.
+          removePendingApproval(payload.id);
         } else if (event.value === "scan_started") {
           // A rescan began (from the modal, or another device) — reset the live counters.
           scanning.value = true;
@@ -591,6 +637,15 @@ export const useStore = defineStore("repoyeti", () => {
     setRepoAutoCommit,
     autoScan,
     setAutoScan,
+    mcpApprovalGate,
+    mcpApprovalTimeoutSecs,
+    setMcpApprovalGate,
+    setMcpApprovalTimeoutSecs,
+    pendingApprovals,
+    approvalBusy,
+    loadApprovals,
+    approveCall,
+    denyCall,
     syncStatus,
     syncLoading,
     syncActionBusy,
@@ -645,6 +700,10 @@ export const useStore = defineStore("repoyeti", () => {
     updateIdentity,
     removeIdentity,
     loadDetectedIdentities,
+    identityRules,
+    identityRulesReady,
+    loadIdentityRules,
+    setIdentityRules,
     cloneRepo,
     // GitHub (gh) accounts
     ghAvailable,

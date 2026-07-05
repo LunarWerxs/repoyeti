@@ -660,6 +660,13 @@
     "autoCommitPushHint": "Push to the remote after each auto-commit. Turn off to commit locally only.",
     "autoCommitDescription": "A repo with a merge conflict, or mid-merge/rebase, is always skipped — never auto-committed. Uses your AI provider to split the commits when one is set, otherwise a deterministic grouping.",
     "autoCommitFailed": "Could not change auto-commit settings",
+    "cardMcpApprovalGate": "Agent Safety Rail",
+    "mcpApprovalGate": "Require approval for agent actions",
+    "mcpApprovalGateHint": "Any AI agent connected over MCP (Claude Desktop/Code, Cursor, …) must wait for you to approve a commit, branch switch, push, pull, or fetch here in the dashboard before it runs. Read-only lookups are never gated.",
+    "mcpApprovalTimeout": "Auto-deny after",
+    "mcpApprovalTimeoutHint": "If nobody responds in time, the call is denied automatically so the agent never hangs.",
+    "mcpApprovalGateDescription": "Only MCP tool calls from an agent are gated — actions you take here in the dashboard are never blocked.",
+    "mcpApprovalGateFailed": "Could not change the Agent Safety Rail settings",
     "desktopNotify": "Desktop notifications",
     "desktopNotifyHint": "Pop a system notification when a repo falls behind — even when this tab isn't focused.",
     "desktopNotifyBlocked": "Notifications are blocked — allow them for this site in your browser settings.",
@@ -711,6 +718,16 @@
     "reasonGeneric": "Mid-git-operation",
     "dismiss": "Dismiss",
     "dismissAria": "Dismiss {name} for this session"
+  },
+  "approvals": {
+    "title": "Agent waiting for approval",
+    "countOne": "1 call needs you",
+    "countMany": "{count} calls need you",
+    "countdown": "Auto-deny in {seconds}s",
+    "approve": "Approve",
+    "approveAria": "Approve {tool}",
+    "deny": "Deny",
+    "denyAria": "Deny {tool}"
   },
   "time": {
     "daysAgo": "{n}d ago",

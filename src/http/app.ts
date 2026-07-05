@@ -29,6 +29,12 @@ import {
   AUTO_COMMIT_INTERVAL_DEFAULT_S,
   AUTO_COMMIT_AT_DEFAULT,
 } from "../auto-commit.ts";
+import {
+  setApprovalGateEnabled,
+  setApprovalTimeoutSecs,
+  APPROVAL_TIMEOUT_DEFAULT_S,
+} from "../approvals.ts";
+import { setIdentityRulesConfig } from "../identity.ts";
 import * as health from "./routes/health.ts";
 import * as auth from "./routes/auth.ts";
 import * as token from "./routes/token.ts";
@@ -38,6 +44,7 @@ import * as roots from "./routes/roots.ts";
 import * as scan from "./routes/scan.ts";
 import * as servers from "./routes/servers.ts";
 import * as identities from "./routes/identities.ts";
+import * as identityRules from "./routes/identity-rules.ts";
 import * as accounts from "./routes/accounts.ts";
 import * as repoFlags from "./routes/repo-flags.ts";
 import * as gitOps from "./routes/git-ops.ts";
@@ -53,6 +60,7 @@ import * as events from "./routes/events.ts";
 import * as openapi from "./routes/openapi.ts";
 import * as mcp from "./routes/mcp.ts";
 import * as sync from "./routes/sync.ts";
+import * as approvals from "./routes/approvals.ts";
 
 export interface AppHooks {
   requestShutdown?: () => void;
@@ -83,6 +91,12 @@ export function createApp(cfg: RepoYetiConfig, hooks: AppHooks = {}): Hono {
   setAutoCommitAt(cfg.autoCommitAt ?? AUTO_COMMIT_AT_DEFAULT);
   setAutoCommitPull(cfg.autoCommitPull !== false); // absent = on
   setAutoCommitPush(cfg.autoCommitPush !== false); // absent = on
+  // ⭐ Agent Safety Rail: gate defaults ON (absent = gated); timeout defaults to 120s.
+  setApprovalGateEnabled(cfg.mcpApprovalGate !== false);
+  setApprovalTimeoutSecs(cfg.mcpApprovalTimeoutSecs ?? APPROVAL_TIMEOUT_DEFAULT_S);
+  // ⭐ Identity Firewall: hand the module the live config so every preflight check
+  // (runAction / smartCommitRepo / commitSelectedRepo) reads the current `identityRules`.
+  setIdentityRulesConfig(cfg);
 
   const app = new Hono();
 
@@ -102,6 +116,7 @@ export function createApp(cfg: RepoYetiConfig, hooks: AppHooks = {}): Hono {
   scan.register(app, deps);
   servers.register(app, deps);
   identities.register(app, deps);
+  identityRules.register(app, deps);
   accounts.register(app, deps);
   repoFlags.register(app, deps);
   gitOps.register(app, deps);
@@ -117,6 +132,7 @@ export function createApp(cfg: RepoYetiConfig, hooks: AppHooks = {}): Hono {
   openapi.register(app, deps);
   mcp.register(app, deps);
   sync.register(app, deps);
+  approvals.register(app, deps);
 
   // Static PWA — LAST, so the /* catch-all only catches non-API routes.
   mountWeb(app);

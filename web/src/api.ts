@@ -15,10 +15,12 @@ import type {
   FileContent,
   FileDiff,
   Identity,
+  IdentityRule,
   DetectedIdentity,
   LogResult,
   CommitDetail,
   LoreServer,
+  PendingApproval,
   Repo,
   SmartCommitResult,
   StashList,
@@ -114,6 +116,11 @@ export interface RuntimeStatus {
   autoCommitPush: boolean;
   /** Whether the whole machine is auto-scanned for repos on every app start (owner setting). */
   autoScan: boolean;
+  /** ⭐ Agent Safety Rail: whether mutating MCP tool calls are gated behind owner approve/deny
+   *  (owner setting; default ON). */
+  mcpApprovalGate: boolean;
+  /** Auto-deny timeout for a pending MCP approval, in seconds (owner setting; default 120). */
+  mcpApprovalTimeoutSecs: number;
 }
 
 export interface ModeResult {
@@ -255,6 +262,20 @@ export const api = {
   /** Toggle auto-scanning the whole machine on every app start (owner setting; persisted). */
   setAutoScan: (enabled: boolean) =>
     req<{ ok: boolean; autoScan: boolean }>("PUT", "/api/settings", { autoScan: enabled }),
+  /** ⭐ Agent Safety Rail: toggle the MCP mutating-call approval gate (owner setting; persisted). */
+  setMcpApprovalGate: (enabled: boolean) =>
+    req<{ ok: boolean; mcpApprovalGate: boolean }>("PUT", "/api/settings", { mcpApprovalGate: enabled }),
+  /** Set the auto-deny timeout in seconds (server clamps to [10,3600] + persists). */
+  setMcpApprovalTimeoutSecs: (secs: number) =>
+    req<{ ok: boolean; mcpApprovalTimeoutSecs: number }>("PUT", "/api/settings", {
+      mcpApprovalTimeoutSecs: secs,
+    }),
+
+  // ── ⭐ Agent Safety Rail — pending MCP tool-call approvals ────────────────────
+  /** Every MCP mutating tool call currently awaiting owner approve/deny. */
+  listApprovals: () => req<{ approvals: PendingApproval[] }>("GET", "/api/approvals").then((r) => r.approvals),
+  approveCall: (id: string) => req<{ ok: boolean }>("POST", `/api/approvals/${id}/approve`),
+  denyCall: (id: string) => req<{ ok: boolean }>("POST", `/api/approvals/${id}/deny`),
 
   listRepos: () => req<{ repos: Repo[] }>("GET", "/api/repos").then((r) => r.repos),
   listIdentities: () => req<{ identities: Identity[] }>("GET", "/api/identities").then((r) => r.identities),
@@ -263,6 +284,13 @@ export const api = {
 
   createIdentity: (input: Omit<Identity, "id">) =>
     req<{ identity: Identity }>("POST", "/api/identities", input).then((r) => r.identity),
+
+  // ── ⭐ Identity Firewall — rules pinning a required identity to a repo-path glob ────
+  identityRules: () => req<{ rules: IdentityRule[] }>("GET", "/api/identity-rules").then((r) => r.rules),
+  /** Replace the full rule list (v1 is dead simple: no per-rule CRUD). Throws ApiError
+   *  (NOT_FOUND) when a rule names an identity that doesn't exist. */
+  setIdentityRules: (rules: IdentityRule[]) =>
+    req<{ ok: boolean; rules: IdentityRule[] }>("PUT", "/api/identity-rules", { rules }).then((r) => r.rules),
 
   // ── GitHub (gh) accounts — read + switch the machine's active account ──────────
   /** The machine's authenticated GitHub accounts + which is active + the global git author. */
