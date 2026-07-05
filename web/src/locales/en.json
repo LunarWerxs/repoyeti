@@ -190,6 +190,21 @@
       "gitUsername": "Git username",
       "sshKeyPath": "SSH key path (optional)"
     },
+    "firewall": {
+      "title": "Identity Firewall",
+      "description": "Pin a repo path pattern to a required identity. A commit/push in a matching repo is hard-blocked (dashboard AND any connected agent over MCP) unless the repo's resolved identity matches.",
+      "empty": "No rules yet — every repo commits/pushes with whatever identity is assigned to it.",
+      "patternPlaceholder": "e.g. D:/Work/** or **/client-projects/*",
+      "patternLabel": "Repo path pattern",
+      "identityLabel": "Required identity",
+      "identityPlaceholder": "Choose an identity",
+      "add": "Add rule",
+      "remove": "Remove rule",
+      "save": "Save rules",
+      "saved": "Identity Firewall rules saved",
+      "saveFailed": "Could not save the Identity Firewall rules",
+      "needsIdentity": "Choose a required identity for every rule before saving"
+    },
     "form": {
       "titleEdit": "Edit identity",
       "titleNew": "New identity"
@@ -232,6 +247,7 @@
       "changedLabel": "{count} changed",
       "clean": "clean",
       "hidden": "Hidden",
+      "identityViolation": "Identity Firewall: this repo requires \"{name}\" to commit/push, but the resolved identity doesn't match",
       "noRemote": "no remote configured",
       "pinned": "Pinned",
       "starred": "Starred"

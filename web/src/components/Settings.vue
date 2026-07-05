@@ -9,6 +9,7 @@ import AppearanceSection from "./settings/AppearanceSection.vue";
 import SyncHotkeysSection from "./settings/SyncHotkeysSection.vue";
 import AutoCommitSection from "./settings/AutoCommitSection.vue";
 import AgentSafetySection from "./settings/AgentSafetySection.vue";
+import IdentityFirewallSection from "./settings/IdentityFirewallSection.vue";
 import AiProvidersSection from "./settings/AiProvidersSection.vue";
 
 const open = defineModel<boolean>("open", { required: true });
@@ -33,6 +34,9 @@ const props = withDefaults(defineProps<{ side?: PushPanelSide; rightOffsetPx?: n
     <div class="flex flex-col gap-4">
       <!-- Identities, connected account, and access mode ────────────────── -->
       <IdentityAccessSection :open="open" />
+
+      <!-- ⭐ Identity Firewall: pin a required identity per repo-path glob ─── -->
+      <IdentityFirewallSection :open="open" />
 
       <!-- Discovery: scan folders + lore servers ─────────────────────────── -->
       <DiscoverySection :open="open" />

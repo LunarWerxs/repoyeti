@@ -5,6 +5,7 @@
 // toggle() side effects (loading branches/changes/stashes on open) — this component just emits
 // `toggle` for the row/keyboard/chevron interactions.
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import {
   GitBranch,
   ArrowUp,
@@ -20,11 +21,13 @@ import {
   Star,
   Timer,
   EyeOff,
+  ShieldAlert,
 } from "@lucide/vue";
 import { useStore } from "../../store";
 import { cn } from "@/lib/utils";
 import { fromNow } from "@/lib/util";
 import { identityInitials, identityTint } from "@/lib/identity-display";
+import { repoViolatesIdentityRule } from "@/lib/identity-firewall";
 import DiffStat from "../DiffStat.vue";
 import {
   DropdownMenu,
@@ -42,6 +45,7 @@ const props = withDefaults(defineProps<{ repo: Repo; draggable?: boolean; expand
 });
 const emit = defineEmits<{ toggle: [] }>();
 const store = useStore();
+const { t } = useI18n();
 
 const st = computed(() => props.repo.status);
 const isClean = computed(
@@ -93,6 +97,16 @@ const statusWord = computed(() =>
 const identity = computed(() =>
   props.repo.identityId ? (store.identityById[props.repo.identityId] ?? null) : null,
 );
+
+// ⭐ Identity Firewall: does this repo currently violate a pinned-identity rule? Display-only —
+// the daemon is the one that actually hard-blocks the mutating action.
+const identityViolation = computed(() => repoViolatesIdentityRule(props.repo, store.identityRules));
+const identityViolationTitle = computed(() => {
+  const rule = identityViolation.value;
+  if (!rule) return "";
+  const name = store.identityById[rule.requiredIdentityId]?.displayName ?? rule.requiredIdentityId;
+  return t("repo.badge.identityViolation", { name });
+});
 function onIdentity(id: string | null): void {
   void store.assignIdentity(props.repo.id, id);
 }
@@ -179,6 +193,17 @@ function onAccount(a: { host: string; login: string } | null): void {
       >
         <EyeOff :size="11" />
       </span>
+      <Tooltip v-if="identityViolation">
+        <TooltipTrigger as-child>
+          <span
+            class="flex shrink-0 items-center gap-1 rounded-md bg-destructive/15 px-1.5 py-0.5 text-destructive"
+            :aria-label="identityViolationTitle"
+          >
+            <ShieldAlert :size="11" />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>{{ identityViolationTitle }}</TooltipContent>
+      </Tooltip>
     </div>
 
     <!-- status indicators — ONE set that morphs between bare "icon + count" text
