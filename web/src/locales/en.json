@@ -329,6 +329,9 @@
       "drag": "Drag to reorder",
       "commitAll": "Commit all",
       "commitSync": "Commit all & sync",
+      "menuLabel": "Auto commit options",
+      "menuCommit": "Auto commit",
+      "menuSync": "Auto commit & sync",
       "done": "Smart commit complete",
       "doneSynced": "Smart commit complete & synced",
       "stale": "Your working tree changed — re-planning",
@@ -603,7 +606,7 @@
     "cardAppearance": "Appearance",
     "cardCloudSync": "Cloud sync",
     "cloudSync": {
-      "title": "Sync settings with Connections",
+      "title": "Sync settings",
       "privacyNote": "Syncs theme & preferences to your Connections account; optional; never syncs secrets or file paths.",
       "signIn": "Sign in with Connections",
       "enableLabel": "Sync my settings",

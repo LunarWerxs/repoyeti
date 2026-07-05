@@ -34,7 +34,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 
-const props = defineProps<{ open: boolean; repoId: string; repoName: string; hasRemote: boolean }>();
+const props = defineProps<{ open: boolean; repoId: string; repoName: string; hasRemote: boolean; defaultSync?: boolean }>();
 const emit = defineEmits<{ "update:open": [boolean]; committed: [] }>();
 
 const store = useStore();
@@ -377,12 +377,24 @@ async function execute(sync: boolean): Promise<void> {
           <Button variant="secondary" size="sm" :disabled="loading || committing" @click="generate">
             <RefreshCw :size="15" :class="cn(loading && 'animate-spin')" />
           </Button>
-          <Button size="sm" :disabled="!canCommit" @click="execute(false)">
+          <Button
+            size="sm"
+            :variant="defaultSync && hasRemote ? 'secondary' : 'default'"
+            :disabled="!canCommit"
+            @click="execute(false)"
+          >
             <Loader2 v-if="committing" :size="15" class="animate-spin" />
             <GitCommitHorizontal v-else :size="15" />
             <span>{{ $t("repo.smartCommit.commitAll") }}</span>
           </Button>
-          <Button v-if="hasRemote" variant="secondary" size="sm" :disabled="!canCommit" @click="execute(true)">
+          <Button
+            v-if="hasRemote"
+            size="sm"
+            :variant="defaultSync ? 'default' : 'secondary'"
+            :disabled="!canCommit"
+            @click="execute(true)"
+          >
+            <RefreshCw v-if="defaultSync" :size="15" />
             <span>{{ $t("repo.smartCommit.commitSync") }}</span>
           </Button>
         </div>

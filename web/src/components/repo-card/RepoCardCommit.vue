@@ -63,9 +63,13 @@ const smartBusy = ref(false);
 function onSmartCommitted(): void {
   void loadRecentMsgs(); // the last few subjects changed
 }
+// Sync intent from the Auto split-button dropdown: honored directly in YOLO mode, or used to
+// pre-select "Commit all & sync" as the review modal's primary action when reviewing first.
+const smartSync = ref(false);
 /** The Smart Commit button: open the review editor, or run YOLO if the owner enabled it. */
-function runSmart(): void {
-  if (store.aiSettings.yolo) void runYolo();
+function runSmart(sync = false): void {
+  smartSync.value = sync;
+  if (store.aiSettings.yolo) void runYolo(sync);
   else smartOpen.value = true;
 }
 /** Compose a group's final commit message ("type(scope): subject" + optional body). */
@@ -74,8 +78,8 @@ function planLine(g: { type: string; scope?: string; subject: string; body?: str
   return g.body && g.body.trim() ? `${subject}\n\n${g.body.trim()}` : subject;
 }
 /** YOLO: plan + commit in one shot, no review. Leftovers (if any) become a final chore commit
- *  so nothing is left behind. Never auto-pushes — committing locally is safe/undoable. */
-async function runYolo(): Promise<void> {
+ *  so nothing is left behind. Only pushes when the owner explicitly picked "Auto commit & sync". */
+async function runYolo(sync: boolean): Promise<void> {
   if (smartBusy.value) return;
   smartBusy.value = true;
   try {
@@ -86,13 +90,13 @@ async function runYolo(): Promise<void> {
       toast.error(t("repo.smartCommit.failed"));
       return;
     }
-    const r = await store.smartCommit(props.repo.id, commits, false);
+    const r = await store.smartCommit(props.repo.id, commits, sync);
     if (!r.ok) {
       toast.error(t("repo.smartCommit.execFailed", { message: r.message }));
       return;
     }
     void loadRecentMsgs();
-    toast.success(t("repo.smartCommit.done"));
+    toast.success(r.synced ? t("repo.smartCommit.doneSynced") : t("repo.smartCommit.done"));
   } catch (e) {
     toast.error(e instanceof ApiError ? friendly(e.code ?? "ERROR") || e.message : t("repo.smartCommit.failed"));
   } finally {
@@ -299,23 +303,48 @@ defineExpose({ loadRecentMsgs, recentMsgs });
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      <!-- Smart-commit (AI multi-commit split): inline "Auto", right of Commit. -->
-      <Tooltip v-if="aiHere && st && st.dirty > 1">
-        <TooltipTrigger as-child>
-          <Button
-            variant="outline"
-            class="h-9"
-            :disabled="smartBusy || committing"
-            :aria-label="$t('repo.smartCommit.button')"
-            @click="runSmart"
-          >
-            <Loader2 v-if="smartBusy" class="animate-spin" />
-            <Sparkles v-else />
-            <span>{{ $t("repo.smartCommit.button") }}</span>
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{{ store.aiSettings.yolo ? $t('repo.smartCommit.buttonTitleYolo') : $t('repo.smartCommit.buttonTitle') }}</TooltipContent>
-      </Tooltip>
+      <!-- Smart-commit (AI multi-commit split): inline "Auto" split button, right of Commit.
+           The chevron mirrors the regular Commit dropdown — plain vs. commit-and-sync. -->
+      <div v-if="aiHere && st && st.dirty > 1" class="flex">
+        <Tooltip>
+          <TooltipTrigger as-child>
+            <Button
+              variant="outline"
+              class="h-9 rounded-r-none"
+              :disabled="smartBusy || committing"
+              :aria-label="$t('repo.smartCommit.button')"
+              @click="runSmart()"
+            >
+              <Loader2 v-if="smartBusy" class="animate-spin" />
+              <Sparkles v-else />
+              <span>{{ $t("repo.smartCommit.button") }}</span>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{{ store.aiSettings.yolo ? $t('repo.smartCommit.buttonTitleYolo') : $t('repo.smartCommit.buttonTitle') }}</TooltipContent>
+        </Tooltip>
+        <DropdownMenu>
+          <DropdownMenuTrigger as-child>
+            <Button
+              variant="outline"
+              class="h-9 rounded-l-none border-l border-l-black/15 px-1.5 dark:border-l-white/20"
+              :disabled="smartBusy || committing"
+              :aria-label="$t('repo.smartCommit.menuLabel')"
+            >
+              <ChevronDown :size="16" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" class="w-52">
+            <DropdownMenuItem @select="runSmart(false)">
+              <Sparkles :size="15" />
+              <span>{{ $t("repo.smartCommit.menuCommit") }}</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem :disabled="!hasUpstream" @select="runSmart(true)">
+              <RefreshCw :size="15" />
+              <span>{{ $t("repo.smartCommit.menuSync") }}</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     </div>
   </div>
 
@@ -348,6 +377,7 @@ defineExpose({ loadRecentMsgs, recentMsgs });
     :repo-id="repo.id"
     :repo-name="repo.name"
     :has-remote="hasRemote"
+    :default-sync="smartSync"
     @committed="onSmartCommitted"
   />
 </template>

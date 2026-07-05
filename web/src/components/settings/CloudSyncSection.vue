@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { Cloud, Check, Loader2, RefreshCw, LogOut } from "@lucide/vue";
+import { Cloud, Check, ExternalLink, Loader2, RefreshCw, LogOut } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { useStore } from "../../store";
 import { fromNow } from "@/lib/util";
@@ -77,12 +77,16 @@ async function disconnect(): Promise<void> {
       <!-- signed out entirely → the primary action is signing in with Connections -->
       <div v-if="!store.owner" class="flex flex-col gap-2.5 px-3.5 py-3">
         <span class="flex flex-col gap-0.5">
-          <span class="text-[12.5px] font-medium text-foreground">{{ $t("settings.cloudSync.title") }}</span>
+          <span class="flex items-center gap-1.5 text-[12.5px] font-medium text-foreground">
+            <Cloud :size="14" class="shrink-0 text-sky-500" />
+            {{ $t("settings.cloudSync.title") }}
+          </span>
           <span class="text-[12px] text-muted-foreground">{{ $t("settings.cloudSync.enableHint") }}</span>
         </span>
         <Button size="sm" class="self-start" @click="signIn">
           <Cloud />
           {{ $t("settings.cloudSync.signIn") }}
+          <ExternalLink :size="14" class="opacity-70" />
         </Button>
       </div>
 
@@ -139,6 +143,7 @@ async function disconnect(): Promise<void> {
           <Button size="sm" class="self-start" @click="signIn">
             <Cloud :size="14" />
             {{ $t("settings.cloudSync.signIn") }}
+            <ExternalLink :size="14" class="opacity-70" />
           </Button>
         </div>
 

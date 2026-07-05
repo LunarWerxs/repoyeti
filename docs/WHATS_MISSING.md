@@ -35,13 +35,13 @@ phone-reachable.
 
 ### Features (verified open)
 
-- [ ] **⭐ Agent Safety Rail** *(M)* — any MUTATES-tagged MCP call from a headless agent (Claude Code
+- [x] **⭐ Agent Safety Rail** *(M — DONE 2026-07-05: gate at the single MCP choke point (both transports), SSE approval cards with countdown, 120s auto-deny, settings toggle; dashboard actions structurally ungated; 20 tests)* — any MUTATES-tagged MCP call from a headless agent (Claude Code
       etc.) blocks pending a one-tap human approve/deny; read-only calls pass through. **Verified:** the
       prereqs all exist (`readOnly` tagging on the 6 mutating tools in `src/mcp/tools.ts`, per-repo queue
       in `src/opqueue.ts`, identity, tunnel) but the tag is never read anywhere — the gate is zero code.
       v1: approval cards in the already-open dashboard via SSE + a short auto-deny timeout so agents never
       hang; skip phone push (no push infra exists — confirmed).
-- [ ] **Identity Firewall** *(S)* — upgrade multi-identity from passive selection to enforced policy:
+- [x] **Identity Firewall** *(S — DONE 2026-07-05: path-pattern → required-identity rules, hard block at all 3 service call sites (MCP inherits), red repo badge + Settings editor; no rules = zero behavior change; 20 tests)* — upgrade multi-identity from passive selection to enforced policy:
       "this repo may only ever push as work-identity" → hard block + red banner + MCP rejection.
       **Verified:** `resolveRepoIdentity` picks credentials on every commit/push path but nothing compares
       against a required identity — the enforcement layer is entirely absent. Keep v1 dead simple
@@ -103,19 +103,19 @@ MCP + CLI + GUI as equal clients of one daemon.
 
 ### Features (verified open)
 
-- [ ] **⭐ MCP-Native Incident Autopilot** *(M — likely cheaper than estimated)* — a composite
+- [x] **⭐ MCP-Native Incident Autopilot** *(M — DONE 2026-07-05: pure diagnose() engine with exactly 3 heuristics + honest 'unknown' fallback, GET /api/processes/:id/diagnose, diagnose_process as the 18th MCP tool, log-tail evidence; 16 tests + live-daemon smoke)* — a composite
       `diagnose(process)` MCP tool: correlate crash logs + port conflicts + exit codes into a structured
       root-cause guess plus an executable remediation. **Verified:** `mcp.ts` is still pure 1:1 CRUD
       (17 thin wrappers), but the raw signals are further along than the audit assumed — `errors.ts`
       already dedupes and persists error records to `~/.devwebui/errors.ndjson`, and `portOwners()`
       exists. Ship v1 with exactly 3 hardcoded heuristics (port-in-use, non-zero exit vs a small
       known-error table, missing script) — no rules engine.
-- [ ] **Time-Travel Log Vault** *(S)* — process logs are still in-memory only (500-line cap, gone on
+- [x] **Time-Travel Log Vault** *(S — DONE 2026-07-05: rotating per-process files under ~/.devwebui/logs (1MB × 2 rotations), crash sidecar survives restarts, last-crash stderr tail surfaced on next start via response + SSE + GUI toast, logfile tail route; 14 tests)* — process logs are still in-memory only (500-line cap, gone on
       restart). Add rotating per-process files under `~/.devwebui/logs/` + the killer detail: on the next
       start attempt, proactively show the last crash's stderr tail. Note: `errors.ndjson` persistence
       exists but is a deduped summary, not raw logs — the crash-tail-on-start moment is still unbuilt.
       Resist building mini-Elasticsearch.
-- [ ] **Dependency-ordered startup** *(S, cut down hard)* — manual declaration only ("wait for that
+- [x] **Dependency-ordered startup** *(S — DONE 2026-07-05: manual `waitForPort` (port or sibling id), topological start order + cycle detection, "waiting" status in GUI, TCP-poll only; 16 tests)* — manual declaration only ("wait for that
       process's port"), one readiness check via the existing `isPortListening()` TCP probe. No HTTP
       probes, no env-var auto-inference (it *will* misfire exactly where trust matters).
 - [x] **Port-takeover residual** *(S — DONE 2026-07-05: cmdline + uptime captured on Windows/unix, shown in the confirm toast; smoke-tested live)* — the guided free-port flow shipped since the audit (PID + name +
@@ -182,7 +182,7 @@ mix them up**:
 
 ### Features (verified open)
 
-- [ ] **⭐ Run Cost Meter** *(S)* — per-call usage capture is confirmed shipped (`src/runner/reimagine.js`
+- [x] **⭐ Run Cost Meter** *(S — DONE 2026-07-05: per-job/run cost, pre-run "≈ $X" estimate, live run total, history costs, spend-to-date + "prices last updated" in the key sheet; 19 tests + live mock-run verification. Pricing.json now holds REAL prices (all 6 models, estimate:false) pulled from LiteLLM's public pricing catalog with OpenRouter fallback — refresh anytime with `bun run update-pricing` (21 offline tests cover the converter). That script IS the "prices last updated" maintenance commitment)* — per-call usage capture is confirmed shipped (`src/runner/reimagine.js`
       persists `usage` per job from all three provider response shapes); zero pricing/cost code exists.
       Add a config-driven pricing table, "this 6-model × 8-prompt run ≈ $X" *before* Run, actuals per run
       in history, spend-to-date in the key sheet. Hard requirement stands: show "prices last updated
@@ -193,7 +193,7 @@ mix them up**:
       second document type, a real answer for screenshot payloads (pointer/thumbnail, not base64 blobs in
       the sync doc), and idempotent imports. Still worth building; just don't scope it as UI wiring.
       Rider: prompt-preset sync as a third document type on the same rail.
-- [ ] **Agent-Native Batch Reimagine** *(S — cheaper than estimated)* — every primitive already exists
+- [x] **Agent-Native Batch Reimagine** *(S — DONE 2026-07-05: `batch_reimagine` MCP tool, wait:false → runIds, wait:true → full digest with per-job captions; verified via a live stdio JSON-RPC session over all 6 sample inputs)* — every primitive already exists
       (`run` accepts input/prompt selection strings, captions are stored per job, `get_run` returns the
       full manifest); only the composite MCP "recipe" tool (folder of screenshots + preset in → structured
       manifest + caption summaries out) is missing.
@@ -207,7 +207,7 @@ mix them up**:
       every provider's plaintext API keys with default permissions, while `src/connections.js:50` already
       sets `mode: 0o600` for its own refresh token. Match that precedent there and in `src/util.js`'s
       generic `writeJSON()`.
-- [ ] **Connections OIDC/sync has zero tests** *(M)* — `src/connections.js` (PKCE, token
+- [x] **Connections OIDC/sync has zero tests** *(M — DONE 2026-07-05: connections.js/updater.js converted to typed ESM (zero require() left in src/), 23 tests against a fake Connections server; PKCE/refresh/rotation/forget all covered)* — `src/connections.js` (PKCE, token
       refresh/rotation, push/pull merge, `disable(forget)`) and its sync routes (now
       `src/http/routes/connections.ts` post-migration) have no coverage. *(Post-migration note:
       `connections.js` and `updater.js` are the last two CJS files — convert to TS and test in one
@@ -254,7 +254,7 @@ server in the path.
 
 ### Features (verified open)
 
-- [ ] **⭐ Per-App Profiles** *(M — premise corrected: fully greenfield)* — auto-switch replacement
+- [x] **⭐ Per-App Profiles** *(M — DONE 2026-07-05: new focus.rs Win32 detection (all failures degrade to global settings), first-match-wins profiles with extend/replace replacement modes, processor cache, read-only settings card, README schema docs; provider override explicitly deferred; no profiles = byte-identical behavior, test-proven)* — auto-switch replacement
       tables, punctuation, even preferred provider by focused app (VS Code/terminal keeps dev-casing and
       kills auto-punctuation; Slack/Outlook does the reverse). **The audit's claim that "the hook already
       exists in output.rs" is wrong** — pasting targets the OS-focused window implicitly; no
@@ -264,7 +264,7 @@ server in the path.
 - [x] **Transcript History + Undo Stack** *(S — DONE 2026-07-05: rolling 50-entry timestamped history + "Recent transcriptions" tray submenu with click-to-repaste; most-recent re-paste unchanged)* — confirmed: `last_transcription` is a single
       `Mutex<Option<String>>` slot (`src/state.rs:51`). Generalize to a rolling timestamped history with
       re-paste. Cheapest real feature on the list, and the substrate Voice Commands needs.
-- [ ] **Voice Commands, precision subset** *(M, capped hard)* — v1 = "scratch that" (undo last chunk) + a
+- [x] **Voice Commands, precision subset** *(M — DONE 2026-07-05: "scratch that" only (end-of-utterance, word-boundary-safe, off by default), backspace-undo of exactly the last chunk via TranscriptHistory; the pause-gated punctuation set stays DEFERRED by design)* — v1 = "scratch that" (undo last chunk) + a
       small pause-gated set of unambiguous punctuation words. Depends on the history stack above. Market
       it as "undo without touching the mouse," not as Talon.
 - [ ] **Connections settings/dictionary sync** *(quiet retention plumbing, not a headline)* — spec'd for
