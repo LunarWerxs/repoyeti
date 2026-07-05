@@ -116,6 +116,9 @@ export const useStore = defineStore("repoyeti", () => {
     pinnedRepos,
     starredRepos,
     otherRepos,
+    needsAttentionRepos,
+    visibleAttentionRepos,
+    dismissAttention,
     patchRepo,
     doAction,
     commit,
@@ -239,6 +242,16 @@ export const useStore = defineStore("repoyeti", () => {
     setAutoCommitPull,
     setAutoCommitPush,
     setAutoScan,
+    syncStatus,
+    syncLoading,
+    syncActionBusy,
+    syncError,
+    loadSyncStatus,
+    enableSync,
+    disableSync,
+    pushSync,
+    pullSync,
+    pushAppearance,
     desktopNotify,
     notifyPermission,
     enableDesktopNotify,
@@ -285,6 +298,7 @@ export const useStore = defineStore("repoyeti", () => {
         loadAiCatalog(),
         loadStatus(),
         loadAccounts(), // best-effort — populates the header account switcher on boot
+        loadSyncStatus(), // best-effort — applies any synced appearance on boot
       ]);
       repos.value = r;
       identities.value = i;
@@ -429,6 +443,9 @@ export const useStore = defineStore("repoyeti", () => {
           if (typeof payload.autoCommitPush === "boolean") autoCommitPush.value = payload.autoCommitPush;
           if (typeof payload.autoScan === "boolean") autoScan.value = payload.autoScan;
           if (payload.tunnel) tunnelConfig.value = payload.tunnel as TunnelStatus;
+          // The daemon applied a pulled cloud-sync doc (possibly from another device) — re-fetch
+          // status and re-apply the synced appearance (loadSyncStatus applies it internally).
+          if (payload.cloudSync) void loadSyncStatus();
         } else if (event.value === "scan_started") {
           // A rescan began (from the modal, or another device) — reset the live counters.
           scanning.value = true;
@@ -574,6 +591,16 @@ export const useStore = defineStore("repoyeti", () => {
     setRepoAutoCommit,
     autoScan,
     setAutoScan,
+    syncStatus,
+    syncLoading,
+    syncActionBusy,
+    syncError,
+    loadSyncStatus,
+    enableSync,
+    disableSync,
+    pushSync,
+    pullSync,
+    pushAppearance,
     notifications,
     unreadCount,
     markNotificationsRead,
@@ -597,6 +624,9 @@ export const useStore = defineStore("repoyeti", () => {
     pinnedRepos,
     starredRepos,
     otherRepos,
+    needsAttentionRepos,
+    visibleAttentionRepos,
+    dismissAttention,
     setHidden,
     setPinned,
     setStarred,

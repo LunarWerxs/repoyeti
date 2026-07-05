@@ -16,7 +16,7 @@
 import { simpleGit, type SimpleGit } from "simple-git";
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import type { Identity } from "./db.ts";
 
 export function safeGitEnv(): Record<string, string> {
@@ -90,4 +90,24 @@ export function identityConfigArgs(identity: Identity | null): string[] {
   if (identity.gitUsername) args.push("-c", `user.name=${identity.gitUsername}`);
   if (identity.gitEmail) args.push("-c", `user.email=${identity.gitEmail}`);
   return args;
+}
+
+/**
+ * Marker files under `.git/` that mean "mid merge/rebase/cherry-pick/revert". Shared by the
+ * auto-commit safety gate (src/auto-commit.ts) and the status read (src/read/status.ts) so both
+ * agree on exactly one definition of "mid git-operation" — never duplicated.
+ */
+export const GIT_OP_MARKERS = ["MERGE_HEAD", "rebase-merge", "rebase-apply", "CHERRY_PICK_HEAD", "REVERT_HEAD"];
+
+/** Which mid-operation marker is present (first match), or null when the repo is in a normal
+ *  state. Best-effort: on any error we can't tell, so callers that need "safe by default"
+ *  (auto-commit) should treat a throw/unknown as mid-operation themselves. */
+export async function currentGitOperation(absPath: string): Promise<string | null> {
+  try {
+    const gitDir = (await gitFor(absPath).raw(["rev-parse", "--git-dir"])).trim();
+    const base = isAbsolute(gitDir) ? gitDir : join(absPath, gitDir);
+    return GIT_OP_MARKERS.find((m) => existsSync(join(base, m))) ?? null;
+  } catch {
+    return null; // can't tell here; auto-commit's inGitOperation() treats a throw as "yes" itself
+  }
 }

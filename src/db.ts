@@ -31,6 +31,15 @@ export interface RepoStatus {
    * Optional so a status literal can omit it; readStatus always sets it (null or a value).
    */
   diff?: DiffStat | null;
+  /** Has any unmerged/conflicted path (git status "U"/"AA"/"DD"). Git-only for now — optional
+   *  so the Lore backend's status literals (vcs/lore.ts) can omit it (defaults falsy in the UI).
+   *  Drives the Conflict Concierge triage card (state-driven, not event-driven). */
+  conflicted?: boolean;
+  /** Which mid-git-operation marker is present ("MERGE_HEAD" | "rebase-merge" | "rebase-apply" |
+   *  "CHERRY_PICK_HEAD" | "REVERT_HEAD"), or null when the repo isn't mid-operation. See
+   *  src/git.ts currentGitOperation (shared with the auto-commit safety gate). Optional/git-only
+   *  like `conflicted`. */
+  gitOperation?: string | null;
   updatedAt: number;
 }
 

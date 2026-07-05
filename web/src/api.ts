@@ -123,6 +123,29 @@ export interface ModeResult {
   tunnelUrl: string | null;
 }
 
+/** "Sync my settings with Connections" status (GET/PUT /api/settings/sync et al). */
+export interface SyncStatus {
+  ok: boolean;
+  /** Owner turned sync on. */
+  enabled: boolean;
+  /** The daemon holds a Connections credential (owner has signed in with Connections). */
+  connected: boolean;
+  /** ISO timestamp of the last successful sync, or null. */
+  lastSyncedAt: string | null;
+  version: number;
+  /** Last-synced appearance blob (e.g. `{ theme }`) to apply locally, or null. */
+  appearance: Record<string, unknown> | null;
+  /** Set on a handled failure (HTTP 200, `ok:false`) — show inline, non-blocking. */
+  error?: string;
+  retryAfterSeconds?: number;
+}
+
+/** The signed-in Connections identity (GET /api/auth/me). */
+export interface AuthMe {
+  email: string;
+  sub: string;
+}
+
 export const api = {
   authStatus: () => req<AuthStatus>("GET", "/api/auth/status"),
   logout: () => req<{ ok: boolean }>("POST", "/api/auth/logout"),
@@ -130,6 +153,24 @@ export const api = {
   logoutAll: () => req<{ ok: boolean }>("POST", "/api/auth/logout-all"),
   /** Grant the localhost-only "Continue local for now" bypass (rejected over the tunnel). */
   continueLocal: () => req<{ ok: boolean }>("POST", "/api/auth/continue-local"),
+  /** The signed-in Connections identity (email/sub). Throws ApiError when signed out. */
+  authMe: () => req<AuthMe>("GET", "/api/auth/me"),
+
+  // ── "Sync my settings with Connections" (opt-in cloud sync of theme/appearance) ─────
+  /** Current sync status: enabled/connected/last-synced/appearance. */
+  getSyncStatus: () => req<SyncStatus>("GET", "/api/settings/sync"),
+  /** Update sync settings. `{enabled:true, appearance}` turns sync on and seeds it with the
+   *  current local appearance; `{enabled:false}` turns it off (keeps the connection);
+   *  `{enabled:false, forget:true}` disconnects (deletes the remote doc + forgets the token);
+   *  `{appearance}` alone updates the synced appearance (pushes if enabled). On a handled
+   *  failure the daemon returns `{ok:false, error, retryAfterSeconds?}` with HTTP 200 — this
+   *  does NOT throw for that shape, so callers can show it inline. */
+  setSync: (body: { enabled?: boolean; forget?: boolean; appearance?: Record<string, unknown> }) =>
+    req<SyncStatus>("PUT", "/api/settings/sync", body),
+  /** Manually pull the synced settings from another device. */
+  syncPull: () => req<SyncStatus>("POST", "/api/settings/sync/pull"),
+  /** Manually push the current synced settings now. */
+  syncPush: () => req<SyncStatus>("POST", "/api/settings/sync/push"),
 
   // ── scan roots (discovery directories) ──────────────────────────────────────
   roots: () => req<{ roots: string[] }>("GET", "/api/roots").then((r) => r.roots),

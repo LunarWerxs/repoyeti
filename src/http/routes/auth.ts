@@ -12,6 +12,7 @@ import {
   hasLocalBypass,
   type AuthOptions,
 } from "../../auth.ts";
+import { rememberTokens, clearTokens, pullNow } from "../../connections-sync.ts";
 
 export function register(app: Hono, { cfg }: Deps): void {
   // Public: lets the PWA decide whether to show the "Sign in with Connections" screen,
@@ -36,15 +37,28 @@ export function register(app: Hono, { cfg }: Deps): void {
   });
   app.post("/api/auth/logout", (c) => handleLogout(c));
   // "Sign out everywhere" — rotate the signing key so every device's session cookie is
-  // invalidated at once (sessions are stateless signed cookies; there is no row to revoke).
-  app.post("/api/auth/logout-all", (c) => handleLogoutAll(c));
+  // invalidated at once (sessions are stateless signed cookies; there is no row to revoke). Also
+  // forget the Connections refresh token: signing out everywhere severs the settings-sync link too.
+  app.post("/api/auth/logout-all", (c) => {
+    void clearTokens();
+    return handleLogoutAll(c);
+  });
   // "Continue local for now" — grant a localhost-only bypass (refused over the tunnel).
   app.post("/api/auth/continue-local", (c) => handleContinueLocal(c));
 
   // Adapter: the generic OIDC handlers take a bare OAuthConfig + an AuthOptions bag (not the whole
   // RepoYetiConfig). RepoYeti passes cfg.oauth and persists a first-use ("TOFU") ownership claim back
   // to config.json; cookie names + signing secret fall back to the module defaults (RepoYeti's own).
-  const authOpts: AuthOptions = { onOwnerClaimed: () => saveConfig(cfg) };
+  // onTokens retains the owner's refresh token (keychain) so the daemon can sync settings to the
+  // Connections store; if sync is already enabled, a fresh sign-in immediately pulls the cloud copy.
+  const authOpts: AuthOptions = {
+    onOwnerClaimed: () => saveConfig(cfg),
+    onTokens: (tokens) => {
+      void rememberTokens(tokens).then(() => {
+        if (cfg.cloudSync?.enabled) return pullNow(cfg, cfg.oauth!).catch(() => {});
+      });
+    },
+  };
 
   // OIDC dance (only meaningful when configured). oauthGuard guarantees cfg.oauth is present.
   const oauthGuard = (h: (c: Context) => Promise<Response>) => (c: Context) =>

@@ -79,6 +79,7 @@ watch(
 
 <template>
   <Collapsible
+    :id="`repo-card-${repo.id}`"
     :open="expanded"
     :class="
       cn(

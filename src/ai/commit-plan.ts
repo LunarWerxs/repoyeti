@@ -2,7 +2,7 @@
 //
 // "Smart commit": instead of one stage-all commit, the model partitions the changed FILES
 // into several scoped commits, each with its own message. File-level only (a file is never
-// split across commits) — see docs/SMART_COMMIT.md for why (the safety invariant). The plan
+// split across commits) — see docs/ARCHITECTURE.md §14 (Smart Commit) for why (the safety invariant). The plan
 // is a SUGGESTION: the daemon validates it, the owner edits it, and a separate call commits.
 import type { AiProviderId, CommitStyle } from "../config.ts";
 import { AI_ADAPTERS } from "./adapters.ts";

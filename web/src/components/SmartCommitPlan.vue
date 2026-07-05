@@ -2,7 +2,7 @@
 /**
  * Smart-commit plan editor: the AI proposes an ordered set of file-level commits; the owner
  * edits messages, moves files between commits, reorders/merges/splits, then commits them all
- * in one go (optionally syncing). File-level only — see docs/SMART_COMMIT.md. Nothing is
+ * in one go (optionally syncing). File-level only — see docs/ARCHITECTURE.md §14 (Smart Commit). Nothing is
  * committed until "Commit all"; until then this is a pure suggestion the owner shapes.
  */
 import { computed, reactive, ref, watch, onBeforeUnmount } from "vue";

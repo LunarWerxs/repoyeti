@@ -30,7 +30,7 @@ const CONFIG_PATH = join(CONFIG_DIR, "config.json");
 /**
  * "Sign in with Connections" (public OIDC) config. Present → auth is ENFORCED on
  * every /api/* route (and required before any tunnel is exposed). Absent → the
- * daemon is local-only (127.0.0.1) with no auth. See ARCHITECTURE.md §7/§13.
+ * daemon is local-only (127.0.0.1) with no auth. See docs/ARCHITECTURE.md §7/§13.
  */
 export interface OAuthConfig {
   /** IdP issuer origin, e.g. https://accounts.connections.icu */
@@ -177,6 +177,27 @@ export interface PulseConfig {
   installId?: string;
 }
 
+/**
+ * Optional "Sync my settings with Connections" (settings-sync data locker). Off by default and
+ * purely additive: when the owner opts in AND is signed in with Connections, the daemon (the BFF)
+ * pushes a small allowlisted subset of portable settings (theme/accent + operational toggles) to
+ * `studio.connections.icu/v1/app-data/{clientId}` and pulls them on every machine the same account
+ * signs into. The refresh token that authorizes those calls lives in the OS keychain (see
+ * secrets.ts CONNECTIONS_REFRESH_TOKEN), NEVER here; this block holds only non-secret sync state.
+ * See src/connections-sync.ts + docs/CONNECTIONS_SETTINGS_SYNC.md.
+ */
+export interface CloudSyncConfig {
+  /** The owner turned settings sync on. Absent/false = off (the whole feature is inert). */
+  enabled?: boolean;
+  /** ISO-8601 timestamp of the last successful push/pull, for the "Synced ✓ · just now" UI. */
+  lastSyncedAt?: string;
+  /** The store document version last seen — the optimistic-concurrency base for the next write. */
+  version?: number;
+  /** The last appearance blob (theme/accent) mirrored from the web, so a fresh page load can apply
+   *  the synced look before the web has pushed anything this session. Non-secret, portable. */
+  appearance?: Record<string, unknown>;
+}
+
 export interface RepoYetiConfig {
   /** Absolute root paths to recursively scan for git repos. */
   roots: string[];
@@ -269,6 +290,8 @@ export interface RepoYetiConfig {
   tunnel?: TunnelConfig;
   /** Transparent product pulse, forwarded to a Connections-compatible endpoint when configured. */
   pulse?: PulseConfig;
+  /** Optional "Sync my settings with Connections" state (off by default). See CloudSyncConfig. */
+  cloudSync?: CloudSyncConfig;
   /** Bring-your-own-key AI config (optional). */
   ai?: AiConfig;
   /**

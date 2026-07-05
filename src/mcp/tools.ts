@@ -148,6 +148,16 @@ export const TOOLS: McpTool[] = [
     run: (b) => b.drift(),
   },
   {
+    name: "triage_briefing",
+    description:
+      "One compact 'what needs attention across all repos' snapshot: conflicted/mid-git-operation " +
+      "repos, repos ahead/behind their remote, repos the auto-commit timer would currently skip, " +
+      "and repos with uncommitted changes. Grouped arrays, each entry {id, name, branch, reason}.",
+    readOnly: true,
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    run: (b) => b.triageBriefing(),
+  },
+  {
     name: "git_commit",
     description: "MUTATES: commit a repository's working tree with the given message (optionally amend).",
     readOnly: false,

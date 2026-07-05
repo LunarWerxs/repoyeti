@@ -3,7 +3,7 @@
 > **This shim is no longer used and is not deployed.** Once RepoYeti moved to a stable domain
 > (`app.repoyeti.com` via a named Cloudflare tunnel), the rotating-URL problem this Worker solved
 > went away. Login now uses the daemon's **own** `<origin>/oauth/callback` directly — see
-> [`src/auth.ts`](../src/auth.ts) and [`docs/REMOTE_ACCESS.md`](../docs/REMOTE_ACCESS.md). The old
+> [`src/auth.ts`](../src/auth.ts) and [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) §15 (Remote access). The old
 > `gitmob-auth`/`repoyeti-auth` Workers were deleted from Cloudflare. This directory is kept only as
 > historical reference for the rotating-tunnel pattern below; nothing in the running product calls it.
 

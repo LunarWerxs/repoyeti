@@ -9,13 +9,15 @@
  * Response shapes mirror the read/service layers (only the fields we pass through).
  */
 import { get, post, resolveRepo, type ApiError } from "../cli/client.ts";
-import type { McpBackend, LogOptions } from "./backend.ts";
+import { buildTriageBriefing, type McpBackend, type LogOptions } from "./backend.ts";
 
 interface RepoView {
   id: string;
   name: string;
   absPath: string;
   vcs: string;
+  /** Opted into the auto-commit timer (see src/db.ts RepoView) — needed by triageBriefing. */
+  autoCommit?: boolean;
   status: {
     branch: string | null;
     detached: boolean;
@@ -24,6 +26,9 @@ interface RepoView {
     behind: number;
     remote: string | null;
     error: string | null;
+    /** Additive Conflict Concierge fields (src/read/status.ts) — see backend.ts TriageRepoInput. */
+    conflicted?: boolean;
+    gitOperation?: string | null;
   } | null;
 }
 
@@ -111,6 +116,11 @@ export function httpBackend(): McpBackend {
         (r) => (r.status?.ahead ?? 0) > 0 || (r.status?.behind ?? 0) > 0,
       );
       return { repos: drifted };
+    },
+
+    async triageBriefing() {
+      const { repos } = await get<{ repos: RepoView[] }>("/api/repos");
+      return buildTriageBriefing(repos);
     },
   };
 }

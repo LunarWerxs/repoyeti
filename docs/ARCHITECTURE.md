@@ -20,9 +20,12 @@
 > and can't create the half-merged state the guards prevent), and **register/create repo are built**;
 > (2) **PAT/HTTPS-token auth + OS-keychain (keytar)** stay deferred (SSH-key injection covers the common
 > case), and **Phase 6 (Tauri tray)** is deferred — the CLI binary + phone browser is the whole product.
-> The only thing between "built" and a live remote login is the owner-gated §13 setup (register the
-> OAuth app + set the owner sub). **The redirect shim is already deployed** at
-> `https://repoyeti-auth.lunawerx.workers.dev` and git is initialized with tests (`bun test`, 19 passing).
+> The only thing between "built" and a live remote login is a single owner-gated end-to-end sign-in.
+>
+> **⚠️ Update since v1 — the tunnel/shim design in §2 & §7 is SUPERSEDED.** RepoYeti now runs a
+> **named Cloudflare tunnel** (`app.repoyeti.com`) and the daemon uses its **own**
+> `<origin>/oauth/callback` — there is no shim (`shim/` is dead reference code). The shipped design
+> and runbook are in **§15 (Remote access)**.
 
 ---
 
@@ -275,7 +278,7 @@ right state.
 > server is exposed at **`POST /api/mcp`** (same JSON-RPC, same auth gate). For **remote/headless
 > agents** an optional, owner-minted **Bearer API token** sits alongside the OIDC session
 > (`POST`/`DELETE`/`GET /api/auth/token`); it's off by default and never weakens the OIDC posture
-> (see §7 and `docs/REMOTE_ACCESS.md`).
+> (see §7 and §15, Remote access).
 
 ---
 
@@ -318,6 +321,12 @@ RepoYeti is registered once as a **third-party OAuth app** (relying party) → i
    IdP authenticates, the app keeps the session). Refresh tokens keep it alive without re-login.
 
 ### Login return = a fixed redirect "shim" — **DECIDED** (keeps the daemon on the free tunnel)
+
+> **⚠️ SUPERSEDED (kept for design history).** This shim squared a *rotating* tunnel URL with a fixed
+> OAuth redirect. RepoYeti has since moved to a **named Cloudflare tunnel** with a stable host
+> (`app.repoyeti.com`), so the daemon registers and uses its **own** `/oauth/callback` directly and
+> the shim is retired. The shipped design + runbook is in **§15 (Remote access)**; the text below
+> documents the original rotating-tunnel approach for reference.
 
 The login page must return to a **registered, stable** redirect URI — but the daemon sits on a free,
 **rotating** quick-tunnel URL (AEGIS is redirect-based PKCE; no device-code flow exists). Squaring this
@@ -565,7 +574,7 @@ repoyeti/
 
 The daemon is the **primary artifact**; `web/` builds into it; `vendor/cloudflared/` ships with it;
 `shim/` is retired (the named tunnel + the daemon's own `/oauth/callback` replaced it — see
-`docs/REMOTE_ACCESS.md`); a future `tray/` (Tauri) would spawn the same binary unchanged.
+§15, Remote access); a future `tray/` (Tauri) would spawn the same binary unchanged.
 `scripts/check-boundaries.ts` enforces the layering: `read ⊥ service`, `vcs ⊥ service`, `cli ⊥
 service/read/git`, and the MCP core/tools/backend touch the service only through their adapters.
 
@@ -619,6 +628,497 @@ is an optional confidential `client_secret`, which lives in the daemon keychain.
 **Build-order note:** Phases 1, 3, 4 (daemon core, git ops, tunnel+PWA) need none of this. Phase 2
 (auth) is built against the **public OIDC contract** above using the discovery doc, and lights up the
 moment the owner registers the app and supplies the `client_id` + trusted `sub`.
+
+---
+
+## 14. Smart Commit (AI multi-commit splitter)
+
+
+> **Goal.** One tap turns a pile of uncommitted changes — the kind several AI agents
+> produce when they edit a repo in parallel — into a set of small, logically-scoped,
+> well-named commits instead of one giant dump. The AI reads the whole working tree,
+> decides *what happened* as a whole and per file, proposes an ordered set of commits,
+> and (after you review/edit) creates them. Optional one-tap sync afterward.
+>
+> This is an **opt-in button**, never the default. The normal "stage-all + commit" path
+> is untouched.
+
+---
+
+### 1. The one decision that shapes everything: granularity
+
+**v1 splits at the FILE level — whole files are grouped into commits; a file is never
+split across two commits.**
+
+Why not line/hunk level (the "even smarter" option)?
+
+- RepoYeti's **central, non-negotiable invariant** (ARCHITECTURE.md §7, gap-analysis
+  header): *"the daemon never leaves a repo in an unsafe / half-merged state."* Hunk-level
+  staging means programmatically applying a **subset of a file's hunks** to the index
+  (`git apply --cached` of a partial patch). That can fail/conflict and leave a file
+  **partially staged** — exactly the stranded state the whole product is designed to avoid.
+  The gap analysis already files hunk-level staging under **Tier 3 — rejected by design**.
+- File-level staging is the opposite: **Tier 2 — planned** ("`git add <paths>` then commit
+  without `-A`"). Every individual commit is atomic; if the sequence is interrupted, the
+  result is "some commits made, the rest still uncommitted in the working tree" — a
+  perfectly normal, safe, recoverable git state.
+- It's not an intelligence limit. The model is plenty capable of per-file intent. The
+  limiter is **execution safety on a phone with no undo**.
+- **Prior art agrees.** GitKraken's shipping *AI Commit Composer* (Jan 2026) groups at
+  **file level only** — you can't split one file's hunks across commits in its UI either.
+  This is the proven, safe shape.
+
+**Mixed-concern files** (one file with two unrelated changes) are handled the
+industry-standard way at file granularity: the file is assigned to its **dominant**
+commit and the secondary change is **noted in that commit's body**. We never create a
+broken commit to chase purity.
+
+> **Future, explicitly deferred:** a hunk-level "deep split" mode *can* be layered on later
+> as an opt-in power-user toggle (see §10). The architecture below is built so that adding
+> it is additive, not a rewrite. It stays off until/unless we decide to relax the invariant.
+
+---
+
+### 2. Prior art (what we borrowed)
+
+| Source | What we take |
+|---|---|
+| **GitKraken AI Commit Composer** | The whole UX shape: AI proposes a set of commits → user reorders / edits messages / **moves files between commits** / regenerates → "Create commits". File-level only. |
+| **llm-git "compose mode"** | (a) snapshot the change-set *once* before the AI call so live edits can't contaminate; (b) **topologically order** commits so prerequisites land first; (c) error loudly if execution would produce zero commits while changes remain. |
+| **jj absorb / GitButler** | Principle: when attribution is ambiguous, **refuse to guess** rather than make a mess. Surfaces as our "leftovers" group. |
+| **Atomizer / SmartCommit / ColaUntangle (academic)** | Pure-LLM grouping misfires on (a) over-grouping similar-but-distinct changes, (b) cross-file relationships, (c) cosmetic edits. We mitigate with an explicit prompt taxonomy + a deterministic fallback, and keep a human in the loop. |
+| **Atomic-commit best practice** | Conventional-Commits taxonomy; co-change clustering (source+test+types+docs together); foundation-first ordering; lockfile-with-manifest; cosmetic isolation. Encoded in the prompt. |
+
+---
+
+### 3. Architecture: **Plan → Review → Execute**
+
+Three clean stages, mapping onto RepoYeti's existing layering (read-only inspection vs.
+op-queue mutation vs. routes vs. store/UI).
+
+```
+                 ┌── Plan (read-only, no mutation) ──────────────────────────┐
+ [Smart Commit]  │ collect changed files + bounded per-file diffs            │
+   button  ───►  │ → AI returns a structured JSON plan (groups + messages)   │
+                 │ → validate / fall back → return plan to UI. NOTHING runs. │
+                 └───────────────────────────────────────────────────────────┘
+                                        │
+                 ┌── Review (full editor, client-side) ──────────────────────┐
+                 │ ordered commit cards: edit subject/body, move files        │
+                 │ between groups, merge / split / reorder / collapse-to-one, │
+                 │ regenerate plan or one message. Nothing committed yet.     │
+                 └───────────────────────────────────────────────────────────┘
+                                        │  "Commit all N"  (+ optional sync)
+                 ┌── Execute (one op-queue slot, atomic per commit) ─────────┐
+                 │ re-validate plan vs CURRENT tree → for each group:         │
+                 │   git add -- <paths> ; git -c user.* commit -m <msg>       │
+                 │ → optional pull-ff + push → refresh → per-commit result.   │
+                 └───────────────────────────────────────────────────────────┘
+```
+
+#### Why two endpoints (plan and execute are decoupled)
+The AI plan is a *suggestion*. The user edits it freely in the browser. Execution takes
+the **edited** plan, not the AI's original — so the server re-validates the submitted
+groups against the live working tree before touching anything. This also means a flaky/slow
+provider can never block or corrupt a commit: planning and committing are independent calls.
+
+---
+
+### 4. Data shapes
+
+```ts
+// A single proposed commit (shared daemon ⇄ web).
+interface CommitGroup {
+  type: string;        // conventional type: feat|fix|refactor|test|docs|chore|style|perf|build|ci
+  scope?: string;      // optional lowercase subsystem, e.g. "auth", "web/settings"
+  subject: string;     // imperative, ≤72 chars (the message subject line)
+  body?: string;       // optional body (used for the "secondary change" note, etc.)
+  files: string[];     // repo-relative paths assigned to this commit
+  rationale?: string;  // one-line "why these belong together" — shown as a hint, not committed
+}
+
+interface CommitPlan {
+  groups: CommitGroup[];
+  // Files the AI couldn't confidently place. Surfaced as an editable "Unassigned" group;
+  // execution refuses while anything is unassigned.
+  leftovers?: string[];
+  degraded?: boolean;  // true when this came from the deterministic fallback, not the AI
+  truncated?: boolean; // true when the diff sent to the AI was capped (large change-set)
+}
+
+// What the daemon feeds the AI (built locally, bounded).
+interface CommitPlanInput {
+  files: Array<{ path: string; status: string; from?: string; additions: number; removals: number; binary: boolean }>;
+  diff: string;        // per-file-delimited, bounded unified diff
+  truncated: boolean;
+}
+
+// What the UI POSTs to execute (the EDITED plan).
+interface SmartCommitRequest {
+  commits: Array<{ message: string; paths: string[] }>;  // message = subject + optional body
+  sync?: boolean;      // after all commits: pull --ff-only then push (mirrors CommitMode 'sync')
+}
+```
+
+#### The final commit message
+`message` is assembled client-side as `"<type>(<scope>): <subject>"` + (`\n\n` + body if
+present). Conventional formatting is applied in the UI so the user sees and can edit the
+exact final text, and the server commits it verbatim (same as the existing commit route).
+
+---
+
+### 5. AI layer (`src/ai.ts`)
+
+Add a sibling to `generateCommitMessage` — **`generateCommitPlan`** — reusing the existing
+adapter map, `requestJson`, and per-provider `buildBody`/`extractCompletion`. No adapter is
+rewritten; we add **structured-JSON support** as an optional adapter capability.
+
+- **Prompt.** A new system prompt that (a) states the file-level rule and the
+  Conventional-Commits taxonomy, (b) gives the grouping heuristics (co-change:
+  source+test+types+docs together; cosmetic isolated; lockfile with its manifest; new files
+  before dependents), (c) demands **strict JSON only** matching the `CommitPlan` schema,
+  (d) requires **every supplied path to appear in exactly one group** (or in `leftovers`
+  only if genuinely ambiguous), (e) requires foundation-first ordering.
+  The user message carries the `CommitPlanInput` (file list + numstat + bounded diff).
+- **JSON mode (robustness).** Extend `AiAdapter` with an optional `jsonBody` builder:
+  - OpenAI-compatible (openai/deepseek/groq/openrouter): add
+    `response_format: { type: "json_object" }`.
+  - Gemini: add `generationConfig.responseMimeType: "application/json"`.
+  - Anthropic: no native flag needed — prompt-enforced JSON; we parse defensively.
+  Bump `max_tokens` for this call (JSON is wordier → ~4096) and the request timeout (→ ~40s).
+- **Parsing.** A dedicated parser: strip an accidental ```` ```json ```` fence, `JSON.parse`,
+  then **validate with a zod schema**. Do **not** run `cleanCommitMessage` (it would corrupt
+  JSON). On parse/validate failure: one retry with a terser "return ONLY JSON" reminder;
+  still failing → throw `AiError("AI_ERROR", …)` so the route can fall back.
+- **Validation (pure, unit-tested):** every input path appears exactly once across
+  `groups[].files ∪ leftovers`; no unknown paths; subjects non-empty; types in the allowed
+  set (unknown type → coerced to `chore`). Returns a normalized `CommitPlan`.
+
+#### Deterministic fallback (no AI / AI failed / changeset too big)
+A pure function `heuristicPlan(input)` groups files **without a model**:
+- bucket by **top-level directory / module** (e.g. `src/`, `web/src/components/`, `tests/`,
+  `docs/`), with new-vs-modified-vs-deleted as a secondary split, lockfiles pinned to their
+  manifest's bucket;
+- templated conventional subjects (`chore(<scope>): update N files`, `test(<scope>): …`,
+  `docs: …`), `degraded: true`.
+The UI shows a banner: *"AI couldn't structure this — here's a basic grouping. Edit before
+committing."* This guarantees Smart Commit **always produces an editable plan**, even with
+no key configured (though the button is gated on `aiEnabled` for the AI path).
+
+---
+
+### 6. Git layer (`src/git-actions.ts`)
+
+#### Read: `collectCommitPlanInput(absPath): Promise<CommitPlanInput>`
+Read-only, bounded, never mutates the index (same discipline as `collectCommitDiff`):
+- `git status --porcelain=v1` → file list + statuses (+ rename `from→to` via `-M`/`status`).
+- `git diff HEAD --numstat -M` → per-file additions/removals + binary detection (`-` rows).
+- A **per-file-delimited** bounded diff with a **larger budget** than the message path
+  (~40 KB total) and a **per-file cap** (so one huge file can't starve the rest). Files
+  whose diff is omitted still carry path+status+numstat for grouping. Untracked files are
+  included by name (their content counts as additions). Uses the same `boundedGit`
+  streaming-with-early-kill helper.
+
+#### Mutate: `gitCommitGroups(absPath, identity, commits): Promise<CommitGroupsResult>`
+The heart of execution. **All of it runs inside a single op-queue slot** (the service
+wrapper enqueues once — never per commit — and refreshes *after* the slot releases, per the
+documented same-key-nesting deadlock rule).
+
+```
+preflight (readStatus): DETACHED_HEAD → fail; dirty === 0 → NOTHING_TO_COMMIT
+git reset -q                       # MIXED reset: index → HEAD. Working tree UNTOUCHED.
+                                   # (Safe; same family as discardFile's reset. NOT --hard.)
+for (const c of commits) {
+  git add -A -- <c.paths>          # stage exactly this group: mods, new files, deletions,
+                                   #   and a rename's old+new path (we include `from`)
+  git -c user.* commit -m c.message
+  → record { ok, code?, message?, subject }
+  if a commit fails (e.g. a pre-commit hook rejects): STOP, return partial result.
+}
+```
+- After each commit the index returns to clean, so the next `add` stages only the next
+  group. Disjoint+complete validation upstream guarantees no overlap.
+- **Identity** is injected per commit exactly like `gitCommitAll` (`identityConfigArgs`),
+  so global/repo config stays byte-identical (acceptance criterion #10).
+- **Partial failure is a SAFE state**, reported honestly: "committed K of N; the remaining
+  changes are still in your working tree." No half-merge, no rollback needed, nothing lost.
+- **Renames:** the changed-file reader is enriched to expose `from` for `R` entries; a
+  rename's group includes both `from` and `to` so the deletion of the old path is staged
+  with the addition of the new one.
+
+> Note on `git reset` (mixed): it only moves the index pointer back to HEAD — it **never
+> touches the working tree** and is fully reversible (just re-stage). This is categorically
+> different from the forbidden `reset --hard`. It guarantees each group's commit contains
+> exactly that group's files regardless of any pre-existing staged state.
+
+---
+
+### 7. Service layer (`src/service/` — `reads.ts` + `actions.ts`)
+
+- `planCommitInput(repoId)` — like `collectRepoDiff`: enqueue a `readStatus` (refuse
+  submodule / `NOTHING_TO_COMMIT`), then `collectCommitPlanInput`. Read-only.
+- `smartCommitRepo(repoId, commits, sync)` —
+  1. Look up repo + identity; guard NOT_FOUND / submodule.
+  2. **Re-validate** the submitted `commits` against a fresh `readChanges`: every path is
+     currently changed, paths are disjoint across commits, and the union covers the changed
+     set (extra/vanished paths → `PLAN_STALE`, prompting the UI to re-plan).
+  3. `enqueue(repoId, () => gitCommitGroups(...))` — one slot for the whole sequence.
+  4. If `sync` and all commits succeeded: reuse the existing pull-ff + push legs.
+  5. `refreshRepo` **after** the slot releases.
+  Returns `{ ok, committed: [...], remaining, synced?, code }`.
+
+### 8. Contract + schemas + routes
+
+- **`src/contract.ts`** — new codes (mirrored in `web/src/types.ts`):
+  `PLAN_STALE` (409), `EMPTY_PLAN` (400), `PLAN_PATHS_INVALID` (400),
+  `AI_PLAN_FAILED` (502, when AI structuring fails *and* fallback is disabled — normally we
+  fall back instead). Reuse `AI_*`, `NOTHING_TO_COMMIT`, `DETACHED_HEAD`, `NO_*`.
+- **`src/schemas.ts`** —
+  `CommitPlanSchema = { provider?: string }` (mirror of `CommitMessageSchema`);
+  `SmartCommitSchema = { commits: [{ message: nonEmpty, paths: string[].min(1) }].min(1), sync?: boolean }`.
+- **HTTP routes (`src/http/routes/`)** — (the old monolithic `daemon.ts` is now split into per-domain route modules)
+  - `ai.ts`: `POST /api/repos/:id/commit-plan` → resolve provider/key/model → `planCommitInput` →
+    `generateCommitPlan` (fall back to `heuristicPlan` on AI failure) → `{ ok, plan }`.
+    409 on `NOTHING_TO_COMMIT`.
+  - `git-ops.ts`: `POST /api/repos/:id/smart-commit` → `parseBody(SmartCommitSchema)` → `smartCommitRepo`
+    → map result via `statusForCode`.
+
+### 9. Web (`web/`)
+
+- **`api.ts`** — `ai.commitPlan(repoId, provider?)` and `smartCommit(repoId, commits, sync?)`.
+- **`types.ts`** — `CommitGroup`, `CommitPlan`, the new codes.
+- **`store.ts`** — `genCommitPlan(repoId)`, `smartCommit(repoId, commits, sync)`, and plan
+  state (the in-progress plan per repo so the editor is reactive).
+- **UI** — a new **`SmartCommitPlan.vue`** (a responsive Sheet/dialog, matching the existing
+  shadcn-vue Sheet pattern used by Settings/Identity) opened from a **Smart Commit** button
+  beside the existing commit box in `RepoCard.vue` (visible when `aiEnabled` and there are
+  changes). The **full editor**:
+  - ordered, drag-reorderable commit cards (reuse `@formkit/drag-and-drop`, already a dep);
+  - per-card: type/scope badge + editable subject + expandable body + file chips;
+  - **move a file** to another card (drag a chip, or a "move to…" menu);
+  - **merge** two cards, **split** a card, **delete** a card (its files → Unassigned),
+    **collapse to one commit**, **regenerate** the whole plan or one card's message;
+  - a live preview of each final `type(scope): subject` line;
+  - footer: **Commit all N** and **Commit all & sync**, plus **Cancel** (discards the plan,
+    no git change); a banner when `degraded`/`truncated`; an "Unassigned" group blocks commit.
+- **`locales/en.json`** — all new strings (i18n scaffolding is retained even though the app
+  ships English-only).
+
+### 10. Safety analysis (invariant compliance)
+
+| Risk | Mitigation |
+|---|---|
+| Half-staged / half-merged tree | File-level only; `git add -- <paths>` + `commit` per group; index normalized first; never `apply --cached` partial hunks. End state is always either fully committed or "some commits + clean remainder". |
+| Interrupted mid-sequence | Each commit is atomic. Partial result reported; remaining changes sit safely in the working tree. No rollback needed, nothing lost. |
+| Plan stale (tree changed between plan and execute) | Server re-validates submitted paths vs. live `readChanges`; mismatch → `PLAN_STALE`, UI re-plans. |
+| Op-queue race / deadlock | Whole sequence in **one** `enqueue(repoId)` slot; `refreshRepo` only **after** it releases. |
+| AI key leakage | Unchanged daemon-proxy model — the key never leaves the host; the browser only ever sees paths + messages. |
+| Identity / config mutation | Per-commit `-c user.*` injection; global/repo config untouched. |
+| Push divergence | `sync` reuses the existing pull-ff + non-force push guards (409/403). Splitting changes none of that. |
+| Provider returns garbage | Strict zod validation + one retry + deterministic fallback. Never executes an unvalidated plan. |
+| Reversibility from the phone | Commits are **local** until you choose `sync` — no worse than today's commit button. (Auto-branching for extra safety is a possible future, deliberately not in v1; it's off-pattern for RepoYeti.) |
+
+### 11. Edge cases
+
+- **Untracked / new files** — staged via `git add -- <path>`; counted as additions in stats.
+- **Deletions** — `git add -- <deletedpath>` stages the removal (git ≥2.0).
+- **Renames** — old+new path travel together in one group (reader exposes `from`).
+- **Binary / large files** — flagged in the plan input (no textual diff sent); grouped by
+  path/stat; can be isolated by the model or the user.
+- **Lockfiles** — prompt rule pins them to their manifest's group; fallback buckets them with
+  the manifest's directory.
+- **>2000 changed files** — `getChanges` already caps at `MAX_CHANGED_FILES`; Smart Commit
+  shows the same "N of M" truncation and operates on the visible set (banner warns).
+- **Single logical change** — the AI may legitimately return one group; the UI still lets you
+  "Commit all" (== a normal commit) so the button is never a dead end.
+
+### 12. Implementation plan (build order)
+
+1. **AI core** — `ai.ts`: `generateCommitPlan` + JSON-mode adapter capability + zod plan
+   schema + `parseCommitPlan` + `heuristicPlan`. Unit-test parsing/validation/fallback.
+2. **Git core** — `git-actions.ts`: `collectCommitPlanInput` + `gitCommitGroups`; enrich the
+   changed-file reader with rename `from`. Test multi-commit execution on a real temp repo.
+3. **Service + contract + schemas** — `planCommitInput`, `smartCommitRepo`, new codes/schemas.
+4. **Daemon routes** — `commit-plan`, `smart-commit`. HTTP route tests (incl. `PLAN_STALE`).
+5. **Web data layer** — `api.ts`, `types.ts`, `store.ts`.
+6. **Web UI** — `SmartCommitPlan.vue` + `RepoCard.vue` button + `en.json`.
+7. **Verify** — `bun test` green; `vue-tsc`/build green; runtime smoke test over HTTP.
+
+### 12b. YOLO mode (shipped)
+
+A global owner setting (`cfg.ai.yolo`, Settings → AI) flips the Smart Commit button from
+**plan → review → execute** to **plan → execute** with no editor: it generates the plan and
+commits it immediately. For an owner who trusts the AI and won't edit the plan. Guard rails
+that stay on even in YOLO:
+- **Never auto-pushes** — committing is local and undoable at the desk; pushing is outward-facing,
+  so it's left to an explicit Push/Sync tap.
+- **Nothing is silently dropped** — any planner `leftovers` are committed as a final
+  `chore: miscellaneous changes` commit.
+- Same server-side re-validation (`PLAN_STALE`/`PLAN_PATHS_INVALID`) and single-op-queue-slot
+  execution as the reviewed path.
+The button shows a small **YOLO** tag when the mode is on.
+
+### 12c. Token efficiency (shipped)
+
+The planner's diff is **token-trimmed** so more change-sets fit a provider's rate limit (the free
+Groq tier is 6000 tokens/min) and every call is cheaper — without any external dependency or model:
+- **Zero-context diffs** (`git diff -U0`) — just the changed lines, no surrounding context (grouping
+  doesn't need it; *message* generation still uses full context).
+- **Noise folding** (`isNoisyPath`) — the diff *bodies* of lockfiles, `*.min.js/.css`, `*.map`,
+  `*.snap`, `*.lock` are dropped; the file **list** still carries them (with stat) so grouping a
+  lockfile *with its manifest* still works. The model only needs to *know* they changed, not read
+  thousands of generated lines.
+
+Measured ~99.9% diff reduction on a lockfile-heavy change (136 KB → 151 chars), with the AI plan
+still `degraded:false`. (Concept borrowed from claw-compactor's "diff folding"; implemented as ~40
+lines in `collectCommitPlanInput`, kept in that one function so a future TS compressor can drop in.
+A generic compressor like LLMLingua was rejected — it can corrupt code semantics and needs a bundled
+model; the only diff-specific tool, claw-compactor, is Python and can't live in the Bun binary.)
+
+### 13. Future (deferred, additive)
+
+- **Hunk-level "deep split"** opt-in (would require an explicit decision to relax the
+  invariant + a partial-patch apply path with conflict-safe fallback to whole-file).
+- **Per-commit test gate** (`--compose-test-after-each`-style) before each commit.
+- **Auto-branch** the plan for one-tap undo.
+- **Topological auto-ordering** from import/symbol scanning (today ordering is the model's
+  judgment + manual reorder).
+
+---
+
+## 15. Remote access — named Cloudflare tunnel (runbook)
+
+
+> **TL;DR.** RepoYeti is reachable from a phone at **`https://app.repoyeti.com`** via a **named
+> Cloudflare tunnel** (not the old rotating, DNS-blocked `*.trycloudflare.com` quick tunnel). The
+> tunnel + DNS were provisioned **through the Connections vault** (no raw Cloudflare token ever
+> touched this machine). Login is done **the right way** — the daemon registers and uses its **own**
+> `/oauth/callback`, and the old redirect "shim" Worker is **deleted**. The Cloudflare layer is
+> verified; the only thing not yet runtime-proven is a live end-to-end sign-in (needs the daemon
+> running + one real login).
+
+---
+
+### Why we moved off trycloudflare
+The quick tunnel gave a **rotating** `*.trycloudflare.com` URL, and that namespace is **widely
+DNS-blocked** (it's abused for malware/phishing), so phones on filtered networks got
+`DNS_PROBE_FINISHED_NXDOMAIN`. A **named tunnel on our own domain** is stable and resolves everywhere.
+
+### The tunnel (live, verified at the Cloudflare layer)
+| Thing | Value |
+|---|---|
+| Cloudflare account | **`36d7c731fd0352ef08ea7e46d2d20793`** (Lunawerx@gmail.com) — owns the `repoyeti.com` zone (`a71592246b44b2282bd071ae0e8ca095`) |
+| Tunnel id | **`ce2ba43f-73f3-49d8-9e89-72d2e419d0bd`** (named `repoyeti`, remotely-managed) |
+| Public hostname | `app.repoyeti.com` → `http://localhost:7171` (ingress configured in the tunnel) |
+| DNS | proxied CNAME `app.repoyeti.com → ce2ba43f-…​.cfargotunnel.com` |
+| Connector | `cloudflared` (2025.8.1, installed) running with the connector token |
+
+**How it was provisioned:** entirely through the **Connections vault** — `connections_execute` against the
+Cloudflare catalog endpoints (`cfd_tunnel` create/configure/token, `dns_records` create, `zones` lookup), with
+the Cloudflare credential injected server-side, value-blind. See the Connections repo
+`docs/architecture/mcp-catalog-executor.md` §7 for the exact mechanism (and the catalog bugs that had to be
+fixed first to make it work at all).
+
+**Verified:** the connector registers at Cloudflare's edge (4 QUIC connections) and a request to
+`https://app.repoyeti.com` routes through the tunnel to `localhost:7171` (returns 502 only because the daemon
+isn't currently listening — which itself proves the ingress is correct).
+
+### Daemon side (code + config)
+- **Named-tunnel support** (this was new — the quick tunnel was the only option before):
+  `src/tunnel.ts` → `startNamedTunnel()` (`cloudflared tunnel run --token …`, advertises `https://<hostname>`
+  on first edge connection); `src/config.ts` → `TunnelConfig` + `namedTunnel()` resolver (token is a keychain
+  secret, env override `CF_TUNNEL_TOKEN`); `src/runtime.ts` → `startManagedTunnel(cfg)` picks named vs quick.
+- **Config:** `~/.repoyeti/config.json` →
+  `"tunnel": { "provider":"named", "hostname":"app.repoyeti.com", "token":"<connector token>" }`.
+  The token moves to the OS keychain on boot and is stripped from disk.
+- **UI:** the Remote-access modal overflow (long URL pushing the copy button off the card) was a CSS-grid
+  `min-width:auto` trap — fixed with `min-w-0` on the link block in `web/src/components/RemoteAccess.vue`.
+
+### Login — the right way (no shim)
+The old design used a **rotating** tunnel URL, so OAuth (which needs a fixed registered redirect) used a tiny
+"shim" Worker that bounced the login back to the daemon's current address. **With a stable domain that's
+obsolete.** Now:
+- **IdP registration** (Connections `developer_app_registrations`, clientId `a790090c23b353c15ed973fd5fe20563`):
+  `redirect_uris = [ https://app.repoyeti.com/oauth/callback , http://127.0.0.1:7171/oauth/callback ]`.
+  (The previous entry was malformed — `…/cb%20and`, old `gitmob-auth` name — and would have failed login.)
+- **Daemon** (`src/auth.ts`): `/oauth/login` sends `redirect_uri = <its own origin>/oauth/callback`;
+  `/oauth/callback` exchanges with the same value, derived from the **HMAC-signed `state`** (so it can't be
+  tampered). The IdP allow-list + the signed origin double-gate against open redirects.
+- **Shim retired:** the `gitmob-auth` Worker (it was never re-deployed under the new name) was **deleted** from
+  the Lunawerx Cloudflare account. `shim/` in this repo is now dead reference code.
+
+### Headless agents — an optional Bearer API token (no browser needed)
+A **remote or headless AI agent** can't complete the browser-based OIDC dance. For that case the
+owner can mint an **optional API token** and the agent authenticates with a Bearer header:
+- `repoyeti token new` mints + prints the token **once** (`POST /api/auth/token`); `repoyeti token
+  revoke` deletes it; `repoyeti token show` reports only whether one is configured.
+- Then send `Authorization: Bearer <token>` (or set `REPOYETI_TOKEN` for the CLI verbs and
+  `repoyeti mcp`).
+- It's a **separate, local credential** (constant-time compared, kept in the OS keychain) — it never
+  touches connections.icu and exists only on this daemon.
+- **Off by default, and it never weakens the default posture.** When no token is set, auth is
+  byte-for-byte the OIDC-only behavior described above; a request over the tunnel still requires a
+  signed-in owner *or* the explicit token. The token is purely additive, for the headless case.
+
+### To bring it fully live
+1. Run RepoYeti with **remote access on** (it reads `~/.repoyeti/config.json` and runs the named-tunnel
+   connector itself; `cloudflared` is installed).
+2. **Sign in once** over `app.repoyeti.com` to claim ownership (a request over the tunnel always requires the
+   owner session — the security invariant). This is the one step not yet runtime-verified.
+
+### Security notes
+- A request arriving over the tunnel **always** requires a signed-in owner, in any mode (loopback can "continue
+  local"). Enabling remote refuses until an owner is claimed (no stranger races TOFU on a fresh tunnel).
+- The named-tunnel host is a normal `repoyeti.com` record — **not** on any trycloudflare blocklist.
+
+### Open
+- **Live sign-in not yet proven** (needs the daemon running). If the IdP rejects the redirect URI, it's an app-
+  registration cache TTL — re-try shortly.
+- **Google Cloud** (used elsewhere via the operator) still needs a re-connect for a fresh token — unrelated to
+  this tunnel; see the Connections doc §8.
+- Daemon code edits (`auth.ts`, `config.ts`, `tunnel.ts`, `runtime.ts`) are in the working tree.
+
+---
+
+## 16. Shared kit & cross-repo consolidation
+
+RepoYeti is one of three sibling apps — **RepoYeti**, **DevWebUI**, and **Reimagine** — that share a
+common design system and a growing set of extracted libraries via the **`lunarwerx-ui`** kit
+(`D:/PublicProjects/lunarwerx-ui`, published as `LunarWerx/lunarwerx-ui`). A 2026-07-03/04
+design-alignment pass reconciled the three apps against that kit; it is **complete** — this section
+records the durable outcome. (The item-by-item hitlist that drove it, formerly `burndown.md`, is
+finished and preserved in git history.)
+
+### 16.1 What the kit provides (synced into each app)
+
+- **Web libs** (`lunarwerx-ui/src/lib/`, synced into `web/src/lib | components/ui | shell | styles`):
+  `relativeTime`, `httpClient` (the `ApiError` + fetch wrapper), `useSelfUpdate` (self-update
+  composable + toast branching), `i18n-core` (the `createAppI18n` factory), and `theme` (`useTheme`),
+  plus the shadcn-style `components/ui/**`, `shell/**`, `lib/utils.ts`, and `styles/kit-*.css` design
+  tokens (unified content width `--container-max: 800px`).
+- **Server libs** (`lunarwerx-ui/src/server-lib/`, synced into each app's `serverLib` dir):
+  `mcp-stdio` (the zero-dep, Bun+Node JSON-RPC 2.0 / MCP dispatch + stdio loop — RepoYeti's
+  `src/mcp/core.ts` + `stdio.ts` are thin adapters over it), `instance-pointer` (the `runtime.json`
+  live-instance pointer), `updater-engine` (git check/apply self-update), and `find-free-port` (the
+  bind-and-walk port picker `src/cli/lifecycle.ts` now uses).
+
+### 16.2 Kit-sync guardrails (do not break these)
+
+- **Never edit the synced files in place** — `web/src/components/ui/**`, `web/src/shell/**`,
+  `web/src/lib/utils.ts`, `web/src/styles/kit-*.css`, and the `serverLib` files are **copied from the
+  kit**. Fix the source in `lunarwerx-ui`, then run `node sync.mjs` there; `sync.mjs --check` (gated by
+  a pre-commit hook) audits for drift.
+- **Colours go through semantic tokens** (`success` / `warning` / `info` / `primary` / `destructive`),
+  never raw Tailwind palette classes — and never a *sibling app's* accent (violet is Reimagine's).
+- **Deliberately bespoke, leave alone:** `web/src/components/FileViewer.vue` (resizable Monaco) and
+  `src/config.ts`'s `BUILTIN_GROQ_KEY` (a real, intentionally-public throwaway key — never scrub it).
+
+### 16.3 A few pieces stay per-app by design
+
+The self-update **DTOs** (`UpdateStatus` / `UpdateApplyResult`) and each app's SSE event schema are
+intentionally per-app (they mirror each app's own server), even though the *logic* around them is
+shared. OIDC/PKCE auth (`src/auth.ts`) is RepoYeti's alone for now — the generic extraction for
+DevWebUI/Reimagine adoption is deferred until one of them needs login.
 
 ---
 

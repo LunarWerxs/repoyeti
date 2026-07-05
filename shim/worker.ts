@@ -4,7 +4,7 @@
  * Why this exists: the daemon lives on a free, *rotating* quick-tunnel URL, but an
  * OAuth redirect URI must be a single *stable* registered URL. So we register THIS
  * worker as the redirect, and it bounces the login back to the daemon's current URL
- * (which the daemon stamped into the signed `state`). See ARCHITECTURE.md §7.
+ * (which the daemon stamped into the signed `state`). See docs/ARCHITECTURE.md §7.
  *
  * Security: the `code` is PKCE-bound to the daemon's verifier (held server-side) and
  * single-use, so the shim only ever sees an unusable token. The daemon HMAC-verifies

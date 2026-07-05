@@ -1,4 +1,4 @@
-import { ref, reactive, computed, type Ref } from "vue";
+import { ref, reactive, computed, watch, type Ref } from "vue";
 import { api } from "../api";
 import type { ActionName, ActionResult, ChangedFile, Repo } from "../types";
 
@@ -88,6 +88,41 @@ export function useRepoActions(
     filterIdentity.value = undefined;
     filterStatuses.value = [];
   }
+
+  // ── Conflict Concierge triage card ────────────────────────────────────────────
+  // State-driven (not event-driven): derived straight from each repo's live status, so it
+  // survives reloads and clears itself the instant a repo's conflict/mid-op condition does —
+  // no toast/SSE bookkeeping to go stale. The daemon computes `conflicted`/`gitOperation`
+  // additively in RepoStatus (src/read/status.ts), reusing the exact same detection the
+  // auto-commit safety gate uses (src/git.ts currentGitOperation) — see docs/CONNECTIONS_SETTINGS_SYNC.md
+  // sibling spec note for the sync half of this feature set.
+  const needsAttentionRepos = computed(() =>
+    repos.value.filter((r) => !!r.status && (!!r.status.conflicted || !!r.status.gitOperation)),
+  );
+  // Dismissed for THIS session only (per repo id) — cleared on reload, and re-added automatically
+  // the moment a dismissed repo's condition clears then reappears (dismissedIds isn't pruned
+  // proactively; the card's visible list already re-filters live conflicted repos each render,
+  // so a repo that leaves and re-enters the attention set shows again because dismissal only
+  // suppresses a still-ongoing one — see dismissAttention()).
+  const dismissedAttentionIds = ref<Set<string>>(new Set());
+  const visibleAttentionRepos = computed(() =>
+    needsAttentionRepos.value.filter((r) => !dismissedAttentionIds.value.has(r.id)),
+  );
+  /** Dismiss one repo's triage row for the rest of this session. If it clears and a NEW
+   *  conflict/mid-op starts later, the id is re-derived fresh next status read, so the card
+   *  un-suppresses itself automatically the same way it would on a first sighting — nothing to
+   *  reset by hand on the daemon side. We DO still forget the dismissal once the underlying
+   *  condition clears, so a stale id can't accidentally hide a brand-new future conflict. */
+  function dismissAttention(repoId: string): void {
+    dismissedAttentionIds.value.add(repoId);
+  }
+  watch(needsAttentionRepos, (current) => {
+    if (dismissedAttentionIds.value.size === 0) return;
+    const stillNeeds = new Set(current.map((r) => r.id));
+    for (const id of [...dismissedAttentionIds.value]) {
+      if (!stillNeeds.has(id)) dismissedAttentionIds.value.delete(id);
+    }
+  });
 
   function patchRepo(id: string, patch: Partial<Repo>): void {
     const r = repos.value.find((x) => x.id === id);
@@ -237,6 +272,9 @@ export function useRepoActions(
     pinnedRepos,
     starredRepos,
     otherRepos,
+    needsAttentionRepos,
+    visibleAttentionRepos,
+    dismissAttention,
     patchRepo,
     doAction,
     commit,

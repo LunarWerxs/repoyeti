@@ -9,7 +9,7 @@
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import type { SimpleGit } from "simple-git";
-import { gitFor } from "../git.ts";
+import { gitFor, currentGitOperation } from "../git.ts";
 import { readGate } from "../gitgate.ts";
 import { computeDiffStats, type DiffStat } from "./diffstat.ts";
 import type { RepoStatus } from "../db.ts";
@@ -64,6 +64,13 @@ export interface ChangedFile {
   stat?: DiffStat;
 }
 
+/** True when a porcelain index/working-dir letter pair marks an unmerged/conflicted path.
+ *  Shared by readChanges (per-file "C" status) and readStatus (aggregate `conflicted` flag)
+ *  so both agree on exactly one definition. */
+function isConflictPair(x: string, y: string): boolean {
+  return x === "U" || y === "U" || (x === "A" && y === "A") || (x === "D" && y === "D");
+}
+
 /**
  * The repo's changed-file list (names + status only — never file contents).
  * When `withStats` is on, each file also carries its line/char delta vs HEAD.
@@ -84,7 +91,7 @@ export async function readChanges(absPath: string, withStats = false): Promise<C
       const x = f.index ?? " ";
       const y = f.working_dir ?? " ";
       const untracked = x === "?" || y === "?";
-      const conflicted = x === "U" || y === "U" || (x === "A" && y === "A") || (x === "D" && y === "D");
+      const conflicted = isConflictPair(x, y);
       let letter: string;
       if (untracked) letter = "U";
       else if (conflicted) letter = "C";
@@ -129,6 +136,11 @@ export async function readStatus(absPath: string, withDiff = false): Promise<Rep
           .map((f) => f.path);
         diff = (await computeDiffStats(absPath, untracked)).total;
       }
+      // Conflict Concierge inputs: cheap to compute alongside the status we already have (no
+      // extra git subprocess for `conflicted` — `gitOperation` is one existsSync-only check,
+      // shared with the auto-commit safety gate via src/git.ts currentGitOperation).
+      const conflicted = status.files.some((f) => isConflictPair(f.index ?? " ", f.working_dir ?? " "));
+      const gitOperation = await currentGitOperation(absPath);
       return {
         branch: status.current ?? null,
         detached,
@@ -139,6 +151,8 @@ export async function readStatus(absPath: string, withDiff = false): Promise<Rep
         error: null,
         fetchedAt: null,
         diff,
+        conflicted,
+        gitOperation,
         updatedAt,
       };
     });

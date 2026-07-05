@@ -2,7 +2,6 @@
 import { ref, computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Cloud, CloudOff, Copy, Check, ExternalLink, Loader2, Laptop } from "@lucide/vue";
-import QRCode from "qrcode";
 import { toast } from "vue-sonner";
 import { useStore } from "../store";
 import { ApiError } from "../api";
@@ -25,6 +24,14 @@ const switching = ref(false);
 const qrSvg = ref("");
 const copied = ref(false);
 
+// Lazily loaded — qrcode is a ~0.5-1MB lib only needed once the modal is open
+// and a tunnel URL exists, so it's kept out of the initial bundle.
+let qrcodeModule: typeof import("qrcode") | undefined;
+async function loadQrcode(): Promise<typeof import("qrcode")> {
+  qrcodeModule ??= (await import("qrcode")).default;
+  return qrcodeModule;
+}
+
 // (Re)render the QR whenever the dialog opens or the tunnel URL changes. Forced
 // dark-on-white so it scans regardless of the app theme.
 watch(
@@ -35,6 +42,7 @@ watch(
       return;
     }
     try {
+      const QRCode = await loadQrcode();
       qrSvg.value = await QRCode.toString(url, {
         type: "svg",
         margin: 1,

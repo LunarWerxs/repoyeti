@@ -4,6 +4,7 @@ import { Plus, FolderGit2, FolderSearch, Loader2 } from "@lucide/vue";
 import { useStore } from "./store";
 import { Button } from "@/components/ui/button";
 import AppHeader from "./components/AppHeader.vue";
+import ConflictConcierge from "./components/ConflictConcierge.vue";
 import RepoList from "./components/RepoList.vue";
 import RepoCard from "./components/RepoCard.vue";
 import RepoFilters from "./components/RepoFilters.vue";
@@ -114,6 +115,7 @@ onMounted(async () => {
       </div>
 
       <template v-else>
+        <ConflictConcierge />
         <RepoFilters />
         <template v-if="store.filtersActive">
           <div v-if="store.filteredRepos.length" class="flex flex-col gap-2.5">

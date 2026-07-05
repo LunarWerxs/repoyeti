@@ -4,6 +4,7 @@ import type { PushPanelSide } from "@/shell/usePushPanel";
 import SettingsPanel from "@/shell/SettingsPanel.vue";
 import IdentityAccessSection from "./settings/IdentityAccessSection.vue";
 import DiscoverySection from "./settings/DiscoverySection.vue";
+import CloudSyncSection from "./settings/CloudSyncSection.vue";
 import AppearanceSection from "./settings/AppearanceSection.vue";
 import SyncHotkeysSection from "./settings/SyncHotkeysSection.vue";
 import AutoCommitSection from "./settings/AutoCommitSection.vue";
@@ -34,6 +35,9 @@ const props = withDefaults(defineProps<{ side?: PushPanelSide; rightOffsetPx?: n
 
       <!-- Discovery: scan folders + lore servers ─────────────────────────── -->
       <DiscoverySection :open="open" />
+
+      <!-- Opt-in cloud sync of theme/preferences via Connections ──────────── -->
+      <CloudSyncSection />
 
       <!-- Appearance + diff display preferences ──────────────────────────── -->
       <AppearanceSection />

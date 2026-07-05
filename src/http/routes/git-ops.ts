@@ -44,7 +44,7 @@ export function register(app: Hono, _deps: Deps): void {
 
   // Smart commit: execute an (owner-edited) multi-commit plan — stage each group's files and
   // commit it in order, optionally syncing after. The body is validated against the live tree
-  // in the service layer (PLAN_STALE / PLAN_PATHS_INVALID). See docs/SMART_COMMIT.md.
+  // in the service layer (PLAN_STALE / PLAN_PATHS_INVALID). See docs/ARCHITECTURE.md §14 (Smart Commit).
   app.post("/api/repos/:id/smart-commit", async (c) => {
     const id = requireId(c);
     if (id instanceof Response) return id;

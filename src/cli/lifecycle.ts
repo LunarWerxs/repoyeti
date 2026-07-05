@@ -20,6 +20,7 @@ import {
 import { initDb, upsertRepo, getRepo, getRepos, getWatchableRepos } from "../db.ts";
 import { discoverStream } from "../discovery.ts";
 import { createApp } from "../http/app.ts";
+import { initCloudSync, pullNow } from "../connections-sync.ts";
 import { refreshRepo, startWatching, watchOne, stopWatching } from "../service/index.ts";
 import { startRemoteSync, stopRemoteSync } from "../remote-sync.ts";
 import { startAutoCommit, stopAutoCommit } from "../auto-commit.ts";
@@ -98,7 +99,7 @@ export async function start(rest: string[]): Promise<void> {
   if (tunnelProblem === "auth") {
     console.error(
       "Refusing to open a tunnel without auth.\n" +
-        "Configure \"oauth\" in ~/.repoyeti/config.json first (see ARCHITECTURE.md §13),\n" +
+        "Configure \"oauth\" in ~/.repoyeti/config.json first (see docs/ARCHITECTURE.md §13),\n" +
         "so only you — signed in with Connections — can reach the daemon over the network.",
     );
     process.exit(1);
@@ -154,6 +155,15 @@ export async function start(rest: string[]): Promise<void> {
   // Advertise where we actually landed (the port may have hopped) so the launcher
   // opens the right URL and a second launch can detect us. Cleared on clean exit.
   writeInstanceInfo(server.port ?? port);
+
+  // "Sync my settings with Connections" — load the persisted refresh token, then (if the owner
+  // enabled sync) pull the cloud copy in the BACKGROUND so a fresh machine converges without
+  // blocking boot on the network. Runtime flags primed by createApp() pick up any pulled config on
+  // the next start; the appearance applies live via the settings_changed broadcast pullNow emits.
+  void initCloudSync().then(() => {
+    if (liveCfg.cloudSync?.enabled && liveCfg.oauth) return pullNow(liveCfg, liveCfg.oauth).catch(() => {});
+  });
+
   console.log(`\nrepoyeti ${VERSION} daemon up`);
   console.log(`  local:  ${url}`);
   console.log(`  repos:  ${url}/api/repos`);

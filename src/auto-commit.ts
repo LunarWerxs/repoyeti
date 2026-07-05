@@ -21,12 +21,10 @@
  * primed + toggled live from src/http/app.ts + PUT /api/settings. Git-only for now (a Lore repo
  * is centralized and simply never opted in here).
  */
-import { existsSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
 import { getWatchableRepos, getRepo, type RepoStatus, type RepoView } from "./db.ts";
 import { broadcast } from "./bus.ts";
 import { backendFor } from "./vcs/index.ts";
-import { gitFor } from "./git.ts";
+import { currentGitOperation } from "./git.ts";
 import { smartCommitRepo, pullRepo, pushRepo, planCommitInput } from "./service/index.ts";
 import {
   effectiveDefaultProvider,
@@ -154,18 +152,10 @@ export function planToCommits(plan: CommitPlan): Array<{ message: string; paths:
 }
 
 // ── conflict / mid-operation guard (NEVER auto-commit these) ────────────────────────────────
-const GIT_OP_MARKERS = ["MERGE_HEAD", "rebase-merge", "rebase-apply", "CHERRY_PICK_HEAD", "REVERT_HEAD"];
-
-/** True when the git repo is mid-merge/rebase/cherry-pick/revert. Best-effort: on any error we
- *  assume it IS mid-operation and skip, erring toward safety. */
+/** True when the git repo is mid-merge/rebase/cherry-pick/revert (currentGitOperation is
+ *  best-effort and already returns null rather than throwing when it can't tell). */
 async function inGitOperation(absPath: string): Promise<boolean> {
-  try {
-    const gitDir = (await gitFor(absPath).raw(["rev-parse", "--git-dir"])).trim();
-    const base = isAbsolute(gitDir) ? gitDir : join(absPath, gitDir);
-    return GIT_OP_MARKERS.some((m) => existsSync(join(base, m)));
-  } catch {
-    return true; // can't tell → don't auto-commit
-  }
+  return (await currentGitOperation(absPath)) !== null;
 }
 
 /** True when the repo has unmerged/conflicted paths (status "C") OR is mid git-operation. */

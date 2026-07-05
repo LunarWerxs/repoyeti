@@ -7,7 +7,7 @@ from your phone — fetch / pull / push, branches, stash, commit, tags, AI commi
 AI multi-commit **Smart Commit** splitter. A pluggable VCS backend also supports
 [Epic's Lore](src/vcs/lore.ts) (experimental, behind `REPOYETI_LORE=1`).
 
-> Architecture & build spec: **[ARCHITECTURE.md](ARCHITECTURE.md)** — the durable design doc (was the
+> Architecture & build spec: **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** — the durable design doc (was the
 > v1 "marching orders"). The product has grown beyond v1; see **Dashboard features** below and the [CHANGELOG](CHANGELOG.md).
 
 ## Status
@@ -25,7 +25,7 @@ AI multi-commit **Smart Commit** splitter. A pluggable VCS backend also supports
 verified. Login uses the daemon's **own** `<origin>/oauth/callback` — the old rotating-URL redirect
 "shim" Worker is **retired** (`shim/` is now dead reference code). A public PKCE client ships baked in
 so login works with zero setup over `app.repoyeti.com`; the only unproven step is a live end-to-end
-sign-in with the daemon running. See [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md).
+sign-in with the daemon running. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §15 (Remote access).
 ² PAT/HTTPS-token auth + OS-keychain (keytar) remain intentionally deferred (SSH-key injection covers
 the common case); the named-tunnel stable-URL upgrade is documented.
 
@@ -243,7 +243,7 @@ Local state lives under `~/.repoyeti/` (`config.json`, `repoyeti.db`). Nothing i
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) — running locally, the test/typecheck/`i18n:check` gates,
+See [CONTRIBUTING.md](docs/CONTRIBUTING.md) — running locally, the test/typecheck/`i18n:check` gates,
 and how to add a UI translation. Changes are tracked in [CHANGELOG.md](CHANGELOG.md).
 
 ## License

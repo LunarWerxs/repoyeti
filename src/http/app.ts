@@ -3,7 +3,7 @@
  *
  * This thin root wires per-domain route modules (src/http/routes/*) onto one Hono app behind
  * the single /api/* auth middleware, then mounts the static PWA last. The daemon binds to
- * 127.0.0.1 only (see index.ts). Auth is one middleware in front of /api/* (ARCHITECTURE.md §7).
+ * 127.0.0.1 only (see index.ts). Auth is one middleware in front of /api/* (docs/ARCHITECTURE.md §7).
  */
 import { Hono } from "hono";
 import type { RepoYetiConfig } from "../config.ts";
@@ -52,6 +52,7 @@ import * as updates from "./routes/updates.ts";
 import * as events from "./routes/events.ts";
 import * as openapi from "./routes/openapi.ts";
 import * as mcp from "./routes/mcp.ts";
+import * as sync from "./routes/sync.ts";
 
 export interface AppHooks {
   requestShutdown?: () => void;
@@ -115,6 +116,7 @@ export function createApp(cfg: RepoYetiConfig, hooks: AppHooks = {}): Hono {
   events.register(app, deps);
   openapi.register(app, deps);
   mcp.register(app, deps);
+  sync.register(app, deps);
 
   // Static PWA — LAST, so the /* catch-all only catches non-API routes.
   mountWeb(app);

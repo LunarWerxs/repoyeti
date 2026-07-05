@@ -23,7 +23,7 @@ import {
   checkoutRepo,
   createBranchRepo,
 } from "../service/index.ts";
-import type { McpBackend, LogOptions } from "./backend.ts";
+import { buildTriageBriefing, type McpBackend, type LogOptions } from "./backend.ts";
 
 /**
  * Resolve a user-supplied repo identifier to its RepoView, in process. Matching order mirrors
@@ -137,6 +137,10 @@ export function serviceBackend(): McpBackend {
         (r) => (r.status?.ahead ?? 0) > 0 || (r.status?.behind ?? 0) > 0,
       );
       return { repos: drifted };
+    },
+
+    async triageBriefing() {
+      return buildTriageBriefing(getRepos());
     },
   };
 }

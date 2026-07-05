@@ -1,5 +1,5 @@
 /**
- * "Sign in with Connections" — public OIDC relying party (ARCHITECTURE.md §7).
+ * "Sign in with Connections" — public OIDC relying party (docs/ARCHITECTURE.md §7).
  *
  * Stand-alone: RepoYeti only ever calls the IdP's PUBLIC OAuth URLs (discovered from
  * `<issuer>/.well-known/openid-configuration`) and verifies the returned id_token
@@ -67,6 +67,21 @@ export interface AuthOptions {
   /** Called after a first-use ("TOFU") ownership claim mutates `oauth.ownerSub`, so the host can
    *  persist the change. No-op if omitted. RepoYeti wires this to `saveConfig`. */
   onOwnerClaimed?: (oauth: OAuthConfig) => void;
+  /** Called on a successful token exchange with the FULL token set (not just the id_token this
+   *  module verifies for identity). Lets a host that also acts as a Backend-for-Frontend retain the
+   *  `refresh_token` server-side and later mint access tokens to call a per-user API (e.g. the
+   *  Connections settings-sync store). No-op if omitted → identity-only behaviour is unchanged.
+   *  The `sub`/`email` are the just-verified owner identity, so the host can key the tokens by owner. */
+  onTokens?: (tokens: OAuthTokens, who: { sub: string; email: string }) => void;
+}
+
+/** The token-endpoint response the BFF cares about (a superset of the id_token used for identity). */
+export interface OAuthTokens {
+  access_token?: string;
+  refresh_token?: string;
+  /** Access-token lifetime in seconds (per RFC 6749); used to schedule a proactive refresh. */
+  expires_in?: number;
+  token_type?: string;
 }
 
 // ── signing key (persisted so sessions survive a restart) ──────────────────────
@@ -347,7 +362,7 @@ export async function handleComplete(
       body,
     });
     if (!tr.ok) return c.html(errPage("Token exchange with Connections failed."), 502);
-    const tok = (await tr.json()) as { id_token?: string };
+    const tok = (await tr.json()) as { id_token?: string } & OAuthTokens;
     if (!tok.id_token) return c.html(errPage("Connections returned no identity token."), 502);
 
     const keySet = opts?.jwksSet ?? jwks(doc.jwks_uri!);
@@ -369,6 +384,16 @@ export async function handleComplete(
 
     if (!ownerMatches(o, sub, email)) {
       return c.html(errPage("This Connections account isn't the owner of this RepoYeti."), 403);
+    }
+    // Hand the full token set to the host (if it wired the hook) AFTER the owner check, so only the
+    // verified owner's tokens are ever retained. RepoYeti persists the refresh_token (keychain) so
+    // the daemon can sync settings to the Connections store on the owner's behalf. Identity-only
+    // hosts omit onTokens and nothing changes.
+    if (tok.access_token) {
+      opts?.onTokens?.(
+        { access_token: tok.access_token, refresh_token: tok.refresh_token, expires_in: tok.expires_in, token_type: tok.token_type },
+        { sub, email },
+      );
     }
     setSession(c, { sub, email, exp: Date.now() + SESSION_TTL_MS }, opts);
     return c.redirect("/");
