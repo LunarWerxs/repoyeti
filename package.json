@@ -40,6 +40,7 @@
     "check:coverage": "bun run scripts/check-coverage.ts",
     "check:codes": "bun run scripts/check-error-codes.ts",
     "check:boundaries": "bun run scripts/check-boundaries.ts",
+    "check:kit": "node ../lunarwerx-ui/sync.mjs --check --app repoyeti",
     "lint": "biome lint .",
     "format": "biome format --write .",
     "check": "bun run check:codes && bun run check:boundaries && bun run lint",

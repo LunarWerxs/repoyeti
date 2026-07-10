@@ -118,7 +118,7 @@ test("applyUpdate rolls back the checkout when build fails after the code swap",
   // reinstall pass), so this test isolates a clean rollback from the reinstall-also-fails case.
   const updater = updaterFor(local, loggingCmd(log, "install"), failsOnCallsCmd(log, "build", buildCount, [1]));
 
-  await expect(updater.applyUpdate()).rejects.toThrow("boom — rolled back to the previous version");
+  await expect(updater.applyUpdate()).rejects.toThrow("boom; rolled back to the previous version");
 
   // Checkout state, not just the log message: HEAD is back at the pre-update commit, the
   // pulled-in file change is gone, and the tree is clean (no half-applied swap left behind).
@@ -155,7 +155,7 @@ test("rollback message distinguishes a clean revert from a revert whose reinstal
   );
 
   await expect(updater.applyUpdate()).rejects.toThrow(
-    "boom — code was rolled back, but reinstalling/rebuilding it failed; the previous version may not run until this is fixed",
+    "boom; code was rolled back, but reinstalling/rebuilding it failed; the previous version may not run until this is fixed",
   );
 
   const head = (await $`git -C ${local} rev-parse HEAD`.text()).trim();
