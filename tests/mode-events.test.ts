@@ -1,11 +1,12 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
 import { createApp } from "../src/http/app.ts";
 import { registerRepo, refreshRepo, stopWatching } from "../src/service/index.ts";
 import type { RepoYetiConfig } from "../src/config.ts";
+import { rmrf } from "./rmrf.ts";
 
 // Closes E4: the PUT /api/mode start/stop toggle and the watcher→broadcast→SSE delivery path
 // (a repo refresh reaching a live subscriber) had no test. tunnel.test.ts only covers the
@@ -132,6 +133,6 @@ test("a repo state change is delivered to a GET /api/events subscriber", async (
     }
   } finally {
     stopWatching();
-    rmSync(dir, { recursive: true, force: true });
+    await rmrf(dir);
   }
 });
