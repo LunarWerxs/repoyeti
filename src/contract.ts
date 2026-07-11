@@ -44,6 +44,7 @@ export type ApiErrorCode =
   | "STASH_CONFLICT"
   | "STASH_EMPTY"
   | "DISCARD_FAILED"
+  | "STAGE_FAILED"
   // ── smart commit (multi-commit splitter) ──
   | "EMPTY_PLAN"
   | "PLAN_PATHS_INVALID"

@@ -85,7 +85,9 @@ async function runYolo(sync: boolean): Promise<void> {
   if (smartBusy.value) return;
   smartBusy.value = true;
   try {
-    const res = await store.genCommitPlan(props.repo.id);
+    // Scope to the checked selection, like GitHub Desktop's "stage + commit"; an empty
+    // selection (nothing checked) means "plan the whole working tree" — never an empty plan.
+    const res = await store.genCommitPlan(props.repo.id, undefined, [...props.treeSelection.selected]);
     const commits = res.plan.groups.map((g) => ({ message: planLine(g), paths: [...g.files] }));
     if (res.plan.leftovers.length) commits.push({ message: "chore: miscellaneous changes", paths: [...res.plan.leftovers] });
     if (!commits.length) {
@@ -384,6 +386,7 @@ defineExpose({ loadRecentMsgs, recentMsgs });
     :repo-name="repo.name"
     :has-remote="hasRemote"
     :default-sync="smartSync"
+    :selected-paths="[...treeSelection.selected]"
     @committed="onSmartCommitted"
   />
 </template>

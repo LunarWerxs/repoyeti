@@ -1,18 +1,45 @@
-import { test, expect } from "bun:test";
-import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { $ } from "bun";
-import { createUpdater } from "../src/updater-engine.mjs";
-
+// Tests for the shared self-update engine (SHARED LunarWerx server-lib — source of truth:
+// lunarwerx-ui/src/server-lib/updater-engine.test.ts, synced by sync.mjs into each app's
+// `serverTests` dir under a `server-lib/` subdir next to the app's server tree). The
+// `../../src/updater-engine.mjs` import resolves only from that synced location — sync.mjs
+// validates the placement — so this file is NOT runnable inside the kit repo itself.
+//
 // Exercises the real engine against a scratch git remote + clone (no mocking of git/spawn) so the
 // stage-then-swap / rollback-on-failure path around applyUpdate() is verified against actual repo
 // state, not just the transcript log. installCmd/buildCmd are real `bun -e` invocations that log
 // each call and can be made to fail on demand, so "did install/build actually run, how many times,
-// and in what order" is checkable after the fact.
+// and in what order" is checkable after the fact. All git operations are local (file:// clones of
+// tmpdir repos) — no network — so the suite is hermetic and deterministic.
+import { afterEach, test, expect } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { $ } from "bun";
+import { createUpdater } from "../../src/updater-engine.mjs";
+
+// Every scratch dir (git remotes, clones, and per-test log/count dirs) is tracked here and
+// removed in afterEach — each run otherwise leaks 9 full git repos into the temp dir, which
+// accumulates unbounded on a long-lived CI runner. Mirrors the tempDir/tempHome + rmSync
+// pattern the sibling kit tests use.
+const dirs: string[] = [];
+function scratchDir(prefix: string): string {
+  const d = mkdtempSync(join(tmpdir(), prefix));
+  dirs.push(d);
+  return d;
+}
+
+afterEach(() => {
+  for (const d of dirs.splice(0)) {
+    try {
+      rmSync(d, { recursive: true, force: true });
+    } catch {
+      /* best-effort temp cleanup */
+    }
+  }
+});
 
 async function remoteRepo(): Promise<string> {
-  const dir = mkdtempSync(join(tmpdir(), "ue-remote-"));
+  const dir = scratchDir("ue-remote-");
   await $`git -c init.defaultBranch=main init -q ${dir}`.quiet();
   writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "x", version: "0.1.0" }));
   writeFileSync(join(dir, "marker.txt"), "v1\n");
@@ -22,7 +49,7 @@ async function remoteRepo(): Promise<string> {
 }
 
 async function cloneRepo(remote: string): Promise<string> {
-  const dir = mkdtempSync(join(tmpdir(), "ue-local-"));
+  const dir = scratchDir("ue-local-");
   await $`git clone -q ${remote} ${dir}`.quiet();
   await $`git -C ${dir} config user.name S`.quiet();
   await $`git -C ${dir} config user.email s@s.io`.quiet();
@@ -81,7 +108,7 @@ test("checkForUpdate + applyUpdate happy path: pulls, installs, builds, HEAD adv
   const local = await cloneRepo(remote);
   await advanceRemote(remote, "0.2.0");
 
-  const scratch = mkdtempSync(join(tmpdir(), "ue-scratch-"));
+  const scratch = scratchDir("ue-scratch-");
   const log = join(scratch, "steps.log");
   const updater = updaterFor(local, loggingCmd(log, "install"), loggingCmd(log, "build"));
 
@@ -111,7 +138,7 @@ test("applyUpdate rolls back the checkout when build fails after the code swap",
   const preUpdateCommit = (await $`git -C ${local} rev-parse HEAD`.text()).trim();
   await advanceRemote(remote, "0.2.0");
 
-  const scratch = mkdtempSync(join(tmpdir(), "ue-scratch-"));
+  const scratch = scratchDir("ue-scratch-");
   const log = join(scratch, "steps.log");
   const buildCount = join(scratch, "build.count");
   // build fails on call 1 (forward pass, triggers the rollback) and succeeds on call 2 (rollback
@@ -140,7 +167,7 @@ test("rollback message distinguishes a clean revert from a revert whose reinstal
   const preUpdateCommit = (await $`git -C ${local} rev-parse HEAD`.text()).trim();
   await advanceRemote(remote, "0.2.0");
 
-  const scratch = mkdtempSync(join(tmpdir(), "ue-scratch-"));
+  const scratch = scratchDir("ue-scratch-");
   const log = join(scratch, "steps.log");
   const installCount = join(scratch, "install.count");
   const buildFailFlag = join(scratch, "FAIL_BUILD");

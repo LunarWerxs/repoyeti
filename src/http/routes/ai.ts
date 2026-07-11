@@ -196,7 +196,9 @@ export function register(app: Hono, { cfg }: Deps): void {
     const model = resolveModel(cfg, provider);
     if (!model) return jsonError(c, "NO_MODEL", `pick a model for ${provider} in Settings`);
 
-    const collected = await planCommitInput(id);
+    // Empty selection means "nothing checked" → plan the whole tree, so an empty array is
+    // treated the same as omitting `paths` entirely (never an accidental empty-scope plan).
+    const collected = await planCommitInput(id, p.data.paths?.length ? p.data.paths : undefined);
     if (!collected.ok) {
       const status: ContentfulStatusCode =
         collected.code === "NOT_FOUND" ? 404 : collected.code === "NOTHING_TO_COMMIT" ? 409 : 400;

@@ -300,6 +300,14 @@ export interface RepoYetiConfig {
    */
   portableMode?: boolean;
   /**
+   * Hide the system-tray notification-area icon. Absent/false = OFF (icon shown). The tray
+   * launcher reads this off runtime.json (see src/instance.ts), same pattern as portableMode —
+   * it gates only the NotifyIcon's .Visible, never its creation, so Quit/menu/watchdog machinery
+   * keeps working and the daemon keeps running in the background. Re-enabling from this Settings
+   * UI restores the icon within a few seconds without restarting anything (see misc/RepoYeti-Tray.ps1).
+   */
+  hideTrayIcon?: boolean;
+  /**
    * "Open with…" default external editor id (see src/service/editors.ts CATALOG — "vscode",
    * "cursor", "notepad++", the "system" file-manager pseudo-editor, …). The file viewer's
    * Open-with button launches this when the owner doesn't pick a specific editor from the

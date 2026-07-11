@@ -70,6 +70,7 @@ export function useSettings(deps: {
   autoUpdate: Ref<boolean>;
   autoScan: Ref<boolean>;
   portableMode: Ref<boolean>;
+  hideTrayIcon: Ref<boolean>;
   mcpApprovalGate: Ref<boolean>;
   mcpApprovalTimeoutSecs: Ref<number>;
   defaultEditor: Ref<string | null>;
@@ -97,6 +98,7 @@ export function useSettings(deps: {
     autoUpdate,
     autoScan,
     portableMode,
+    hideTrayIcon,
     mcpApprovalGate,
     mcpApprovalTimeoutSecs,
     defaultEditor,
@@ -334,6 +336,19 @@ export function useSettings(deps: {
     return api.openPortableWindow();
   }
 
+  /** Toggle hiding the system-tray notification-area icon (optimistic; rolls back on failure).
+   *  The daemon keeps running in the background either way — the launcher shortcut still
+   *  reopens the UI, and this can be flipped back here in Settings. */
+  async function setHideTrayIcon(enabled: boolean): Promise<void> {
+    hideTrayIcon.value = enabled;
+    try {
+      await api.setHideTrayIcon(enabled);
+    } catch (e) {
+      hideTrayIcon.value = !enabled; // roll back
+      throw e;
+    }
+  }
+
   /** Toggle silent auto-update + restart of the app (optimistic; rolls back on failure). */
   async function setAutoUpdate(enabled: boolean): Promise<void> {
     autoUpdate.value = enabled;
@@ -552,6 +567,7 @@ export function useSettings(deps: {
     setAutoUpdate,
     setPortableMode,
     openPortableWindow,
+    setHideTrayIcon,
     setMcpApprovalGate,
     setMcpApprovalTimeoutSecs,
     editorsCatalog,

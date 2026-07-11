@@ -99,6 +99,10 @@ export interface VcsBackend {
   /** Discard ONE file's working-tree changes — restore it to its committed/absent state.
    *  DESTRUCTIVE (the UI gates it behind an explicit confirm); never touches HEAD. */
   discardFile(absPath: string, relPath: string): Promise<ActionResult>;
+  /** Stage ONE file's working-tree change into the index (the changes-tree per-file "Stage"
+   *  action, GitHub-Desktop-style). Purely additive — never touches HEAD; safe to call
+   *  redundantly. Does NOT commit; the owner still commits separately. */
+  stageFile(absPath: string, relPath: string): Promise<ActionResult>;
 
   // ── AI commit-diff · smart-commit grouping · content search ──
   /** A compact, bounded working-tree diff snapshot for an AI commit-message/plan prompt.

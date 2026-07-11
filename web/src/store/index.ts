@@ -93,6 +93,10 @@ export const useStore = defineStore("repoyeti", () => {
   // tab. From /api/status, kept live via `settings_changed`; off until status loads. The
   // desktop launcher/tray follows the same preference (read off runtime.json, not this).
   const portableMode = ref(false);
+  // Owner setting: hide the system-tray notification-area icon. From /api/status, kept live via
+  // `settings_changed`; off until status loads. The daemon keeps running in the background either
+  // way — the desktop launcher/tray follows the same preference (read off runtime.json, not this).
+  const hideTrayIcon = ref(false);
   // ⭐ Agent Safety Rail: whether mutating MCP tool calls are gated behind owner approve/deny.
   // From /api/status, kept live via `settings_changed`; on until status loads (safe default).
   const mcpApprovalGate = ref(true);
@@ -193,6 +197,7 @@ export const useStore = defineStore("repoyeti", () => {
     stashPop,
     stashDrop,
     discardFile,
+    stageFile,
     moveFile,
   } = useGitOps(loadChanges, asResult);
 
@@ -274,6 +279,7 @@ export const useStore = defineStore("repoyeti", () => {
     setAutoScan,
     setPortableMode,
     openPortableWindow,
+    setHideTrayIcon,
     setMcpApprovalGate,
     setMcpApprovalTimeoutSecs,
     editorsCatalog,
@@ -337,6 +343,7 @@ export const useStore = defineStore("repoyeti", () => {
     autoUpdate,
     autoScan,
     portableMode,
+    hideTrayIcon,
     mcpApprovalGate,
     mcpApprovalTimeoutSecs,
     defaultEditor,
@@ -401,6 +408,7 @@ export const useStore = defineStore("repoyeti", () => {
       autoUpdate.value = s.autoUpdate ?? false;
       autoScan.value = s.autoScan ?? false;
       portableMode.value = s.portableMode ?? false;
+      hideTrayIcon.value = s.hideTrayIcon ?? false;
       mcpApprovalGate.value = s.mcpApprovalGate ?? true;
       mcpApprovalTimeoutSecs.value = s.mcpApprovalTimeoutSecs ?? 120;
       defaultEditor.value = s.defaultEditor ?? null;
@@ -512,6 +520,7 @@ export const useStore = defineStore("repoyeti", () => {
           if (typeof payload.autoCommitPush === "boolean") autoCommitPush.value = payload.autoCommitPush;
           if (typeof payload.autoScan === "boolean") autoScan.value = payload.autoScan;
           if (typeof payload.portableMode === "boolean") portableMode.value = payload.portableMode;
+          if (typeof payload.hideTrayIcon === "boolean") hideTrayIcon.value = payload.hideTrayIcon;
           if (typeof payload.mcpApprovalGate === "boolean") mcpApprovalGate.value = payload.mcpApprovalGate;
           if (typeof payload.mcpApprovalTimeoutSecs === "number")
             mcpApprovalTimeoutSecs.value = payload.mcpApprovalTimeoutSecs;
@@ -597,6 +606,7 @@ export const useStore = defineStore("repoyeti", () => {
     stashPop,
     stashDrop,
     discardFile,
+    stageFile,
     moveFile,
     roots,
     servers,
@@ -686,6 +696,8 @@ export const useStore = defineStore("repoyeti", () => {
     portableMode,
     setPortableMode,
     openPortableWindow,
+    hideTrayIcon,
+    setHideTrayIcon,
     mcpApprovalGate,
     mcpApprovalTimeoutSecs,
     setMcpApprovalGate,

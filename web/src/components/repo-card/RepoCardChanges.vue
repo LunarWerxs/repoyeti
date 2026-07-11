@@ -5,9 +5,10 @@
 // and the store, and runs its own git ops (discard) keyed by repo.id.
 import { computed, ref, useTemplateRef, watch, onBeforeUnmount } from "vue";
 import { useI18n } from "vue-i18n";
-import { AlertTriangle, ChevronsDownUp, ChevronsUpDown, Cloud, CloudOff, FileSearch, GripHorizontal, List, ListTree, Loader2, Search, X } from "@lucide/vue";
+import { AlertTriangle, ChevronsDownUp, ChevronsUpDown, Cloud, CloudOff, FileSearch, GripHorizontal, List, ListTree, Loader2, RefreshCw, Search, X } from "@lucide/vue";
+import { toast } from "vue-sonner";
 import { useStore } from "../../store";
-import { api } from "../../api";
+import { api, ApiError } from "../../api";
 import { buildChangeTree } from "@/lib/util";
 import { provideTreeCollapse } from "@/lib/changes-tree";
 import { cn } from "@/lib/utils";
@@ -47,6 +48,13 @@ const { toastResult } = useRepoFeedback();
 
 const st = computed(() => props.repo.status);
 const hasRemote = computed(() => !!st.value?.remote);
+
+// Manual refresh (re-stat this repo) — moved here from RepoCardActions so it sits immediately
+// left of the remote-presence cloud icon, right under the repo title.
+const busyAction = computed(() => store.busy[props.repo.id]);
+async function refresh(): Promise<void> {
+  await store.doAction(props.repo.id, "refresh");
+}
 
 // The toolbar's icon-only buttons are Tooltip-labelled; when the app-wide "show tooltips"
 // switch is off, reka suppresses those, so a native :title takes over as the only visible
@@ -271,6 +279,24 @@ async function onMove(payload: { from: string; toDir: string }): Promise<void> {
   if (store.gitOpBusy[props.repo.id]) return;
   toastResult(await store.moveFile(props.repo.id, payload.from, payload.toDir), t("repo.changes.moved"));
 }
+
+// ── stage one file into the index (non-destructive; GitHub-Desktop-style, no confirm needed) ──
+async function onStage(path: string): Promise<void> {
+  // Serialize with the other per-repo git ops (matches discard/move): don't fire a stage while
+  // one is already in flight for this repo.
+  if (store.gitOpBusy[props.repo.id]) return;
+  toastResult(await store.stageFile(props.repo.id, path), t("repo.changes.staged"));
+}
+
+// ── reveal a changed file's repo in the OS file manager (same convention as RepoCardActions'
+// "Open with…" → File Explorer/Finder; loopback-only, so a failure here is expected remotely) ──
+async function onReveal(path: string): Promise<void> {
+  try {
+    await store.openInEditor(props.repo.id, { editor: "system", path });
+  } catch (e) {
+    toast.error(e instanceof ApiError ? e.message : t("repo.openFailed"));
+  }
+}
 </script>
 
 <template>
@@ -283,6 +309,21 @@ async function onMove(payload: { from: string; toDir: string }): Promise<void> {
     >
       {{ repo.absPath }}
     </div>
+    <!-- manual refresh (re-stat this repo) — immediately left of the remote-presence cloud icon -->
+    <Tooltip>
+      <TooltipTrigger as-child>
+        <button
+          type="button"
+          class="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40 disabled:pointer-events-none disabled:opacity-50"
+          :aria-label="$t('repo.actions.refresh')"
+          :disabled="!!busyAction"
+          @click="refresh"
+        >
+          <RefreshCw :size="14" :class="busyAction === 'refresh' && 'animate-spin'" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>{{ $t("repo.actions.refresh") }}</TooltipContent>
+    </Tooltip>
     <Tooltip>
       <TooltipTrigger as-child>
         <span :class="cn('inline-flex shrink-0', hasRemote ? 'text-info/80' : 'text-muted-foreground/50')">
@@ -423,6 +464,8 @@ async function onMove(payload: { from: string; toDir: string }): Promise<void> {
         :flat="isList"
         :force-expand="searching && !isList"
         @discard="askDiscard"
+        @stage="onStage"
+        @reveal="onReveal"
         @move="onMove"
       />
       <!-- Server capped an oversized changed-file list (MAX_CHANGED_FILES) — say so. -->

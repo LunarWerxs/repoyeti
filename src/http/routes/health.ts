@@ -3,7 +3,12 @@ import type { Deps } from "../deps.ts";
 import { VERSION, accessMode, redactTunnel, saveConfig } from "../../config.ts";
 import { getTunnelUrl, tunnelActive } from "../../runtime.ts";
 import { broadcast } from "../../bus.ts";
-import { readInstanceInfo, updateInstanceInfo, instanceFilePath } from "../../instance.ts";
+import {
+  readInstanceInfo,
+  updateInstanceInfo,
+  instanceFilePath,
+  writeShutdownRequest,
+} from "../../instance.ts";
 import { openPortableWindow } from "../../portable-window.mjs";
 import { dirname, join } from "node:path";
 import { diffStatsEnabled, setDiffStatsEnabled } from "../../read/diffstat.ts";
@@ -103,6 +108,10 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       // runtime.json (see src/instance.ts), not this endpoint, so it can act before the daemon
       // is up — this is just what the Settings UI reflects on load.
       portableMode: cfg.portableMode === true,
+      // Whether the system-tray notification-area icon is hidden (owner setting; off by
+      // default). The tray launcher reads the same flag off runtime.json (see src/instance.ts)
+      // so it can act on it live, not just at boot — this is just what Settings reflects on load.
+      hideTrayIcon: cfg.hideTrayIcon === true,
       // ⭐ Agent Safety Rail: whether mutating MCP tool calls are gated behind a human
       // approve/deny (owner setting; default ON), and the auto-deny timeout in seconds.
       mcpApprovalGate: approvalGateEnabled(),
@@ -114,6 +123,12 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
   );
 
   app.post("/api/shutdown", (c) => {
+    // The tray stops the daemon by port (Stop-RepoYeti) and never calls this route, so any request
+    // that reaches here is a user "Shut Down" from the web UI — a request to terminate the WHOLE
+    // app, tray included. Drop a sentinel the tray host polls so it disposes its notification-area
+    // icon and exits too (and its auto-restart watchdog stands down instead of resurrecting the
+    // daemon); harmless when no tray is running (cleared on the next daemon boot).
+    writeShutdownRequest();
     setTimeout(() => requestShutdown?.(), 25);
     return c.json({ ok: true });
   });
@@ -231,6 +246,14 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       updateInstanceInfo({ portableMode: cfg.portableMode });
       broadcast("settings_changed", { portableMode: cfg.portableMode });
     }
+    if (typeof b.hideTrayIcon === "boolean") {
+      cfg.hideTrayIcon = b.hideTrayIcon;
+      saveConfig(cfg);
+      // Keep runtime.json current so the tray host's live watch-timer re-read picks up the
+      // new preference within a few seconds, without a restart — see misc/RepoYeti-Tray.ps1.
+      updateInstanceInfo({ hideTrayIcon: cfg.hideTrayIcon });
+      broadcast("settings_changed", { hideTrayIcon: cfg.hideTrayIcon });
+    }
     // ── ⭐ Agent Safety Rail settings ────────────────────────────────────────
     if (typeof b.mcpApprovalGate === "boolean") {
       cfg.mcpApprovalGate = b.mcpApprovalGate;
@@ -273,6 +296,7 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       autoUpdateIntervalSecs: getAutoUpdateIntervalSecs(),
       autoScan: cfg.autoScan === true,
       portableMode: cfg.portableMode === true,
+      hideTrayIcon: cfg.hideTrayIcon === true,
       mcpApprovalGate: approvalGateEnabled(),
       mcpApprovalTimeoutSecs: getApprovalTimeoutSecs(),
       defaultEditor: cfg.defaultEditor ?? null,

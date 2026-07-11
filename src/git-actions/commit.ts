@@ -167,3 +167,20 @@ export async function gitDiscardFile(absPath: string, relPath: string): Promise<
     return fail("DISCARD_FAILED", e instanceof Error ? e.message : String(e));
   }
 }
+
+/**
+ * VcsBackend.stageFile for git — stage ONE file's working-tree change into the index (the
+ * changes-tree per-file "Stage" action, GitHub-Desktop-style). `git add -A -- <path>` stages the
+ * whole-file change (modify / add / delete / rename) for exactly that path — same primitive
+ * gitCommitGroups uses per-group, just for a single file and with no follow-on commit. Never
+ * touches HEAD; purely additive to the index, so it's safe to call repeatedly / redundantly.
+ */
+export async function gitStageFile(absPath: string, relPath: string): Promise<ActionResult> {
+  try {
+    const git = gitFor(absPath);
+    await git.raw(["add", "-A", "--", relPath]);
+    return ok("staged");
+  } catch (e) {
+    return fail("STAGE_FAILED", e instanceof Error ? e.message : String(e));
+  }
+}

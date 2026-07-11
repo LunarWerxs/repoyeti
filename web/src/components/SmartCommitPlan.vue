@@ -35,7 +35,18 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
-const props = defineProps<{ open: boolean; repoId: string; repoName: string; hasRemote: boolean; defaultSync?: boolean }>();
+const props = defineProps<{
+  open: boolean;
+  repoId: string;
+  repoName: string;
+  hasRemote: boolean;
+  defaultSync?: boolean;
+  /** The owner's checked selection in the changed-files tree, at the moment "Auto" was clicked.
+   *  Non-empty → scope the plan to just these files (like GitHub Desktop staging a subset before
+   *  committing). Empty/omitted → nothing was checked, so plan the WHOLE working tree — an empty
+   *  selection must never turn into an empty plan. */
+  selectedPaths?: string[];
+}>();
 const emit = defineEmits<{ "update:open": [boolean]; committed: [] }>();
 
 const store = useStore();
@@ -147,7 +158,9 @@ async function generate(): Promise<void> {
   // Make sure the changes tree is loaded so file chips can show a status colour.
   if (!store.changesByRepo[props.repoId]) void store.loadChanges(props.repoId);
   try {
-    const res = await store.genCommitPlan(props.repoId);
+    // Empty selectedPaths (nothing checked) is passed through as-is — genCommitPlan/the API
+    // layer already treat an empty array the same as "no scope", i.e. plan everything.
+    const res = await store.genCommitPlan(props.repoId, undefined, props.selectedPaths);
     applyPlan(res.plan);
     if (res.fallback) degraded.value = true;
   } catch (e) {

@@ -1,7 +1,9 @@
 <script setup lang="ts">
-// Git action buttons (fetch/pull/push/stash/refresh) + the overflow menu (pin/star/hide, remote
+// Git action buttons (fetch/pull/push/stash) + the overflow menu (pin/star/hide, remote
 // + tag management), extracted from RepoCard. Per-VCS capabilities (mirrors the daemon) drive
-// which controls this shows — see VCS_CAPABILITIES.
+// which controls this shows — see VCS_CAPABILITIES. Refresh lives in RepoCardChanges now (see
+// RepoCardChanges.vue) — the busy state both read is the store's shared per-repo `busy` map, so
+// the two components' spinners (and any other action's disabled state here) can never disagree.
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import {
@@ -16,7 +18,6 @@ import {
   MoreVertical,
   Pin,
   PinOff,
-  RefreshCw,
   Star,
   StarOff,
   Timer,
@@ -204,21 +205,8 @@ const manageOpen = ref(false);
     <!-- stash save + stash-list (pop / drop) — see StashPanel.vue -->
     <StashPanel :repo-id="repo.id" :can-stash="caps.stash" :dirty="st?.dirty ?? 0" />
     <span class="flex-1" />
-    <Tooltip>
-      <TooltipTrigger as-child>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          class="size-8"
-          :aria-label="$t('repo.actions.refresh')"
-          :disabled="anyBusy"
-          @click="run('refresh')"
-        >
-          <RefreshCw :class="busyAction === 'refresh' && 'animate-spin'" />
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>{{ $t("repo.actions.refresh") }}</TooltipContent>
-    </Tooltip>
+    <!-- refresh moved to RepoCardChanges (immediately left of the remote-presence cloud icon,
+         directly under the repo title) — see RepoCardChanges.vue. -->
     <!-- overflow menu (hide / unhide this repo from the dashboard) -->
     <DropdownMenu @update:open="onMenuToggle">
       <DropdownMenuTrigger

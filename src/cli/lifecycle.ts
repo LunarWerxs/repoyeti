@@ -29,7 +29,12 @@ import { startAutoCommit, stopAutoCommit } from "../auto-commit.ts";
 import { startAutoUpdate, stopAutoUpdate, setAutoUpdateHooks } from "../auto-update.ts";
 import { broadcast } from "../bus.ts";
 import { setServerPort, startManagedTunnel, stopManagedTunnel } from "../runtime.ts";
-import { clearInstanceInfo, findLiveInstance, writeInstanceInfo } from "../instance.ts";
+import {
+  clearInstanceInfo,
+  clearShutdownRequest,
+  findLiveInstance,
+  writeInstanceInfo,
+} from "../instance.ts";
 import { findFreePort } from "../find-free-port.mjs";
 
 // ── commands ──────────────────────────────────────────────────────────────────
@@ -163,8 +168,16 @@ export async function start(rest: string[]): Promise<void> {
   // Advertise where we actually landed (the port may have hopped) so the launcher
   // opens the right URL and a second launch can detect us. Cleared on clean exit. The extra
   // portableMode field lets the tray launcher pick an app-window vs. a normal tab on cold start,
-  // before the daemon (and therefore /api/status) is reachable.
-  writeInstanceInfo(server.port ?? port, { portableMode: liveCfg.portableMode === true });
+  // before the daemon (and therefore /api/status) is reachable. hideTrayIcon likewise lets the
+  // tray gate its NotifyIcon's .Visible on cold start before the daemon is reachable.
+  writeInstanceInfo(server.port ?? port, {
+    portableMode: liveCfg.portableMode === true,
+    hideTrayIcon: liveCfg.hideTrayIcon === true,
+  });
+  // Clear any stale "full shutdown" sentinel from a previous (possibly hard-killed) run so a
+  // leftover can't make a freshly-launched tray quit the instant it starts; only a genuine
+  // in-session UI shutdown (POST /api/shutdown) writes a fresh one. See src/instance.ts.
+  clearShutdownRequest();
 
   // "Sync my settings with Connections" — load the persisted refresh token, then (if the owner
   // enabled sync) pull the cloud copy in the BACKGROUND so a fresh machine converges without

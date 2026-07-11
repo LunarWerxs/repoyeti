@@ -132,6 +132,42 @@ export async function discardFile(repoId: string, relPath: string): Promise<Disc
   return { ok: false, code: result.code === "ERROR" ? "ERROR" : "DISCARD_FAILED", message: result.message };
 }
 
+/** Result of staging one file's working-tree change (the changes-tree "Stage" action). */
+export interface StageResult {
+  ok: boolean;
+  code: "OK" | "NOT_FOUND" | "ERROR" | "STAGE_FAILED" | "SUBMODULE_NOT_ACTIONABLE";
+  message?: string;
+  /** Repo-relative path that was staged (normalised to forward slashes). */
+  path?: string;
+}
+
+/**
+ * Stage ONE changed file's working-tree change into the index — a GitHub-Desktop-style per-file
+ * "Stage" action, the non-destructive counterpart to discardFile. Untrusted-path safe (confined
+ * to the repo exactly like discardFile), behind the per-repo op-queue. Purely additive to the
+ * index; never commits and never touches HEAD, so it's safe even if the selection is stale (an
+ * already-staged or since-reverted path is just a no-op `git add`/`lore stage`).
+ */
+export async function stageFile(repoId: string, relPath: string): Promise<StageResult> {
+  const g = guardRepo<"SUBMODULE_NOT_ACTIONABLE">(repoId, "SUBMODULE_NOT_ACTIONABLE");
+  if (g.fail) return g.fail;
+  const repo = g.repo;
+  const r = resolveRepoPath(repo.absPath, relPath);
+  if ("error" in r) return { ok: false, code: "ERROR", message: r.error };
+  const backend = backendFor(repo.vcs);
+  // Never reach into the VCS marker dir (.git / .lore) — staging its internals is nonsense/unsafe.
+  if (r.clean.split("/").includes(backend.marker)) {
+    return { ok: false, code: "ERROR", message: `refusing to touch a ${backend.marker} directory` };
+  }
+  const result = await enqueue(repoId, () => backend.stageFile(repo.absPath, r.clean));
+  // Refresh AFTER the queue slot releases (refreshRepo enqueues again → would deadlock if nested).
+  if (result.ok) {
+    await refreshRepo(repo.id, repo.absPath);
+    return { ok: true, code: "OK", path: r.clean };
+  }
+  return { ok: false, code: result.code === "ERROR" ? "ERROR" : "STAGE_FAILED", message: result.message };
+}
+
 // ── smart commit (AI multi-commit splitter) ─────────────────────────────────────────
 
 export interface SmartCommitOutcome {

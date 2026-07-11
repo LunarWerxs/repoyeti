@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef } from "vue";
 import { useI18n } from "vue-i18n";
-import { Check, ChevronRight, Undo2 } from "@lucide/vue";
+import { Check, ChevronRight, FolderOpen, Plus, Undo2 } from "@lucide/vue";
 import type { DiffStat as DiffStatT, TreeNode } from "../types";
 import { fileVisual } from "@/lib/file-icons";
 import { fmtCount } from "@/lib/diffstat";
@@ -38,7 +38,14 @@ function rowDir(path: string): string {
 }
 // Bubbles a per-file "discard changes" request up to RepoCard (which confirms, then calls
 // the store). Re-emitted through each recursion level so a deep file reaches the root.
-const emit = defineEmits<{ discard: [path: string]; move: [payload: { from: string; toDir: string }] }>();
+// `stage` (git add — non-destructive, no confirm) and `reveal` (open the repo folder in the OS
+// file manager) follow the same bubble-up pattern.
+const emit = defineEmits<{
+  discard: [path: string];
+  stage: [path: string];
+  reveal: [path: string];
+  move: [payload: { from: string; toDir: string }];
+}>();
 
 // Shared collapsed-folder state (provided once by RepoCard; see @/lib/changes-tree).
 const collapse = useTreeCollapse();
@@ -220,12 +227,12 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
         <span class="truncate text-[#93939f]">{{ n.name }}</span>
       </button>
       <!-- file row — opens the read-only viewer (spacer keeps it aligned under folders).
-           Wrapped so the hover "discard" button is a SIBLING (button-in-button is invalid). -->
+           Wrapped so the hover action buttons are SIBLINGS (button-in-button is invalid). -->
       <div v-else class="tree-row-cv group/file relative">
         <button
           type="button"
           draggable="true"
-          class="group flex h-[26px] w-full items-center gap-1.5 rounded-md pr-8 text-left text-[12.5px] outline-none transition-colors hover:bg-accent/60 focus-visible:bg-accent/60"
+          class="group flex h-[26px] w-full items-center gap-1.5 rounded-md pr-2 text-left text-[12.5px] outline-none transition-colors hover:bg-accent/60 focus-visible:bg-accent/60"
           :class="[isViewing(repoId, n.path) && 'bg-accent/80 ring-1 ring-primary/30', draggingPath === n.path && 'opacity-40']"
           :style="{ paddingLeft: (depth ?? 0) * 14 + 8 + 'px' }"
           :title="n.path"
@@ -244,20 +251,32 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
           >
             {{ n.name }}<span v-if="flat && rowDir(n.path)" class="ml-1.5 text-muted-foreground/55">{{ rowDir(n.path) }}</span>
           </span>
-          <!-- right side: per-file diff stats (when enabled) + the git-status letter -->
+          <!-- right side: per-file diff stats (when enabled), a reserved slot for the (overlaid)
+               action buttons, then the git-status letter last — GitHub-Desktop-style, actions to
+               the LEFT of the status letter. The action-button slot is always reserved in-flow
+               (fixed width) so hover/selection never shifts the diff-stat or status letter — the
+               real buttons are absolutely-positioned siblings anchored to the row's right edge,
+               on top of this slot (see below), matching the checkbox's reserve-space convention. -->
           <span class="mono ml-auto flex shrink-0 items-center gap-1.5">
             <DiffStat v-if="n.stat" :stat="n.stat" show="both" :title="diffTitle(n.stat)" />
+            <span class="w-[74px] shrink-0" aria-hidden="true" />
             <span class="text-[11px] font-bold" :style="{ color: statusColor(n.status) }">{{
               n.status
             }}</span>
           </span>
         </button>
         <!-- per-file selection checkbox: sits over the (empty) chevron column on the left so it
-             never shifts the row. Toggling it adds/removes this file from the shared selection that
-             drives RepoCard's "Commit selected (N)". A sibling (not nested) since the row is a
-             <button>; tabindex -1 to stay out of the tree's roving tabindex (matches discard).
-             Native `title` (like the row itself) rather than a reka Tooltip: two Tooltip instances
-             per file row made mounting a 2000-file tree measurably janky. -->
+             never shifts the row (the row's `w-3.5` spacer above always reserves this space,
+             whether or not the checkbox itself is visible). Toggling it adds/removes this file
+             from the shared selection that drives RepoCard's "Commit selected (N)". A sibling
+             (not nested) since the row is a <button>; tabindex -1 to stay out of the tree's
+             roving tabindex (matches discard). Native `title` (like the row itself) rather than a
+             reka Tooltip: two Tooltip instances per file row made mounting a 2000-file tree
+             measurably janky.
+             Visibility (never layout): hidden at rest, revealed on THIS row's hover/focus, on
+             touch (pointer-coarse — phones have no :hover), on THIS file's own selection, or on
+             ANY file being selected anywhere in the tree (so a partial selection stays visible
+             across every row, not just the one under the pointer). -->
         <button
           type="button"
           role="checkbox"
@@ -265,7 +284,8 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
           :aria-checked="selection.isSelected(n.path)"
           :aria-label="$t('repo.changes.select', { name: n.name })"
           :title="$t('repo.changes.selectFile')"
-          class="absolute top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded outline-none transition focus-visible:ring-2 focus-visible:ring-ring/40"
+          class="absolute top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded opacity-0 outline-none transition-opacity pointer-coarse:opacity-100 group-hover/file:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/40"
+          :class="(selection.isSelected(n.path) || selection.count.value > 0) && 'opacity-100'"
           :style="{ left: (depth ?? 0) * 14 + 3 + 'px' }"
           @click.stop="selection.toggle(n.path)"
         >
@@ -274,25 +294,54 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
             :class="
               selection.isSelected(n.path)
                 ? 'border-primary bg-primary text-primary-foreground'
-                : 'border-border/70 bg-card/70 opacity-70 group-hover/file:opacity-100'
+                : 'border-border/70 bg-card/70'
             "
           >
             <Check v-if="selection.isSelected(n.path)" :size="11" />
           </span>
         </button>
-        <!-- discard this file's working-tree changes (RepoCard confirms first). Hidden-until-hover on
-             pointer devices, but always visible on touch (pointer-coarse) — phones have no :hover, so
-             hover-only reveal would make discard unreachable on the primary surface. -->
-        <button
-          type="button"
-          tabindex="-1"
-          class="absolute top-1/2 right-1 flex size-6 -translate-y-1/2 items-center justify-center rounded bg-card/80 text-muted-foreground opacity-0 pointer-coarse:opacity-70 outline-none transition group-hover/file:opacity-100 hover:bg-destructive/15 hover:text-destructive focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/40"
-          :aria-label="$t('repo.discard.action')"
-          :title="$t('repo.discard.action')"
-          @click.stop="emit('discard', n.path)"
+        <!-- row actions (GitHub-Desktop-style): reveal-in-folder, stage, discard — positioned to
+             the LEFT of the status letter (right offset clears the letter + row padding), sitting
+             over the reserved 74px slot above so they never shift the diff-stat/status letter.
+             Hidden-until-hover on pointer devices, but always visible on touch (pointer-coarse) —
+             phones have no :hover, so hover-only reveal would make them unreachable there. -->
+        <div
+          class="absolute top-1/2 right-4 flex -translate-y-1/2 items-center gap-0.5 opacity-0 pointer-coarse:opacity-70 group-hover/file:opacity-100 focus-within:opacity-100"
         >
-          <Undo2 :size="12" />
-        </button>
+          <!-- reveal this file's repo in the OS file manager (same convention as "Open with…" → File Explorer/Finder). -->
+          <button
+            type="button"
+            tabindex="-1"
+            class="flex size-6 items-center justify-center rounded bg-card/80 text-muted-foreground outline-none transition hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+            :aria-label="$t('repo.changes.revealAction')"
+            :title="$t('repo.changes.revealAction')"
+            @click.stop="emit('reveal', n.path)"
+          >
+            <FolderOpen :size="12" />
+          </button>
+          <!-- stage this file's working-tree change into the index (non-destructive; doesn't commit). -->
+          <button
+            type="button"
+            tabindex="-1"
+            class="flex size-6 items-center justify-center rounded bg-card/80 text-muted-foreground outline-none transition hover:bg-primary/15 hover:text-primary focus-visible:ring-2 focus-visible:ring-ring/40"
+            :aria-label="$t('repo.changes.stageAction')"
+            :title="$t('repo.changes.stageAction')"
+            @click.stop="emit('stage', n.path)"
+          >
+            <Plus :size="12" />
+          </button>
+          <!-- discard this file's working-tree changes (RepoCard confirms first). -->
+          <button
+            type="button"
+            tabindex="-1"
+            class="flex size-6 items-center justify-center rounded bg-card/80 text-muted-foreground outline-none transition hover:bg-destructive/15 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring/40"
+            :aria-label="$t('repo.discard.action')"
+            :title="$t('repo.discard.action')"
+            @click.stop="emit('discard', n.path)"
+          >
+            <Undo2 :size="12" />
+          </button>
+        </div>
       </div>
       <!-- children render only while this folder is expanded -->
       <ExpandTransition v-if="n.children && n.children.length" :open="isOpen(n.path)">
@@ -302,6 +351,8 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
           :depth="(depth ?? 0) + 1"
           :force-expand="forceExpand"
           @discard="emit('discard', $event)"
+          @stage="emit('stage', $event)"
+          @reveal="emit('reveal', $event)"
           @move="emit('move', $event)"
         />
       </ExpandTransition>

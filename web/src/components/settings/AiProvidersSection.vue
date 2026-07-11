@@ -370,20 +370,19 @@ async function onStyle(style: string): Promise<void> {
       </template>
     </SettingsRow>
 
-    <!-- AI commit-message style -->
+    <!-- AI commit-message style (themed Select — a native <select>'s popup ignores our theme
+         entirely, rendering with the OS's own near-black dark-mode background). -->
     <SettingsRow :label="$t('settings.aiStyle')">
       <template #info><InfoHint :text="$t('settings.aiStyleHint')" /></template>
       <template #control>
-        <select
-          :value="settings.style"
-          :aria-label="$t('settings.aiStyle')"
-          class="rounded-md border border-input bg-background px-2 py-1.5 text-[12.5px] text-foreground"
-          @change="(e) => onStyle((e.target as HTMLSelectElement).value)"
-        >
-          <option value="conventional">{{ $t("settings.aiStyleConventional") }}</option>
-          <option value="concise">{{ $t("settings.aiStyleConcise") }}</option>
-          <option value="detailed">{{ $t("settings.aiStyleDetailed") }}</option>
-        </select>
+        <Select :model-value="settings.style" @update:model-value="(v) => typeof v === 'string' && onStyle(v)">
+          <SelectTrigger class="w-44" :aria-label="$t('settings.aiStyle')"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="conventional">{{ $t("settings.aiStyleConventional") }}</SelectItem>
+            <SelectItem value="concise">{{ $t("settings.aiStyleConcise") }}</SelectItem>
+            <SelectItem value="detailed">{{ $t("settings.aiStyleDetailed") }}</SelectItem>
+          </SelectContent>
+        </Select>
       </template>
     </SettingsRow>
   </SettingsGroup>

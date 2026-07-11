@@ -200,8 +200,14 @@ export interface PlanInputResult {
  * Collect the read-only input for the AI commit planner, behind the per-repo op-queue (so
  * it can't race a fetch/pull/push/commit). Refuses a clean tree and submodules. Read-only;
  * never mutates the index. The route turns this into a plan via ai.generateCommitPlan.
+ *
+ * `onlyPaths` optionally scopes the plan to the owner's checked selection in the changed-files
+ * tree (Smart Commit / "Auto"). Per the UI contract, an EMPTY selection means "nothing was
+ * checked" → plan the WHOLE working tree, same as if `onlyPaths` were omitted; the caller (the
+ * route) is expected to pass `undefined`/omit rather than `[]` for "nothing checked", so this
+ * never mistakes an empty checkbox state for an intentional empty scope.
  */
-export async function planCommitInput(repoId: string): Promise<PlanInputResult> {
+export async function planCommitInput(repoId: string, onlyPaths?: string[]): Promise<PlanInputResult> {
   const g = guardRepo<"ERROR">(repoId, "ERROR");
   if (g.fail) return g.fail;
   const repo = g.repo;
@@ -212,18 +218,21 @@ export async function planCommitInput(repoId: string): Promise<PlanInputResult> 
     const st = await backend.readStatus(repo.absPath);
     if (st.error) return { ok: false, code: "ERROR" as const, message: st.error };
     if (st.dirty === 0) return { ok: false, code: "NOTHING_TO_COMMIT" as const, message: "nothing to commit" };
-    const input = await planInputFor(backend, repo.absPath);
+    const input = await planInputFor(backend, repo.absPath, onlyPaths);
     return { ok: true, code: "OK" as const, input };
   });
 }
 
 /** AI smart-commit plan input. Git uses the rich collector (folds noisy files, `-U0`, binary
  *  detection); other backends (Lore) build it from the changed-file list + the backend's AI diff —
- *  the file list drives grouping, the diff carries the textual context. */
-async function planInputFor(backend: VcsBackend, absPath: string): Promise<CommitPlanInput> {
-  if (backend.kind === "git") return collectCommitPlanInput(absPath);
-  const changed = await backend.readChanges(absPath, true);
-  const diff = await backend.collectAiDiff(absPath);
+ *  the file list drives grouping, the diff carries the textual context. `onlyPaths` scopes both
+ *  to a subset (see planCommitInput); undefined/empty means the whole tree. */
+async function planInputFor(backend: VcsBackend, absPath: string, onlyPaths?: string[]): Promise<CommitPlanInput> {
+  if (backend.kind === "git") return collectCommitPlanInput(absPath, onlyPaths);
+  const changedAll = await backend.readChanges(absPath, true);
+  const scope = onlyPaths?.length ? new Set(onlyPaths) : null;
+  const changed = scope ? changedAll.filter((f) => scope.has(f.path)) : changedAll;
+  const diff = onlyPaths?.length ? await backend.collectAiDiff(absPath, onlyPaths) : await backend.collectAiDiff(absPath);
   const files: PlanInputFile[] = changed.map((f) => ({
     path: f.path,
     status: f.status,

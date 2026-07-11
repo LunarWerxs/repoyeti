@@ -150,9 +150,17 @@ export function isNoisyPath(path: string): boolean {
  * effort context, sent at ZERO context (`-U0`, just the changed lines) and with noisy files'
  * bodies folded out (see isNoisyPath) — so a big change-set stays small enough for a provider's
  * rate limit. May still be truncated on a pathological change-set.
+ *
+ * `onlyPaths` optionally SCOPES the plan to a subset of the working tree (the owner's checked
+ * selection in the changed-files tree — see ChangesTree). An empty/undefined `onlyPaths` means
+ * "no scope requested" and the whole working tree is planned, same as before this param existed —
+ * the UI is responsible for turning "nothing checked" into "no scope requested" (empty selection
+ * = plan everything), never into an accidental empty plan.
  */
-export async function collectCommitPlanInput(absPath: string): Promise<CommitPlanInput> {
-  const changed = await readChanges(absPath, true); // withStats → per-file add/remove counts
+export async function collectCommitPlanInput(absPath: string, onlyPaths?: string[]): Promise<CommitPlanInput> {
+  const all = await readChanges(absPath, true); // withStats → per-file add/remove counts
+  const scope = onlyPaths?.length ? new Set(onlyPaths) : null;
+  const changed = scope ? all.filter((f) => scope.has(f.path)) : all;
 
   // Only diff the files worth reading; fold out lockfiles/generated/minified (their name + stat
   // in the file list is enough for grouping). `-U0` trims to just the changed lines.

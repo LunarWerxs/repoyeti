@@ -89,6 +89,15 @@ async function onPortableMode(enabled: boolean): Promise<void> {
     toast.error(t("settings.portableWindowFailed"));
   }
 }
+
+// Toggle "Hide tray icon" (server setting; rolls back + toasts on fail).
+async function onHideTrayIcon(enabled: boolean): Promise<void> {
+  try {
+    await store.setHideTrayIcon(enabled);
+  } catch {
+    toast.error(t("settings.hideTrayIconFailed"));
+  }
+}
 </script>
 
 <template>
@@ -119,6 +128,16 @@ async function onPortableMode(enabled: boolean): Promise<void> {
           :model-value="store.portableMode"
           :aria-label="$t('settings.portableWindow')"
           @update:model-value="(v: boolean) => onPortableMode(v)"
+        />
+      </template>
+    </SettingsRow>
+    <SettingsRow :label="$t('settings.hideTrayIcon')">
+      <template #info><InfoHint :text="$t('settings.hideTrayIconHint')" /></template>
+      <template #control>
+        <Switch
+          :model-value="store.hideTrayIcon"
+          :aria-label="$t('settings.hideTrayIcon')"
+          @update:model-value="(v: boolean) => onHideTrayIcon(v)"
         />
       </template>
     </SettingsRow>

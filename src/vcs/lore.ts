@@ -469,6 +469,18 @@ export async function loreDiscardFile(
   return { ok: true };
 }
 
+/** Stage ONE file's working-tree change (`lore stage <path>`) — the changes-tree per-file
+ *  "Stage" action, mirroring gitStageFile. Purely additive; never commits. */
+export async function loreStageFile(
+  absPath: string,
+  relPath: string,
+): Promise<{ ok: boolean; message?: string }> {
+  const run = await runLore(absPath, ["stage", relPath]);
+  if (run.spawnError) return { ok: false, message: "lore CLI not available" };
+  if (run.code !== 0) return { ok: false, message: classifyLore(run).message };
+  return { ok: true };
+}
+
 /**
  * Clone a Lore repo from a server URL into `dest` via `lore clone <url> <dest>`, run from
  * `cwd` (the parent dir, which must exist; `dest` must not). Server auth is the CLI's own
@@ -623,6 +635,10 @@ export const loreBackend: VcsBackend = {
   discardFile: async (absPath, relPath): Promise<ActionResult> => {
     const lr = await loreDiscardFile(absPath, relPath);
     return lr.ok ? ok("discarded") : fail("DISCARD_FAILED", lr.message ?? "lore reset failed");
+  },
+  stageFile: async (absPath, relPath): Promise<ActionResult> => {
+    const lr = await loreStageFile(absPath, relPath);
+    return lr.ok ? ok("staged") : fail("STAGE_FAILED", lr.message ?? "lore stage failed");
   },
 
   collectAiDiff: loreCollectDiff,

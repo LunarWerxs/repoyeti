@@ -154,6 +154,21 @@ export function useGitOps(
     }
   }
 
+  /** Stage one changed file's working-tree change into the index (non-destructive; doesn't
+   *  commit — the changes-tree per-file "Stage" action, GitHub-Desktop-style). */
+  async function stageFile(repoId: string, path: string): Promise<ActionResult> {
+    gitOpBusy[repoId] = "stage";
+    try {
+      const r = await api.stage(repoId, path);
+      await loadChanges(repoId);
+      return { ok: r.ok, code: r.code, message: r.message ?? "staged" };
+    } catch (e) {
+      return asResult(e);
+    } finally {
+      gitOpBusy[repoId] = undefined;
+    }
+  }
+
   /** Move a changed file into another folder (the changes-tree drag-and-drop). */
   async function moveFile(repoId: string, from: string, toDir: string): Promise<ActionResult> {
     gitOpBusy[repoId] = "move";
@@ -232,6 +247,7 @@ export function useGitOps(
     stashPop,
     stashDrop,
     discardFile,
+    stageFile,
     moveFile,
   };
 }

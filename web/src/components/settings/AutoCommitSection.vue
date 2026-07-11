@@ -6,6 +6,7 @@ import { useStore } from "../../store";
 import SettingsGroup from "@/shell/SettingsGroup.vue";
 import SettingsRow from "@/shell/SettingsRow.vue";
 import InfoHint from "@/shell/InfoHint.vue";
+import ExpandTransition from "@/shell/ExpandTransition.vue";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -79,7 +80,8 @@ async function onPush(enabled: boolean): Promise<void> {
   }
 }
 
-// Everything below the master switch is moot while auto-commit is off → dim + disable it.
+// Everything below the master switch is moot while auto-commit is off → collapse it away
+// entirely (ExpandTransition) rather than just dim/disable it.
 const on = computed(() => store.autoCommit);
 </script>
 
@@ -97,75 +99,69 @@ const on = computed(() => store.autoCommit);
       </template>
     </SettingsRow>
 
-    <!-- schedule mode: every N vs daily at a set time -->
-    <div
-      class="flex flex-col gap-1.5 px-3.5 py-3 transition-opacity"
-      :class="on ? '' : 'pointer-events-none opacity-50'"
-    >
-      <span class="text-[12px] text-muted-foreground">{{ $t("settings.autoCommitSchedule") }}</span>
-      <Select v-model="modeChoice" :disabled="!on">
-        <SelectTrigger class="w-full" :aria-label="$t('settings.autoCommitSchedule')"><SelectValue /></SelectTrigger>
-        <SelectContent>
-          <SelectItem value="interval">{{ $t("settings.autoCommitModeInterval") }}</SelectItem>
-          <SelectItem value="daily">{{ $t("settings.autoCommitModeDaily") }}</SelectItem>
-        </SelectContent>
-      </Select>
+    <!-- everything below the master switch is moot while auto-commit is off → collapse it away
+         entirely (rather than just dim/disable) via the kit's ExpandTransition. -->
+    <ExpandTransition :open="on">
+      <div class="flex flex-col">
+        <!-- schedule mode: every N vs daily at a set time -->
+        <div class="flex flex-col gap-1.5 px-3.5 py-3">
+          <span class="text-[12px] text-muted-foreground">{{ $t("settings.autoCommitSchedule") }}</span>
+          <Select v-model="modeChoice">
+            <SelectTrigger class="w-full" :aria-label="$t('settings.autoCommitSchedule')"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="interval">{{ $t("settings.autoCommitModeInterval") }}</SelectItem>
+              <SelectItem value="daily">{{ $t("settings.autoCommitModeDaily") }}</SelectItem>
+            </SelectContent>
+          </Select>
 
-      <!-- interval mode → cadence preset -->
-      <template v-if="store.autoCommitMode === 'interval'">
-        <Select v-model="intervalChoice" :disabled="!on">
-          <SelectTrigger class="w-full" :aria-label="$t('settings.autoCommitEvery')"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem v-for="s in INTERVAL_CHOICES" :key="s" :value="String(s)">
-              {{ intervalLabel(s) }}
-            </SelectItem>
-          </SelectContent>
-        </Select>
-      </template>
+          <!-- interval mode → cadence preset -->
+          <template v-if="store.autoCommitMode === 'interval'">
+            <Select v-model="intervalChoice">
+              <SelectTrigger class="w-full" :aria-label="$t('settings.autoCommitEvery')"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="s in INTERVAL_CHOICES" :key="s" :value="String(s)">
+                  {{ intervalLabel(s) }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </template>
 
-      <!-- daily mode → wall-clock time -->
-      <template v-else>
-        <input
-          type="time"
-          :value="store.autoCommitAt"
-          :disabled="!on"
-          :aria-label="$t('settings.autoCommitAt')"
-          class="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50"
-          @change="onAt(($event.target as HTMLInputElement).value)"
-        />
-      </template>
-    </div>
+          <!-- daily mode → wall-clock time -->
+          <template v-else>
+            <input
+              type="time"
+              :value="store.autoCommitAt"
+              :aria-label="$t('settings.autoCommitAt')"
+              class="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+              @change="onAt(($event.target as HTMLInputElement).value)"
+            />
+          </template>
+        </div>
 
-    <!-- pull before pushing -->
-    <SettingsRow
-      :label="$t('settings.autoCommitPull')"
-      :class="['transition-opacity', on ? '' : 'pointer-events-none opacity-50']"
-    >
-      <template #info><InfoHint :text="$t('settings.autoCommitPullHint')" /></template>
-      <template #control>
-        <Switch
-          :model-value="store.autoCommitPull"
-          :disabled="!on"
-          :aria-label="$t('settings.autoCommitPull')"
-          @update:model-value="(v: boolean) => onPull(v)"
-        />
-      </template>
-    </SettingsRow>
+        <!-- pull before pushing -->
+        <SettingsRow :label="$t('settings.autoCommitPull')">
+          <template #info><InfoHint :text="$t('settings.autoCommitPullHint')" /></template>
+          <template #control>
+            <Switch
+              :model-value="store.autoCommitPull"
+              :aria-label="$t('settings.autoCommitPull')"
+              @update:model-value="(v: boolean) => onPull(v)"
+            />
+          </template>
+        </SettingsRow>
 
-    <!-- push after committing -->
-    <SettingsRow
-      :label="$t('settings.autoCommitPush')"
-      :class="['transition-opacity', on ? '' : 'pointer-events-none opacity-50']"
-    >
-      <template #info><InfoHint :text="$t('settings.autoCommitPushHint')" /></template>
-      <template #control>
-        <Switch
-          :model-value="store.autoCommitPush"
-          :disabled="!on"
-          :aria-label="$t('settings.autoCommitPush')"
-          @update:model-value="(v: boolean) => onPush(v)"
-        />
-      </template>
-    </SettingsRow>
+        <!-- push after committing -->
+        <SettingsRow :label="$t('settings.autoCommitPush')">
+          <template #info><InfoHint :text="$t('settings.autoCommitPushHint')" /></template>
+          <template #control>
+            <Switch
+              :model-value="store.autoCommitPush"
+              :aria-label="$t('settings.autoCommitPush')"
+              @update:model-value="(v: boolean) => onPush(v)"
+            />
+          </template>
+        </SettingsRow>
+      </div>
+    </ExpandTransition>
   </SettingsGroup>
 </template>

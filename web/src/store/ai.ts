@@ -96,10 +96,12 @@ export function useAi(
     return (await api.ai.commitMessage(repoId, provider, paths)).message;
   }
 
-  /** Propose a multi-commit plan from the repo's working tree (commits nothing). Throws
-   *  ApiError (e.g. NO_AI_PROVIDER / NOTHING_TO_COMMIT) → the caller toasts. */
-  async function genCommitPlan(repoId: string, provider?: AiProviderId): Promise<CommitPlanResponse> {
-    return api.ai.commitPlan(repoId, provider);
+  /** Propose a multi-commit plan from the repo's working tree (commits nothing). With `paths`,
+   *  scope the plan to just the owner's checked selection; an empty/omitted selection plans the
+   *  whole working tree (see api.ai.commitPlan). Throws ApiError (e.g. NO_AI_PROVIDER /
+   *  NOTHING_TO_COMMIT) → the caller toasts. */
+  async function genCommitPlan(repoId: string, provider?: AiProviderId, paths?: string[]): Promise<CommitPlanResponse> {
+    return api.ai.commitPlan(repoId, provider, paths);
   }
 
   /** Execute an (owner-edited) commit plan. Sets the commit busy state, reloads the changed-

@@ -2,9 +2,10 @@ import type { Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { Deps } from "../deps.ts";
 import { jsonError, statusForCode, type ApiErrorCode } from "../../contract.ts";
-import { parseBody, DiscardSchema } from "../../schemas.ts";
+import { parseBody, DiscardSchema, StageSchema } from "../../schemas.ts";
 import {
   discardFile,
+  stageFile,
   getChanges,
   searchChangedContent,
   readFileContent,
@@ -101,6 +102,21 @@ export function register(app: Hono, { cfg }: Deps): void {
     const p = await parseBody(c, DiscardSchema);
     if (!p.ok) return p.res;
     const result = await discardFile(id, p.data.path);
+    if (result.ok) return c.json(result);
+    const status: ContentfulStatusCode = result.code === "NOT_FOUND" ? 404 : statusForCode(result.code as ApiErrorCode);
+    return c.json(result, status);
+  });
+
+  // Stage one changed file's working-tree change into the index (the changes-tree per-file
+  // "Stage" action, GitHub-Desktop-style). Non-destructive — no remote-editing gate needed
+  // (unlike discard/write/move, it can't lose data), but still local-mutation so it goes
+  // through the same op-queue + refresh as every other mutating route.
+  app.post("/api/repos/:id/stage", async (c) => {
+    const id = requireId(c);
+    if (id instanceof Response) return id;
+    const p = await parseBody(c, StageSchema);
+    if (!p.ok) return p.res;
+    const result = await stageFile(id, p.data.path);
     if (result.ok) return c.json(result);
     const status: ContentfulStatusCode = result.code === "NOT_FOUND" ? 404 : statusForCode(result.code as ApiErrorCode);
     return c.json(result, status);

@@ -123,6 +123,9 @@ export const StashRefSchema = z.object({ index: z.number().int().min(0).optional
 // ── discard one file's working-tree changes ──────────────────────────────────────────
 export const DiscardSchema = z.object({ path: nonEmpty });
 
+// ── stage one file's working-tree change into the index ──────────────────────────────
+export const StageSchema = z.object({ path: nonEmpty });
+
 // ── remotes (set-url / remove; name defaults to "origin" in the handler) ──────────────
 export const RemoteSetSchema = z.object({ url: nonEmpty, name: z.string().trim().optional() });
 export const RemoteDeleteSchema = z.object({ name: z.string().trim().optional() });
@@ -171,8 +174,13 @@ export const CommitMessageSchema = z.object({
 });
 
 // ── smart commit (AI multi-commit splitter) ──────────────────────────────────────
-// Plan generation reuses the message-route shape (optional provider override).
-export const CommitPlanSchema = z.object({ provider: z.string().optional() });
+// Plan generation reuses the message-route shape (optional provider override). `paths`, when
+// present and non-empty, scopes the plan to the owner's checked selection in the changed-files
+// tree; omitted/empty means "nothing checked" → plan the whole working tree (see planCommitInput).
+export const CommitPlanSchema = z.object({
+  provider: z.string().optional(),
+  paths: z.array(nonEmpty).max(MAX_PLAN_PATHS).optional(),
+});
 
 // Execute an (owner-edited) plan: each entry is a final message + the paths to stage for it.
 // Domain checks (paths in the live changed set, disjoint, complete) stay in the service layer

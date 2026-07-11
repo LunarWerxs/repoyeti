@@ -24,6 +24,7 @@ import {
   gitStashDrop,
   fileDiffPatch,
   gitDiscardFile,
+  gitStageFile,
   collectCommitDiff,
   collectPathsDiff,
   gitCommitGroups,
@@ -69,6 +70,7 @@ export const gitBackend: VcsBackend = {
     }
   },
   discardFile: gitDiscardFile,
+  stageFile: gitStageFile,
 
   collectAiDiff: (absPath, paths) =>
     paths?.length ? collectPathsDiff(absPath, paths) : collectCommitDiff(absPath),

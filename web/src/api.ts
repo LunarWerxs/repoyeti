@@ -125,6 +125,10 @@ export interface RuntimeStatus {
   /** Whether the app UI opens in a chromeless Chromium app window instead of a browser tab
    *  (owner setting; off by default). The desktop launcher/tray follows the same preference. */
   portableMode: boolean;
+  /** Whether the system-tray notification-area icon is hidden (owner setting; off by default).
+   *  The daemon keeps running in the background either way; the desktop launcher/tray follows
+   *  the same preference (read off runtime.json, not this) so it can act on it live. */
+  hideTrayIcon: boolean;
   /** ⭐ Agent Safety Rail: whether mutating MCP tool calls are gated behind owner approve/deny
    *  (owner setting; default ON). */
   mcpApprovalGate: boolean;
@@ -313,6 +317,11 @@ export const api = {
     req<{ ok: boolean; portableMode: boolean }>("PUT", "/api/settings", { portableMode: enabled }),
   /** Open THIS daemon's UI in a chromeless Chromium app window right now. */
   openPortableWindow: () => req<PortableWindowResult>("POST", "/api/portable-window"),
+  /** Toggle hiding the system-tray notification-area icon (owner setting; persisted). The app
+   *  keeps running in the background either way — the launcher shortcut still reopens the UI,
+   *  and this can be flipped back here in Settings. */
+  setHideTrayIcon: (enabled: boolean) =>
+    req<{ ok: boolean; hideTrayIcon: boolean }>("PUT", "/api/settings", { hideTrayIcon: enabled }),
   /** Toggle silent auto-update + restart of the app on a schedule (owner setting; persisted). */
   setAutoUpdate: (enabled: boolean) =>
     req<{ ok: boolean; autoUpdate: boolean }>("PUT", "/api/settings", { autoUpdate: enabled }),
@@ -474,6 +483,14 @@ export const api = {
       `/api/repos/${id}/discard`,
       { path },
     ),
+  /** Stage one changed file's working-tree change into the index (non-destructive; doesn't
+   *  commit — GitHub-Desktop-style per-file "Stage"). */
+  stage: (id: string, path: string) =>
+    req<{ ok: boolean; code: string; message?: string; path?: string }>(
+      "POST",
+      `/api/repos/${id}/stage`,
+      { path },
+    ),
   /** Changed-file list. `total`/`truncated` are set when the server capped an oversized
    *  list (MAX_CHANGED_FILES) so the UI can show a "showing N of M" notice. */
   changes: (id: string) =>
@@ -546,12 +563,14 @@ export const api = {
         `/api/repos/${repoId}/commit-message`,
         { ...(provider ? { provider } : {}), ...(paths?.length ? { paths } : {}) },
       ),
-    /** Propose a multi-commit plan from the repo's working tree (commits nothing). */
-    commitPlan: (repoId: string, provider?: AiProviderId) =>
+    /** Propose a multi-commit plan from the repo's working tree (commits nothing). With `paths`,
+     *  scope the plan to just those files (the owner's checked selection); omit/empty for the
+     *  whole working tree — an empty checked selection is treated as "plan everything". */
+    commitPlan: (repoId: string, provider?: AiProviderId, paths?: string[]) =>
       req<CommitPlanResponse>(
         "POST",
         `/api/repos/${repoId}/commit-plan`,
-        provider ? { provider } : {},
+        { ...(provider ? { provider } : {}), ...(paths?.length ? { paths } : {}) },
       ),
   },
 };
