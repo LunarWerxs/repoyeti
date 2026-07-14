@@ -102,6 +102,11 @@ export const useStore = defineStore("repoyeti", () => {
   const mcpApprovalGate = ref(true);
   // Auto-deny timeout for a pending approval, in seconds. From /api/status; 120 until loaded.
   const mcpApprovalTimeoutSecs = ref(120);
+  // Whether a pending approval auto-denies at its timeout (default ON) / auto-approves at its own
+  // timeout (default OFF). From /api/status, kept live via `settings_changed`.
+  const mcpAutoDeny = ref(true);
+  const mcpAutoApprove = ref(false);
+  const mcpAutoApproveTimeoutSecs = ref(120);
   // Owner setting: default "Open with…" external editor id (null = auto-pick the first installed).
   // From /api/status, kept live via `settings_changed`. The catalogue + availability come from a
   // separate GET /api/editors (loaded lazily by the file viewer / Settings).
@@ -165,6 +170,8 @@ export const useStore = defineStore("repoyeti", () => {
     aiCatalog,
     aiReady,
     aiEnabled,
+    aiUsable,
+    aiCommitEnabled,
     loadAiSettings,
     loadAiCatalog,
     connectProvider,
@@ -172,6 +179,7 @@ export const useStore = defineStore("repoyeti", () => {
     selectModel,
     setDefaultProvider,
     setYolo,
+    setCommitEnabled,
     setStyle,
     removeProvider,
     genCommitMessage,
@@ -201,6 +209,7 @@ export const useStore = defineStore("repoyeti", () => {
     discardFile,
     stageFile,
     moveFile,
+    addToGitignore,
   } = useGitOps(loadChanges, asResult);
 
   const {
@@ -230,6 +239,7 @@ export const useStore = defineStore("repoyeti", () => {
   const {
     identities,
     detectedIdentities,
+    dismissedDetectedIdentities,
     detectedIdentitiesLoading,
     detectedIdentitiesReady,
     identityById,
@@ -237,6 +247,9 @@ export const useStore = defineStore("repoyeti", () => {
     updateIdentity,
     removeIdentity,
     loadDetectedIdentities,
+    dismissDetectedIdentity,
+    restoreDetectedIdentity,
+    restoreDetectedIdentities,
     identityRules,
     identityRulesReady,
     loadIdentityRules,
@@ -287,6 +300,9 @@ export const useStore = defineStore("repoyeti", () => {
     setHideTrayIcon,
     setMcpApprovalGate,
     setMcpApprovalTimeoutSecs,
+    setMcpAutoDeny,
+    setMcpAutoApprove,
+    setMcpAutoApproveTimeoutSecs,
     editorsCatalog,
     editorsPlatform,
     effectiveEditor,
@@ -327,6 +343,7 @@ export const useStore = defineStore("repoyeti", () => {
     notifyAutoCommitted,
     notifyAutoCommitBlocked,
     notifyNewProjects,
+    notifyAiKeyInvalid,
   } = useSettings({
     mode,
     tunnelActive,
@@ -351,6 +368,9 @@ export const useStore = defineStore("repoyeti", () => {
     hideTrayIcon,
     mcpApprovalGate,
     mcpApprovalTimeoutSecs,
+    mcpAutoDeny,
+    mcpAutoApprove,
+    mcpAutoApproveTimeoutSecs,
     defaultEditor,
     pullRepo: (repoId) => doAction(repoId, "pull"),
   });
@@ -417,8 +437,15 @@ export const useStore = defineStore("repoyeti", () => {
       hideTrayIcon.value = s.hideTrayIcon ?? false;
       mcpApprovalGate.value = s.mcpApprovalGate ?? true;
       mcpApprovalTimeoutSecs.value = s.mcpApprovalTimeoutSecs ?? 120;
+      mcpAutoDeny.value = s.mcpAutoDeny ?? true;
+      mcpAutoApprove.value = s.mcpAutoApprove ?? false;
+      mcpAutoApproveTimeoutSecs.value = s.mcpAutoApproveTimeoutSecs ?? 120;
       defaultEditor.value = s.defaultEditor ?? null;
       contentSearchMin.value = s.minContentSearch ?? 3;
+      // Dead AI keys the daemon found at boot — surface them now (deduped per session in
+      // notifyAiKeyInvalid), so a dashboard opened AFTER boot still sees them, not only one that
+      // was connected for the one-shot SSE broadcast.
+      for (const k of s.aiKeyInvalid ?? []) notifyAiKeyInvalid(k.label);
     } catch {
       /* status is optional — leave whatever we have */
     }
@@ -531,6 +558,10 @@ export const useStore = defineStore("repoyeti", () => {
           if (typeof payload.mcpApprovalGate === "boolean") mcpApprovalGate.value = payload.mcpApprovalGate;
           if (typeof payload.mcpApprovalTimeoutSecs === "number")
             mcpApprovalTimeoutSecs.value = payload.mcpApprovalTimeoutSecs;
+          if (typeof payload.mcpAutoDeny === "boolean") mcpAutoDeny.value = payload.mcpAutoDeny;
+          if (typeof payload.mcpAutoApprove === "boolean") mcpAutoApprove.value = payload.mcpAutoApprove;
+          if (typeof payload.mcpAutoApproveTimeoutSecs === "number")
+            mcpAutoApproveTimeoutSecs.value = payload.mcpAutoApproveTimeoutSecs;
           // defaultEditor is broadcast as string|null (present only when it changed) — a null is
           // a legitimate "cleared" value, so gate on the key existing, not on truthiness.
           if (payload.defaultEditor !== undefined) {
@@ -548,8 +579,13 @@ export const useStore = defineStore("repoyeti", () => {
           // A headless agent's mutating MCP call is now awaiting owner approve/deny.
           addPendingApproval(payload as PendingApproval);
         } else if (event.value === "approval_resolved") {
-          // Approved/denied/timed out — elsewhere (another tab) or by the auto-deny timer.
+          // Approved/denied/timed out — elsewhere (another tab) or by the auto-deny/approve timer.
           removePendingApproval(payload.id);
+        } else if (event.value === "ai_key_invalid") {
+          // The startup key-liveness check found a configured AI provider's key was rejected.
+          notifyAiKeyInvalid(
+            typeof payload.label === "string" && payload.label ? payload.label : String(payload.provider ?? ""),
+          );
         } else if (event.value === "scan_started") {
           // A rescan began (from the modal, or another device) — reset the live counters.
           scanning.value = true;
@@ -579,6 +615,7 @@ export const useStore = defineStore("repoyeti", () => {
     repos,
     identities,
     detectedIdentities,
+    dismissedDetectedIdentities,
     detectedIdentitiesLoading,
     detectedIdentitiesReady,
     loading,
@@ -615,6 +652,7 @@ export const useStore = defineStore("repoyeti", () => {
     discardFile,
     stageFile,
     moveFile,
+    addToGitignore,
     roots,
     servers,
     loreServersEnabled,
@@ -643,6 +681,8 @@ export const useStore = defineStore("repoyeti", () => {
     aiCatalog,
     aiReady,
     aiEnabled,
+    aiUsable,
+    aiCommitEnabled,
     loadAiSettings,
     loadAiCatalog,
     connectProvider,
@@ -650,6 +690,7 @@ export const useStore = defineStore("repoyeti", () => {
     selectModel,
     setDefaultProvider,
     setYolo,
+    setCommitEnabled,
     setStyle,
     removeProvider,
     genCommitMessage,
@@ -710,8 +751,14 @@ export const useStore = defineStore("repoyeti", () => {
     setHideTrayIcon,
     mcpApprovalGate,
     mcpApprovalTimeoutSecs,
+    mcpAutoDeny,
+    mcpAutoApprove,
+    mcpAutoApproveTimeoutSecs,
     setMcpApprovalGate,
     setMcpApprovalTimeoutSecs,
+    setMcpAutoDeny,
+    setMcpAutoApprove,
+    setMcpAutoApproveTimeoutSecs,
     defaultEditor,
     editorsCatalog,
     editorsPlatform,
@@ -782,6 +829,9 @@ export const useStore = defineStore("repoyeti", () => {
     updateIdentity,
     removeIdentity,
     loadDetectedIdentities,
+    dismissDetectedIdentity,
+    restoreDetectedIdentity,
+    restoreDetectedIdentities,
     identityRules,
     identityRulesReady,
     loadIdentityRules,

@@ -6,6 +6,25 @@ All notable changes to RepoYeti are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Pull no longer refuses a dirty working tree.** A fast-forward pull is safe on a dirty tree, so
+  RepoYeti now lets `git pull --ff-only` run when the tree is dirty: it fast-forwards and keeps your
+  uncommitted edits when the incoming commits don't touch the same files, and stops with a new
+  `WOULD_OVERWRITE` code ("commit or stash first", both doable from the phone) only when they would
+  be overwritten. Previously any uncommitted change blocked the pull outright with
+  `DIRTY_WORKING_TREE`. Because a blocked pull never reached the network, the "behind … as of last
+  fetch" timestamp also went stale (a pull that fails preflight can't refresh it); letting the pull
+  actually run updates both the behind count and the last-fetch time.
+- **Branch switch no longer refuses a dirty working tree.** Same reasoning as pull: `git switch`
+  carries your uncommitted edits onto the target branch when they don't collide and stops with
+  `WOULD_OVERWRITE` ("commit or stash first") only when a file the switch must change is dirty.
+  Previously any uncommitted change blocked the switch, even though git could do it safely.
+- **Background auto-pull ("keep in sync") now covers dirty repos.** The auto fast-forward no longer
+  skips a repo just because its tree is dirty: it pulls when the incoming commits don't touch the
+  uncommitted files and harmlessly leaves the repo flagged "behind" when they would (still skipping
+  a genuinely mid-merge or mid-rebase/cherry-pick tree, which should never be auto-acted on).
+
 ## [0.3.0] - 2026-07-13
 
 ### Changed

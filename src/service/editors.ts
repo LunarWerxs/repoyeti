@@ -266,11 +266,23 @@ export function cmdReparseHazard(platform: EditorPlatform, args: string[]): bool
   return platform === "win32" && args.some((a) => /[%^]/.test(a));
 }
 
-/** Reveal a folder in the OS file manager (the `system` pseudo-editor). Always resolvable. */
-export function systemRevealArgv(platform: EditorPlatform, folderAbs: string): string[] {
-  if (platform === "win32") return ["explorer", folderAbs];
-  if (platform === "darwin") return ["open", folderAbs];
-  return ["xdg-open", folderAbs];
+/**
+ * Reveal a location in the OS file manager (the `system` pseudo-editor). Always resolvable.
+ * With `fileAbs` it reveals (SELECTS) that specific file inside its folder — `explorer /select,` on
+ * Windows, `open -R` on macOS; Linux has no portable "select" verb, so it opens the file's parent
+ * folder. Without `fileAbs` (or on Linux) it just opens `folderAbs`.
+ */
+export function systemRevealArgv(
+  platform: EditorPlatform,
+  folderAbs: string,
+  fileAbs?: string,
+): string[] {
+  if (platform === "win32") {
+    // `/select,<path>` must be ONE argv token (explorer is famously picky about the comma form).
+    return fileAbs ? ["explorer", `/select,${fileAbs}`] : ["explorer", folderAbs];
+  }
+  if (platform === "darwin") return fileAbs ? ["open", "-R", fileAbs] : ["open", folderAbs];
+  return ["xdg-open", fileAbs ? dirname(fileAbs) : folderAbs];
 }
 
 /** Platform-appropriate label for the OS file-manager pseudo-editor. */
@@ -382,7 +394,9 @@ export async function openInEditor(
     // The OS file manager (explorer / open / xdg-open) hands the request to the existing shell
     // singleton and exits; it is never a lasting child of the daemon, so it needs no detach
     // hand-off (and stays off the `cmd /c start` path, so a `%`/`^` folder name isn't refused).
-    argv = systemRevealArgv(platform, folderAbs);
+    // With a resolved file path, reveal (select) that file inside its folder rather than just
+    // opening the repo root — so a right-click "Reveal in File Explorer" lands on the file.
+    argv = systemRevealArgv(platform, folderAbs, fileAbs);
   } else {
     const def = CATALOG.find((e) => e.id === wanted)!;
     const res = probeEditor(def, platform, realDeps());

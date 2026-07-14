@@ -22,9 +22,9 @@ watch(
 </script>
 
 <template>
-  <!-- Identities (git author identities) ────────────────────────────── -->
-  <IdentityManager />
-
   <!-- GitHub accounts (machine-wide active account switcher via gh) ────── -->
   <AccountSwitcher />
+
+  <!-- Identities (git author identities) ────────────────────────────── -->
+  <IdentityManager />
 </template>

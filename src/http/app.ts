@@ -37,6 +37,9 @@ import {
 import {
   setApprovalGateEnabled,
   setApprovalTimeoutSecs,
+  setAutoDenyEnabled,
+  setAutoApproveEnabled,
+  setApproveTimeoutSecs,
   APPROVAL_TIMEOUT_DEFAULT_S,
 } from "../approvals.ts";
 import { setIdentityRulesConfig } from "../identity.ts";
@@ -101,9 +104,13 @@ export function createApp(cfg: RepoYetiConfig, hooks: AppHooks = {}): Hono {
   // boot (startAutoUpdate in lifecycle.ts); this just primes the runtime flags.
   setAutoUpdateEnabled(cfg.autoUpdate === true);
   setAutoUpdateIntervalSecs(cfg.autoUpdateIntervalSecs ?? AUTO_UPDATE_INTERVAL_DEFAULT_S);
-  // ⭐ Agent Safety Rail: gate defaults ON (absent = gated); timeout defaults to 120s.
+  // ⭐ Agent Safety Rail: gate defaults ON (absent = gated); timeouts default to 120s. Auto-deny
+  // defaults ON (absent = the historic always-times-out behavior); auto-approve is opt-in (off).
   setApprovalGateEnabled(cfg.mcpApprovalGate !== false);
   setApprovalTimeoutSecs(cfg.mcpApprovalTimeoutSecs ?? APPROVAL_TIMEOUT_DEFAULT_S);
+  setAutoDenyEnabled(cfg.mcpAutoDeny !== false);
+  setAutoApproveEnabled(cfg.mcpAutoApprove === true);
+  setApproveTimeoutSecs(cfg.mcpAutoApproveTimeoutSecs ?? APPROVAL_TIMEOUT_DEFAULT_S);
   // ⭐ Identity Firewall: hand the module the live config so every preflight check
   // (runAction / smartCommitRepo / commitSelectedRepo) reads the current `identityRules`.
   setIdentityRulesConfig(cfg);

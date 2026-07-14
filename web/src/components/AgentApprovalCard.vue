@@ -75,8 +75,14 @@ async function onDeny(id: string): Promise<void> {
             </span>
           </div>
           <div class="mono truncate text-[11px] text-muted-foreground">{{ req.argsSummary }}</div>
-          <div class="text-[11px] text-primary/80">
+          <div v-if="req.autoAction === 'approve'" class="text-[11px] text-primary/80">
+            {{ $t("approvals.countdownApprove", { seconds: secondsLeft(req.expiresAt) }) }}
+          </div>
+          <div v-else-if="req.autoAction === 'deny'" class="text-[11px] text-primary/80">
             {{ $t("approvals.countdown", { seconds: secondsLeft(req.expiresAt) }) }}
+          </div>
+          <div v-else class="text-[11px] text-muted-foreground/80">
+            {{ $t("approvals.waiting") }}
           </div>
         </div>
         <Button

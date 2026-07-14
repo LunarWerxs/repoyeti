@@ -8,7 +8,7 @@
 // the graph's toggle. Detail (files + bounded diff) is fetched per-commit on tap, cached by hash.
 import { ref, computed, watch, onMounted, onBeforeUnmount, useTemplateRef } from "vue";
 import { useI18n } from "vue-i18n";
-import { History, ChevronDown, Loader2, RefreshCw, GitMerge, Copy, CornerDownRight, Tag, FileEdit } from "@lucide/vue";
+import { History, ChevronDown, Loader2, RefreshCw, GitMerge, Copy, CornerDownRight, Tag, FileEdit, Eye, SquarePen, FolderOpen } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { useStore } from "../store";
 import { api, ApiError } from "../api";
@@ -20,6 +20,13 @@ import { splitUnifiedDiff } from "@/lib/unified-diff";
 import { statusColor } from "@/lib/git-status-colors";
 import { openFile, isViewing } from "@/lib/file-viewer";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+} from "@/components/ui/context-menu";
 import type { ChangedFile, CommitDetail, LogEntry } from "../types";
 
 const props = defineProps<{ repoId: string }>();
@@ -239,6 +246,33 @@ async function copyHash(hash: string): Promise<void> {
     /* clipboard blocked — non-critical */
   }
 }
+
+// ── file-row context-menu actions (right-click a file in a commit or the working tree) ──
+async function copyFilePath(path: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(path);
+    toast.success(t("repo.changes.copiedPath"));
+  } catch {
+    toast.error(t("repo.changes.copyPathFailed"));
+  }
+}
+// Open the file in the owner's default editor (loopback-only, like the changes tree). Opens the
+// CURRENT working-tree file (not the historical revision) — matches "Open with…" semantics.
+async function editFile(path: string): Promise<void> {
+  try {
+    await store.openInEditor(props.repoId, { path });
+  } catch (e) {
+    toast.error(e instanceof ApiError ? e.message : t("repo.openFailed"));
+  }
+}
+// Reveal (select) the file in the OS file manager (loopback-only).
+async function revealFile(path: string): Promise<void> {
+  try {
+    await store.openInEditor(props.repoId, { editor: "system", path });
+  } catch (e) {
+    toast.error(e instanceof ApiError ? e.message : t("repo.openFailed"));
+  }
+}
 const rowEls = new Map<string, HTMLElement>();
 const setRowEl = (hash: string) => (el: unknown): void => {
   if (el instanceof HTMLElement) rowEls.set(hash, el);
@@ -405,22 +439,39 @@ watch(
                       <div v-if="!wtFiles.length" class="text-muted-foreground">{{ $t("repo.history.noUncommitted") }}</div>
                       <template v-else>
                         <div class="overflow-hidden rounded-md border border-border">
-                          <button
-                            v-for="f in wtFiles.slice(0, 60)"
-                            :key="`${f.path}:${f.staged}`"
-                            type="button"
-                            class="flex w-full items-center gap-2 border-b border-border px-2 py-1 text-left transition-colors last:border-b-0 hover:bg-accent/40"
-                            :class="isViewing(props.repoId, f.path) && 'bg-accent/60'"
-                            :title="f.path"
-                            @click.stop="openWorktreeFile(f)"
-                          >
-                            <span class="mono shrink-0 text-[11px] font-bold" :style="{ color: statusColor(f.status) }">{{ f.status }}</span>
-                            <span class="mono min-w-0 flex-1 truncate text-[11.5px]">
-                              <span class="text-foreground">{{ splitPath(f.path).name }}</span><span v-if="splitPath(f.path).dir" class="ml-1.5 text-muted-foreground/55">{{ splitPath(f.path).dir.replace(/\/+$/, "") }}</span>
-                            </span>
-                            <span v-if="f.stat?.addedLines" class="mono shrink-0 text-[10.5px] text-success">+{{ f.stat.addedLines }}</span>
-                            <span v-if="f.stat?.removedLines" class="mono shrink-0 text-[10.5px] text-destructive">−{{ f.stat.removedLines }}</span>
-                          </button>
+                          <ContextMenu v-for="f in wtFiles.slice(0, 60)" :key="`${f.path}:${f.staged}`">
+                            <ContextMenuTrigger as-child>
+                              <button
+                                type="button"
+                                class="flex w-full items-center gap-2 border-b border-border px-2 py-1 text-left transition-colors last:border-b-0 hover:bg-accent/40"
+                                :class="isViewing(props.repoId, f.path) && 'bg-accent/60'"
+                                :title="f.path"
+                                @click.stop="openWorktreeFile(f)"
+                              >
+                                <span class="mono shrink-0 text-[11px] font-bold" :style="{ color: statusColor(f.status) }">{{ f.status }}</span>
+                                <span class="mono min-w-0 flex-1 truncate text-[11.5px]">
+                                  <span class="text-foreground">{{ splitPath(f.path).name }}</span><span v-if="splitPath(f.path).dir" class="ml-1.5 text-muted-foreground/55">{{ splitPath(f.path).dir.replace(/\/+$/, "") }}</span>
+                                </span>
+                                <span v-if="f.stat?.addedLines" class="mono shrink-0 text-[10.5px] text-success">+{{ f.stat.addedLines }}</span>
+                                <span v-if="f.stat?.removedLines" class="mono shrink-0 text-[10.5px] text-destructive">−{{ f.stat.removedLines }}</span>
+                              </button>
+                            </ContextMenuTrigger>
+                            <ContextMenuContent class="w-52">
+                              <ContextMenuItem @select="openWorktreeFile(f)">
+                                <Eye :size="15" /><span>{{ $t("repo.changes.ctxOpen") }}</span>
+                              </ContextMenuItem>
+                              <ContextMenuItem @select="editFile(f.path)">
+                                <SquarePen :size="15" /><span>{{ $t("repo.changes.ctxEditor") }}</span>
+                              </ContextMenuItem>
+                              <ContextMenuItem @select="revealFile(f.path)">
+                                <FolderOpen :size="15" /><span>{{ $t("repo.changes.revealAction") }}</span>
+                              </ContextMenuItem>
+                              <ContextMenuSeparator />
+                              <ContextMenuItem @select="copyFilePath(f.path)">
+                                <Copy :size="15" /><span>{{ $t("repo.changes.ctxCopyPath") }}</span>
+                              </ContextMenuItem>
+                            </ContextMenuContent>
+                          </ContextMenu>
                         </div>
                         <div v-if="wtFiles.length > 60" class="mt-1 text-muted-foreground">
                           {{ $t("repo.history.moreFiles", { count: wtFiles.length - 60 }) }}
@@ -610,22 +661,39 @@ watch(
                   </div>
                   <!-- changed files — click one to open it in the shared Monaco viewer (diff at this commit) -->
                   <div v-if="detailFiles.length" class="overflow-hidden rounded-md border border-border">
-                    <button
-                      v-for="f in detailFiles"
-                      :key="f.path"
-                      type="button"
-                      class="flex w-full items-center gap-2 border-b border-border px-2 py-1 text-left transition-colors last:border-b-0 hover:bg-accent/40"
-                      :class="isViewing(props.repoId, f.path, item.commit!.hash) && 'bg-accent/60'"
-                      :title="f.from ? `${f.from} → ${f.path}` : f.path"
-                      @click.stop="openCommitFile(f)"
-                    >
-                      <span class="mono shrink-0 text-[11px] font-bold" :style="{ color: statusColor(f.status) }">{{ f.status }}</span>
-                      <span class="mono min-w-0 flex-1 truncate text-[11.5px]">
-                        <span class="text-foreground">{{ splitPath(f.path).name }}</span><span v-if="splitPath(f.path).dir" class="ml-1.5 text-muted-foreground/55">{{ splitPath(f.path).dir.replace(/\/+$/, "") }}</span>
-                      </span>
-                      <span v-if="f.adds" class="mono shrink-0 text-[10.5px] text-success">+{{ f.adds }}</span>
-                      <span v-if="f.dels" class="mono shrink-0 text-[10.5px] text-destructive">−{{ f.dels }}</span>
-                    </button>
+                    <ContextMenu v-for="f in detailFiles" :key="f.path">
+                      <ContextMenuTrigger as-child>
+                        <button
+                          type="button"
+                          class="flex w-full items-center gap-2 border-b border-border px-2 py-1 text-left transition-colors last:border-b-0 hover:bg-accent/40"
+                          :class="isViewing(props.repoId, f.path, item.commit!.hash) && 'bg-accent/60'"
+                          :title="f.from ? `${f.from} → ${f.path}` : f.path"
+                          @click.stop="openCommitFile(f)"
+                        >
+                          <span class="mono shrink-0 text-[11px] font-bold" :style="{ color: statusColor(f.status) }">{{ f.status }}</span>
+                          <span class="mono min-w-0 flex-1 truncate text-[11.5px]">
+                            <span class="text-foreground">{{ splitPath(f.path).name }}</span><span v-if="splitPath(f.path).dir" class="ml-1.5 text-muted-foreground/55">{{ splitPath(f.path).dir.replace(/\/+$/, "") }}</span>
+                          </span>
+                          <span v-if="f.adds" class="mono shrink-0 text-[10.5px] text-success">+{{ f.adds }}</span>
+                          <span v-if="f.dels" class="mono shrink-0 text-[10.5px] text-destructive">−{{ f.dels }}</span>
+                        </button>
+                      </ContextMenuTrigger>
+                      <ContextMenuContent class="w-52">
+                        <ContextMenuItem @select="openCommitFile(f)">
+                          <Eye :size="15" /><span>{{ $t("repo.history.ctxOpenAtCommit") }}</span>
+                        </ContextMenuItem>
+                        <ContextMenuItem @select="editFile(f.path)">
+                          <SquarePen :size="15" /><span>{{ $t("repo.changes.ctxEditor") }}</span>
+                        </ContextMenuItem>
+                        <ContextMenuItem @select="revealFile(f.path)">
+                          <FolderOpen :size="15" /><span>{{ $t("repo.changes.revealAction") }}</span>
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem @select="copyFilePath(f.path)">
+                          <Copy :size="15" /><span>{{ $t("repo.changes.ctxCopyPath") }}</span>
+                        </ContextMenuItem>
+                      </ContextMenuContent>
+                    </ContextMenu>
                   </div>
                   <div v-else class="text-[11px] text-muted-foreground">{{ $t("repo.history.noChanges") }}</div>
                   <p v-if="expandedDetail.truncated" class="mt-1 text-[11px] text-muted-foreground">

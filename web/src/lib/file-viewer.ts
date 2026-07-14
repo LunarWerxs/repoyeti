@@ -102,6 +102,11 @@ export const wordLevelDiff = useLocalStorage<boolean>("repoyeti:fileViewerWordDi
 /** Soft-wrap long lines in the viewer/diff (Monaco wordWrap). Persisted; toggled from the ⋮ menu. */
 export const wordWrap = useLocalStorage<boolean>("repoyeti:fileViewerWordWrap", false);
 
+/** VS Code-style "dirty diff": highlight changed lines in the gutter of the CONTENT view (green
+ *  added, blue modified, red-triangle deleted vs HEAD), even with the Diff tab off. Persisted;
+ *  toggled from the ⋮ menu. Default on. */
+export const dirtyDiffGutter = useLocalStorage<boolean>("repoyeti:fileViewerDirtyGutter", true);
+
 /** Diff layout: true = split (side-by-side), false = unified (inline). Persisted; toggled
  *  from the diff header. Split still auto-folds to inline when the panel is too narrow. */
 export const diffSplitView = useLocalStorage<boolean>("repoyeti:fileViewerSplitView", true);

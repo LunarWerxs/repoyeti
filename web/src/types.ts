@@ -317,6 +317,7 @@ export interface FetchAllResult {
  */
 export type ApiErrorCode =
   | "DIRTY_WORKING_TREE"
+  | "WOULD_OVERWRITE"
   | "NON_FAST_FORWARD"
   | "DETACHED_HEAD"
   | "NO_UPSTREAM"
@@ -389,6 +390,11 @@ export interface AiCatalogEntry {
   url: string;
   keyPlaceholder: string;
   free?: boolean;
+  /** The one provider we steer new owners to (Groq) — renders a "Suggested" badge + get-a-key nudge. */
+  suggested?: boolean;
+  /** Preferred chat model id, marked "Recommended" in the model picker + used as the connect-time
+   *  default. Best-effort: absent from a provider's live list ⇒ no marker, no default. */
+  recommended?: string;
 }
 export type CommitStyle = "conventional" | "concise" | "detailed";
 
@@ -408,8 +414,6 @@ export interface AiModel {
 export interface AiProviderState {
   configured: true;
   model: string | null;
-  /** True when served by RepoYeti's free built-in key (owner has set no key of their own). */
-  builtin?: boolean;
 }
 
 export interface AiSettings {
@@ -418,6 +422,8 @@ export interface AiSettings {
   style: CommitStyle;
   /** Smart-commit YOLO mode: commit the AI plan immediately, skipping the review editor. */
   yolo: boolean;
+  /** Whether the AI commit buttons (Generate + Auto) are shown at all (default true). */
+  commitEnabled: boolean;
 }
 
 // ── smart commit (AI multi-commit splitter) — mirrors src/ai.ts + src/service.ts ──
@@ -505,5 +511,8 @@ export interface PendingApproval {
   repo: string | null;
   argsSummary: string;
   requestedAt: number;
+  /** When the soonest armed auto-resolution fires (0 = none armed → waits for a manual decision). */
   expiresAt: number;
+  /** What the countdown will do at expiry — "deny", "approve", or null (no timer, hide the countdown). */
+  autoAction: "approve" | "deny" | null;
 }

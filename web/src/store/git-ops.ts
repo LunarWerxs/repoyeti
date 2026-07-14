@@ -183,6 +183,21 @@ export function useGitOps(
     }
   }
 
+  /** Append a changed file's path to the repo's .gitignore (the changes-tree "Add to .gitignore"
+   *  action). Idempotent — an already-ignored path comes back ok with alreadyIgnored=true. */
+  async function addToGitignore(repoId: string, path: string): Promise<ActionResult & { alreadyIgnored?: boolean }> {
+    gitOpBusy[repoId] = "gitignore";
+    try {
+      const r = await api.addToGitignore(repoId, path);
+      await loadChanges(repoId);
+      return { ok: r.ok, code: r.code, message: r.message ?? "ignored", alreadyIgnored: r.alreadyIgnored };
+    } catch (e) {
+      return asResult(e);
+    } finally {
+      gitOpBusy[repoId] = undefined;
+    }
+  }
+
   // ── remotes / tags ───────────────────────────────────────────────────────────
   async function loadTags(repoId: string): Promise<void> {
     try {
@@ -249,5 +264,6 @@ export function useGitOps(
     discardFile,
     stageFile,
     moveFile,
+    addToGitignore,
   };
 }

@@ -33,7 +33,10 @@ export type ApprovalOutcome = "approved" | "denied" | "timeout";
 // ── runtime state (mirrors cfg.mcpApprovalGate*; primed at boot in app.ts + the settings toggle,
 // same shape as auto-commit.ts's enabled/intervalSecs pair) ──
 let gateEnabled = true; // ON by default — the whole point of the feature is to be safe out of the box
-let timeoutSecs = APPROVAL_TIMEOUT_DEFAULT_S;
+let autoDenyEnabled = true; // ON by default — preserves the historic always-times-out-and-denies behavior
+let timeoutSecs = APPROVAL_TIMEOUT_DEFAULT_S; // the auto-DENY duration
+let autoApproveEnabled = false; // OFF by default — auto-approving mutations is opt-in (human-in-the-loop is the point)
+let approveTimeoutSecs = APPROVAL_TIMEOUT_DEFAULT_S; // the auto-APPROVE duration
 
 /** Whether the approval gate is currently active. Default ON (absent config = gated). */
 export function approvalGateEnabled(): boolean {
@@ -45,9 +48,34 @@ export function setApprovalGateEnabled(value: boolean): void {
   gateEnabled = value;
 }
 
+/** Whether a pending request auto-denies once its deny timeout elapses. */
+export function autoDenyIsEnabled(): boolean {
+  return autoDenyEnabled;
+}
+
+/** Flip auto-deny on/off at runtime. */
+export function setAutoDenyEnabled(value: boolean): void {
+  autoDenyEnabled = value;
+}
+
+/** Whether a pending request auto-approves once its approve timeout elapses. */
+export function autoApproveIsEnabled(): boolean {
+  return autoApproveEnabled;
+}
+
+/** Flip auto-approve on/off at runtime. */
+export function setAutoApproveEnabled(value: boolean): void {
+  autoApproveEnabled = value;
+}
+
 /** Current auto-deny timeout, in seconds. */
 export function getApprovalTimeoutSecs(): number {
   return timeoutSecs;
+}
+
+/** Current auto-approve timeout, in seconds. */
+export function getApproveTimeoutSecs(): number {
+  return approveTimeoutSecs;
 }
 
 /** Clamp a requested timeout into [MIN, MAX] seconds; a non-finite value falls back to the default. */
@@ -62,6 +90,12 @@ export function setApprovalTimeoutSecs(secs: number): number {
   return timeoutSecs;
 }
 
+/** Set the auto-approve timeout in seconds (clamped). Returns the clamped value to persist. */
+export function setApproveTimeoutSecs(secs: number): number {
+  approveTimeoutSecs = clampApprovalTimeoutSecs(secs);
+  return approveTimeoutSecs;
+}
+
 /** One pending (or just-resolved) approval request. Kept minimal + JSON-serialisable so it can
  *  ride straight over SSE and the approve/deny routes without a separate DTO. */
 export interface PendingApproval {
@@ -74,12 +108,18 @@ export interface PendingApproval {
    *  raw args blob — keeps the SSE payload small and avoids echoing anything sensitive verbatim. */
   argsSummary: string;
   requestedAt: number;
+  /** When the soonest armed auto-resolution fires (0 when neither auto-deny nor auto-approve is on,
+   *  i.e. the request waits for a manual decision indefinitely). Drives the dashboard countdown. */
   expiresAt: number;
+  /** What the `expiresAt` timer will do — so the card can say "Auto-approve in Xs" vs "Auto-deny in
+   *  Xs", or hide the countdown entirely (null = no timer armed). */
+  autoAction: "approve" | "deny" | null;
 }
 
 interface PendingEntry extends PendingApproval {
   resolve: (outcome: ApprovalOutcome) => void;
-  timer: ReturnType<typeof setTimeout>;
+  denyTimer?: ReturnType<typeof setTimeout>;
+  approveTimer?: ReturnType<typeof setTimeout>;
 }
 
 const pending = new Map<string, PendingEntry>();
@@ -89,7 +129,7 @@ const pending = new Map<string, PendingEntry>();
 export function listPending(): PendingApproval[] {
   return [...pending.values()]
     .sort((a, b) => a.requestedAt - b.requestedAt)
-    .map(({ resolve: _resolve, timer: _timer, ...rest }) => rest);
+    .map(({ resolve: _resolve, denyTimer: _d, approveTimer: _a, ...rest }) => rest);
 }
 
 /** Best-effort single-line summary of a tool's arguments for display — never dumps the raw
@@ -114,17 +154,38 @@ export function requestApproval(
   tool: string,
   repo: string | null,
   argsSummary: string,
-  timeoutMs: number = getApprovalTimeoutSecs() * 1000,
+  timeoutMs?: number,
 ): { id: string; result: Promise<ApprovalOutcome> } {
   const id = randomUUID();
   const requestedAt = Date.now();
-  const expiresAt = requestedAt + Math.max(1, timeoutMs);
+
+  // Two independent, optional auto-resolution timers:
+  //  · auto-DENY   — armed when enabled (or when an explicit `timeoutMs` override is passed, which
+  //    the tests use for fast, deterministic auto-deny). Resolves the call to "timeout" (= denial).
+  //  · auto-APPROVE — armed only when the owner opts in. Resolves the call to "approved".
+  // When both are armed, whichever fires first wins (settle() clears the other). When NEITHER is
+  // armed, the request simply waits for a manual approve/deny — no timer, no auto-resolution.
+  const denyMs =
+    timeoutMs != null ? Math.max(1, timeoutMs) : autoDenyEnabled ? Math.max(1, timeoutSecs * 1000) : null;
+  const approveMs = autoApproveEnabled ? Math.max(1, approveTimeoutSecs * 1000) : null;
+
+  // The soonest armed timer decides the card's countdown label + expiry (deny wins a tie).
+  let autoAction: "approve" | "deny" | null = null;
+  let expiresAt = 0;
+  if (denyMs != null && (approveMs == null || denyMs <= approveMs)) {
+    autoAction = "deny";
+    expiresAt = requestedAt + denyMs;
+  } else if (approveMs != null) {
+    autoAction = "approve";
+    expiresAt = requestedAt + approveMs;
+  }
 
   const result = new Promise<ApprovalOutcome>((resolveOutcome) => {
-    // Deliberately NOT unref'd: the auto-deny timeout is a safety guarantee (an agent must never
+    // Deliberately NOT unref'd: an armed auto-resolution is a safety guarantee (an agent must never
     // hang past it), so it must fire even if this were somehow the only pending work keeping the
     // process alive — never silently skipped by the event loop going idle.
-    const timer = setTimeout(() => settle(id, "timeout"), Math.max(1, timeoutMs));
+    const denyTimer = denyMs != null ? setTimeout(() => settle(id, "timeout"), denyMs) : undefined;
+    const approveTimer = approveMs != null ? setTimeout(() => settle(id, "approved"), approveMs) : undefined;
 
     pending.set(id, {
       id,
@@ -133,21 +194,25 @@ export function requestApproval(
       argsSummary,
       requestedAt,
       expiresAt,
+      autoAction,
       resolve: resolveOutcome,
-      timer,
+      denyTimer,
+      approveTimer,
     });
   });
 
-  broadcast("approval_pending", { id, tool, repo, argsSummary, requestedAt, expiresAt });
+  broadcast("approval_pending", { id, tool, repo, argsSummary, requestedAt, expiresAt, autoAction });
   return { id, result };
 }
 
-/** Settle a pending approval (human action or timeout) exactly once; a repeat/unknown id is a
- *  harmless no-op (e.g. a double-click Approve, or the entry already timed out). */
+/** Settle a pending approval (human action or a timer) exactly once; a repeat/unknown id is a
+ *  harmless no-op (e.g. a double-click Approve, or the entry already resolved). Clears BOTH the
+ *  auto-deny and auto-approve timers so the loser can't fire after the winner. */
 function settle(id: string, outcome: ApprovalOutcome): boolean {
   const entry = pending.get(id);
   if (!entry) return false;
-  clearTimeout(entry.timer);
+  if (entry.denyTimer) clearTimeout(entry.denyTimer);
+  if (entry.approveTimer) clearTimeout(entry.approveTimer);
   pending.delete(id);
   entry.resolve(outcome);
   broadcast("approval_resolved", { id, tool: entry.tool, repo: entry.repo, outcome });
@@ -168,6 +233,9 @@ export function deny(id: string): boolean {
 /** Test/shutdown helper: clear every pending approval (and its timer) without resolving the
  *  waiting callers — used for deterministic test teardown between specs. */
 export function clearAllPending(): void {
-  for (const entry of pending.values()) clearTimeout(entry.timer);
+  for (const entry of pending.values()) {
+    if (entry.denyTimer) clearTimeout(entry.denyTimer);
+    if (entry.approveTimer) clearTimeout(entry.approveTimer);
+  }
   pending.clear();
 }

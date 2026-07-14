@@ -55,8 +55,13 @@ watch(showRemote, (open) => {
 });
 
 // "toggle" (header Settings menu item) flips the panel; "open" (e.g. the account-switcher's
-// "manage accounts" shortcut) always force-opens it, even if already open.
-function onSettings(mode: "toggle" | "open"): void {
+// "manage accounts" shortcut, or a bell notification deep-linking to a tab) always force-opens it,
+// even if already open. An optional `tab` deep-links Settings to that tab (e.g. the dead-AI-key
+// notification → the Automation tab where AI providers live); cleared when the panel closes so a
+// later plain open lands on General again.
+const settingsTab = ref<string | null>(null);
+function onSettings(mode: "toggle" | "open", tab?: string): void {
+  settingsTab.value = tab ?? null;
   showSettings.value = mode === "open" ? true : !showSettings.value;
 }
 
@@ -162,7 +167,7 @@ onMounted(async () => {
 
     <AddRepo v-model:open="showAdd" />
     <ScanProjects v-model:open="store.scanOpen" />
-    <Settings v-model:open="showSettings" :side="settingsSide" :right-offset-px="pageShiftPx" />
+    <Settings v-model:open="showSettings" :side="settingsSide" :right-offset-px="pageShiftPx" :target-tab="settingsTab" />
     <RemoteAccess v-model:open="showRemote" />
     <FileViewer />
   </div>

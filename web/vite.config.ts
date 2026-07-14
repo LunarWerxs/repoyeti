@@ -85,7 +85,15 @@ export default defineConfig({
   // The Monaco code-viewer chunk is legitimately multi-MB (language services); raise the
   // "chunk too large" warning ceiling so a normal build isn't noisy, while still flagging a
   // real regression. Monaco stays lazy-loaded + out of the PWA precache (see workbox above).
-  build: { outDir: "dist", emptyOutDir: true, chunkSizeWarningLimit: 4000 },
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
+    chunkSizeWarningLimit: 4000,
+    // @vueuse/core ships /* #__PURE__ */ comments in positions rolldown can't bind to a call
+    // expression (e.g. before an object literal); it flags them as INVALID_ANNOTATION even
+    // though the annotation is inert there. Silence that one benign check to keep builds quiet.
+    rollupOptions: { checks: { invalidAnnotation: false } },
+  },
   server: {
     port: 4319,
     proxy: {

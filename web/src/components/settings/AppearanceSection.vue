@@ -9,6 +9,7 @@ import { useTooltipConfig } from "@/lib/tooltip-config";
 import SettingsGroup from "@/shell/SettingsGroup.vue";
 import SettingsRow from "@/shell/SettingsRow.vue";
 import InfoHint from "@/shell/InfoHint.vue";
+import ExpandTransition from "@/shell/ExpandTransition.vue";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -179,23 +180,22 @@ async function onHideTrayIcon(enabled: boolean): Promise<void> {
         />
       </template>
     </SettingsRow>
-    <!-- Threshold is moot when always-side-by-side is on → dim + disable it. -->
-    <div
-      class="flex flex-col gap-1.5 px-3.5 py-3 transition-opacity"
-      :class="store.diffPatchEnabled ? '' : 'pointer-events-none opacity-50'"
-    >
-      <span class="flex items-center gap-1.5 text-[12px] text-muted-foreground">
-        {{ $t("settings.diffPatchThreshold") }}
-        <InfoHint :text="$t('settings.diffPatchThresholdHint')" />
-      </span>
-      <Select v-model="diffPatchChoice" :disabled="!store.diffPatchEnabled">
-        <SelectTrigger class="w-full" :aria-label="$t('settings.diffPatchThreshold')"><SelectValue /></SelectTrigger>
-        <SelectContent>
-          <SelectItem v-for="o in DIFF_PATCH_OPTIONS" :key="o.bytes" :value="String(o.bytes)">
-            {{ o.label }}
-          </SelectItem>
-        </SelectContent>
-      </Select>
-    </div>
+    <!-- Threshold is moot when always-side-by-side is on → HIDE it (not dim). -->
+    <ExpandTransition :open="store.diffPatchEnabled">
+      <div class="flex flex-col gap-1.5 px-3.5 py-3">
+        <span class="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+          {{ $t("settings.diffPatchThreshold") }}
+          <InfoHint :text="$t('settings.diffPatchThresholdHint')" />
+        </span>
+        <Select v-model="diffPatchChoice">
+          <SelectTrigger class="w-full" :aria-label="$t('settings.diffPatchThreshold')"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem v-for="o in DIFF_PATCH_OPTIONS" :key="o.bytes" :value="String(o.bytes)">
+              {{ o.label }}
+            </SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+    </ExpandTransition>
   </SettingsGroup>
 </template>

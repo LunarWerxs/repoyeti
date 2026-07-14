@@ -82,3 +82,6 @@ $RECYCLE.BIN/
 .cache/
 .turbo/
 *.local
+
+# Local root rebuild convenience wrapper (delegates to misc/Rebuild.bat)
+/Rebuild.bat

@@ -5,7 +5,7 @@
 // and the store, and runs its own git ops (discard) keyed by repo.id.
 import { computed, ref, useTemplateRef, watch, onBeforeUnmount } from "vue";
 import { useI18n } from "vue-i18n";
-import { AlertTriangle, ChevronsDownUp, ChevronsUpDown, Cloud, CloudOff, FileSearch, GripHorizontal, List, ListTree, Loader2, RefreshCw, Search, X } from "@lucide/vue";
+import { AlertTriangle, Check, ChevronsDownUp, ChevronsUpDown, Cloud, CloudOff, FileSearch, GripHorizontal, List, ListTree, Loader2, RefreshCw, Search, X } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { useStore } from "../../store";
 import { api, ApiError } from "../../api";
@@ -288,13 +288,41 @@ async function onStage(path: string): Promise<void> {
   toastResult(await store.stageFile(props.repo.id, path), t("repo.changes.staged"));
 }
 
-// ── reveal a changed file's repo in the OS file manager (same convention as RepoCardActions'
-// "Open with…" → File Explorer/Finder; loopback-only, so a failure here is expected remotely) ──
+// ── reveal a changed file in the OS file manager (selects the file — see systemRevealArgv;
+// loopback-only, so a failure here is expected remotely) ──
 async function onReveal(path: string): Promise<void> {
   try {
     await store.openInEditor(props.repo.id, { editor: "system", path });
   } catch (e) {
     toast.error(e instanceof ApiError ? e.message : t("repo.openFailed"));
+  }
+}
+
+// ── open a changed file in the owner's default external editor (no `editor` ⇒ effective default;
+// loopback-only, like reveal) ──
+async function onEditor(path: string): Promise<void> {
+  try {
+    await store.openInEditor(props.repo.id, { path });
+  } catch (e) {
+    toast.error(e instanceof ApiError ? e.message : t("repo.openFailed"));
+  }
+}
+
+// ── add a changed file's path to the repo's .gitignore (idempotent; from the row context menu) ──
+async function onGitignore(path: string): Promise<void> {
+  if (store.gitOpBusy[props.repo.id]) return;
+  const r = await store.addToGitignore(props.repo.id, path);
+  if (r.ok) toast.success(r.alreadyIgnored ? t("repo.changes.alreadyIgnored") : t("repo.changes.gitignored"));
+  else toast.error(t("repo.changes.gitignoreFailed"));
+}
+
+// ── copy a changed file's repo-relative path to the clipboard (from the row context menu) ──
+async function onCopyPath(path: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(path);
+    toast.success(t("repo.changes.copiedPath"));
+  } catch {
+    toast.error(t("repo.changes.copyPathFailed"));
   }
 }
 </script>
@@ -467,6 +495,9 @@ async function onReveal(path: string): Promise<void> {
         @stage="onStage"
         @reveal="onReveal"
         @move="onMove"
+        @editor="onEditor"
+        @gitignore="onGitignore"
+        @copy-path="onCopyPath"
       />
       <!-- Server capped an oversized changed-file list (MAX_CHANGED_FILES) — say so. -->
       <div
@@ -505,6 +536,18 @@ async function onReveal(path: string): Promise<void> {
       />
     </button>
   </div>
+  </ExpandTransition>
+
+  <!-- empty state: a clean working tree used to just collapse to nothing (felt broken/empty). Show
+       a small "No changes" line instead. Complementary condition to the tree above, so exactly one
+       shows; hidden while status is unknown or in an error state. -->
+  <ExpandTransition :open="!!(st && !st.error && st.dirty === 0)">
+    <div
+      class="flex items-center gap-2 rounded-md border border-border/60 bg-background/40 px-2.5 py-2 text-[12.5px] text-muted-foreground"
+    >
+      <Check :size="14" class="shrink-0 text-success/80" />
+      <span>{{ $t("repo.changes.clean") }}</span>
+    </div>
   </ExpandTransition>
 
   <!-- confirm before discarding a file's working-tree changes (destructive) -->

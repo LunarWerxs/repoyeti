@@ -10,6 +10,9 @@ import type { AccountsSnapshot, DetectedIdentity, GhAccount, Identity, IdentityR
 export function useIdentities(repos: Ref<Repo[]>) {
   const identities = ref<Identity[]>([]);
   const detectedIdentities = ref<DetectedIdentity[]>([]);
+  // Suggestions the owner dismissed but that are STILL detected — shown (collapsed) for review +
+  // per-item restore. (A dismissed id that's no longer detected simply doesn't appear here.)
+  const dismissedDetectedIdentities = ref<DetectedIdentity[]>([]);
   const detectedIdentitiesLoading = ref(false);
   const detectedIdentitiesReady = ref(false);
 
@@ -25,7 +28,9 @@ export function useIdentities(repos: Ref<Repo[]>) {
     if (detectedIdentitiesLoading.value) return;
     detectedIdentitiesLoading.value = true;
     try {
-      detectedIdentities.value = await api.detectedIdentities();
+      const r = await api.detectedIdentities();
+      detectedIdentities.value = r.detected;
+      dismissedDetectedIdentities.value = r.dismissed;
       detectedIdentitiesReady.value = true;
     } catch {
       detectedIdentities.value = [];
@@ -33,6 +38,38 @@ export function useIdentities(repos: Ref<Repo[]>) {
     } finally {
       detectedIdentitiesLoading.value = false;
     }
+  }
+  /** Dismiss a detected suggestion so it stops re-appearing; optimistic (moves it to the dismissed
+   *  list, which the UI shows collapsed for review/restore). */
+  async function dismissDetectedIdentity(id: string): Promise<void> {
+    const item = detectedIdentities.value.find((d) => d.id === id);
+    detectedIdentities.value = detectedIdentities.value.filter((d) => d.id !== id);
+    if (item && !dismissedDetectedIdentities.value.some((d) => d.id === id)) {
+      dismissedDetectedIdentities.value = [item, ...dismissedDetectedIdentities.value];
+    }
+    try {
+      await api.dismissDetectedIdentity(id);
+    } catch {
+      await loadDetectedIdentities(); // roll back to the server's truth
+    }
+  }
+  /** Un-dismiss ONE suggestion (the Undo action + per-item restore); optimistic. */
+  async function restoreDetectedIdentity(id: string): Promise<void> {
+    const item = dismissedDetectedIdentities.value.find((d) => d.id === id);
+    dismissedDetectedIdentities.value = dismissedDetectedIdentities.value.filter((d) => d.id !== id);
+    if (item && !detectedIdentities.value.some((d) => d.id === id)) {
+      detectedIdentities.value = [...detectedIdentities.value, item];
+    }
+    try {
+      await api.restoreDetectedIdentity(id);
+    } catch {
+      await loadDetectedIdentities();
+    }
+  }
+  /** Un-dismiss every previously-hidden suggestion, then reload. */
+  async function restoreDetectedIdentities(): Promise<void> {
+    await api.restoreDetectedIdentities();
+    await loadDetectedIdentities();
   }
   async function createIdentity(input: Omit<Identity, "id">): Promise<void> {
     await api.createIdentity(input);
@@ -124,6 +161,7 @@ export function useIdentities(repos: Ref<Repo[]>) {
   return {
     identities,
     detectedIdentities,
+    dismissedDetectedIdentities,
     detectedIdentitiesLoading,
     detectedIdentitiesReady,
     identityById,
@@ -131,6 +169,9 @@ export function useIdentities(repos: Ref<Repo[]>) {
     updateIdentity,
     removeIdentity,
     loadDetectedIdentities,
+    dismissDetectedIdentity,
+    restoreDetectedIdentity,
+    restoreDetectedIdentities,
     identityRules,
     identityRulesReady,
     loadIdentityRules,

@@ -59,17 +59,13 @@ Prefer a single binary? Grab one from [Releases](https://github.com/LunarWerxs/r
 
 ## AI setup — a free Groq key in 3 clicks
 
-Smart Commit and AI commit messages need a key. Groq's free tier is plenty:
+Smart Commit and AI commit messages are bring-your-own-key (there's no bundled key — Groq revokes any key committed to a public repo). Groq is the suggested provider: free, fast, ~30 seconds:
 
 1. Open **[console.groq.com/keys](https://console.groq.com/keys)** and sign in.
 2. Click **Create API Key**, then **Copy**.
-3. Paste it into a `.env` file in the repo root:
+3. In the app, open **Settings → AI**, expand **Groq**, and paste it in.
 
-   ```sh
-   REPOYETI_BUILTIN_GROQ_KEY=gsk_your_key_here
-   ```
-
-Restart the daemon and "Generate" lights up. Already use OpenAI / Claude / Gemini / others? Add your own key in **Settings** instead — it always wins over this one.
+"Generate" lights up right away. Prefer OpenAI / Claude / Gemini / OpenRouter / DeepSeek? Add that key in the same place instead — your key never leaves the daemon (it's kept in your OS keychain).
 
 ## The rules
 

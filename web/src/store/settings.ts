@@ -73,6 +73,9 @@ export function useSettings(deps: {
   hideTrayIcon: Ref<boolean>;
   mcpApprovalGate: Ref<boolean>;
   mcpApprovalTimeoutSecs: Ref<number>;
+  mcpAutoDeny: Ref<boolean>;
+  mcpAutoApprove: Ref<boolean>;
+  mcpAutoApproveTimeoutSecs: Ref<number>;
   defaultEditor: Ref<string | null>;
   /** The barrel's doAction("pull") — powers the behind-toast's "Pull now" action. */
   pullRepo?: (repoId: string) => Promise<ActionResult>;
@@ -101,6 +104,9 @@ export function useSettings(deps: {
     hideTrayIcon,
     mcpApprovalGate,
     mcpApprovalTimeoutSecs,
+    mcpAutoDeny,
+    mcpAutoApprove,
+    mcpAutoApproveTimeoutSecs,
     defaultEditor,
   } = deps;
 
@@ -383,6 +389,38 @@ export function useSettings(deps: {
       throw e;
     }
   }
+  /** Toggle whether a pending approval auto-DENIES once its timeout elapses. */
+  async function setMcpAutoDeny(enabled: boolean): Promise<void> {
+    mcpAutoDeny.value = enabled;
+    try {
+      await api.setMcpAutoDeny(enabled);
+    } catch (e) {
+      mcpAutoDeny.value = !enabled; // roll back
+      throw e;
+    }
+  }
+  /** Toggle whether a pending approval auto-APPROVES once its timeout elapses. */
+  async function setMcpAutoApprove(enabled: boolean): Promise<void> {
+    mcpAutoApprove.value = enabled;
+    try {
+      await api.setMcpAutoApprove(enabled);
+    } catch (e) {
+      mcpAutoApprove.value = !enabled; // roll back
+      throw e;
+    }
+  }
+  /** Set the auto-approve timeout in seconds (adopts the server's clamped value). */
+  async function setMcpAutoApproveTimeoutSecs(secs: number): Promise<void> {
+    const prev = mcpAutoApproveTimeoutSecs.value;
+    mcpAutoApproveTimeoutSecs.value = secs;
+    try {
+      const r = await api.setMcpAutoApproveTimeoutSecs(secs);
+      mcpAutoApproveTimeoutSecs.value = r.mcpAutoApproveTimeoutSecs;
+    } catch (e) {
+      mcpAutoApproveTimeoutSecs.value = prev; // roll back
+      throw e;
+    }
+  }
 
   // ── "Open with…" external editors (loopback-only convenience) ─────────────────
   // The detected editor catalogue for this machine (from GET /api/editors). Loaded lazily the
@@ -534,6 +572,7 @@ export function useSettings(deps: {
     notifyAutoCommitted,
     notifyAutoCommitBlocked,
     notifyNewProjects,
+    notifyAiKeyInvalid,
   } = useSettingsNotifications(deps.pullRepo);
 
   return {
@@ -570,6 +609,9 @@ export function useSettings(deps: {
     setHideTrayIcon,
     setMcpApprovalGate,
     setMcpApprovalTimeoutSecs,
+    setMcpAutoDeny,
+    setMcpAutoApprove,
+    setMcpAutoApproveTimeoutSecs,
     editorsCatalog,
     editorsPlatform,
     effectiveEditor,
@@ -611,5 +653,6 @@ export function useSettings(deps: {
     notifyAutoCommitted,
     notifyAutoCommitBlocked,
     notifyNewProjects,
+    notifyAiKeyInvalid,
   };
 }

@@ -76,8 +76,21 @@ export interface AiCatalogEntry {
   url: string;
   /** API-key format hint shown in the password input placeholder. */
   keyPlaceholder: string;
-  /** True when the provider offers a free tier (shows a "Free tier" badge). */
+  /** True when the provider offers a free tier (shows a "Free tier available" badge — this means
+   *  the vendor's API has a free usage tier, NOT that a key is present or that only the free tier
+   *  is supported; it's a signpost to a zero-cost option). */
   free?: boolean;
+  /** The one provider we steer new owners to (Groq): free, fast, ~30s to set up. Renders a
+   *  "Suggested" badge + a get-a-key nudge so a fresh install isn't stuck picking a provider. */
+  suggested?: boolean;
+  /**
+   * Preferred chat model id for commit messages, used as the default the moment a key connects
+   * (instead of blindly taking the first model the provider lists — which for Groq is a Whisper
+   * transcription model that can't chat). Best-effort: if the live model list doesn't contain it,
+   * the connect handler falls back to the first CHAT model. Bump this one line when a newer model
+   * ships (e.g. a "v4 turbo") — that's the whole "dynamic" story.
+   */
+  recommended?: string;
 }
 
 /**
@@ -86,12 +99,12 @@ export interface AiCatalogEntry {
  * Order = display order in the Settings UI (free providers first).
  */
 export const AI_CATALOG: readonly AiCatalogEntry[] = [
-  { id: "groq",       label: "Groq",      url: "console.groq.com/keys",    keyPlaceholder: "gsk_…",     free: true },
-  { id: "openrouter", label: "OpenRouter", url: "openrouter.ai/keys",       keyPlaceholder: "sk-or-…",   free: true },
-  { id: "gemini",     label: "Gemini",     url: "aistudio.google.com",      keyPlaceholder: "AIza…",     free: true },
-  { id: "anthropic",  label: "Claude",     url: "console.anthropic.com",    keyPlaceholder: "sk-ant-…"              },
-  { id: "openai",     label: "ChatGPT",    url: "platform.openai.com",      keyPlaceholder: "sk-…"                  },
-  { id: "deepseek",   label: "DeepSeek",   url: "platform.deepseek.com",    keyPlaceholder: "sk-…"                  },
+  { id: "groq",       label: "Groq",      url: "console.groq.com/keys",    keyPlaceholder: "gsk_…",     free: true, suggested: true, recommended: "llama-3.3-70b-versatile" },
+  { id: "openrouter", label: "OpenRouter", url: "openrouter.ai/keys",       keyPlaceholder: "sk-or-…",   free: true, recommended: "meta-llama/llama-3.3-70b-instruct:free" },
+  { id: "gemini",     label: "Gemini",     url: "aistudio.google.com",      keyPlaceholder: "AIza…",     free: true, recommended: "gemini-2.0-flash" },
+  { id: "anthropic",  label: "Claude",     url: "console.anthropic.com",    keyPlaceholder: "sk-ant-…",              recommended: "claude-3-5-haiku-latest" },
+  { id: "openai",     label: "ChatGPT",    url: "platform.openai.com",      keyPlaceholder: "sk-…",                  recommended: "gpt-4o-mini" },
+  { id: "deepseek",   label: "DeepSeek",   url: "platform.deepseek.com",    keyPlaceholder: "sk-…",                  recommended: "deepseek-chat" },
 ];
 
 /** Static catalogue — drives route validation. Derived from AI_CATALOG so they stay in sync. */
@@ -111,6 +124,13 @@ export interface AiConfig {
   providers: Partial<Record<AiProviderId, AiProviderCfg>>;
   /** Which configured provider the "Generate" button uses. */
   defaultProvider?: AiProviderId;
+  /**
+   * Whether the AI commit affordances (the ✨ Generate button + the "Auto" smart-commit button)
+   * are SHOWN at all. Default ON — the buttons appear even with no key, and clicking one with no
+   * usable provider nudges the owner to add a key (or turn this off). Set false to hide them
+   * entirely for owners who write their own messages.
+   */
+  commitEnabled?: boolean;
   /** Commit-message style for the prompt (default "conventional"). Owners can override
    *  here in config.json; the UI no longer exposes a picker (conventional is the norm). */
   style?: CommitStyle;
@@ -354,10 +374,27 @@ export interface RepoYetiConfig {
   mcpApprovalGate?: boolean;
   /**
    * Auto-deny timeout for a pending MCP approval, in seconds. Clamped to [10, 3600] on read;
-   * absent = the built-in default (120s / src/approvals.ts APPROVAL_TIMEOUT_DEFAULT_MS). Owner
-   * setting (the Settings UI could expose it later; currently PUT /api/settings only).
+   * absent = the built-in default (120s / src/approvals.ts APPROVAL_TIMEOUT_DEFAULT_MS). Only
+   * armed when `mcpAutoDeny` is on (below).
    */
   mcpApprovalTimeoutSecs?: number;
+  /**
+   * Whether a pending approval auto-DENIES after `mcpApprovalTimeoutSecs`. Absent = ON (preserves
+   * the historic always-times-out-and-denies behavior). Turn OFF to let a request wait for a manual
+   * decision indefinitely (or until `mcpAutoApprove` resolves it). See src/approvals.ts.
+   */
+  mcpAutoDeny?: boolean;
+  /**
+   * Whether a pending approval auto-APPROVES after `mcpAutoApproveTimeoutSecs`. Absent = OFF (the
+   * whole point of the gate is a human in the loop — opt in deliberately). When both auto-deny and
+   * auto-approve are on, whichever duration elapses first wins. See src/approvals.ts.
+   */
+  mcpAutoApprove?: boolean;
+  /**
+   * Auto-approve timeout, in seconds (same [10, 3600] clamp as the deny timeout). Absent = the
+   * built-in default (120s). Only armed when `mcpAutoApprove` is on.
+   */
+  mcpAutoApproveTimeoutSecs?: number;
   /**
    * Identity Firewall (default v1, kept dead simple): a list of rules pinning which saved
    * identity MUST be used to commit/push in repos matching a filesystem-path glob. Every
@@ -370,6 +407,13 @@ export interface RepoYetiConfig {
    * rules — zero behavior change. See src/identity.ts matchIdentityRule / checkIdentityPolicy.
    */
   identityRules?: IdentityRule[];
+  /**
+   * Detected-identity suggestions the owner has dismissed (by their stable `id` hash from
+   * src/identity-detect.ts). Detection re-reads the machine (git config / SSH keys / gh) on every
+   * refresh, so without this a suggestion the owner "deleted" (or never wants) just comes back —
+   * dismissed ids are filtered out of GET /api/identities/detected. Absent/empty = show everything.
+   */
+  dismissedIdentities?: string[];
 }
 
 /**
@@ -388,61 +432,30 @@ export interface IdentityRule {
 
 /** The redacted AI view safe to send to any client — keys are dropped entirely. */
 export interface RedactedAiConfig {
-  providers: Partial<
-    Record<AiProviderId, { configured: true; model: string | null; builtin?: boolean }>
-  >;
+  providers: Partial<Record<AiProviderId, { configured: true; model: string | null }>>;
   defaultProvider: AiProviderId | null;
   style: CommitStyle;
   /** Smart-commit YOLO mode (commit the AI plan without review). Default false. */
   yolo: boolean;
+  /** Whether the AI commit buttons are shown (default true — visible even with no key). */
+  commitEnabled: boolean;
 }
 
 /**
- * Optional free AI. RepoYeti ships with NO baked-in key — a public key just gets scraped and
- * revoked (GitHub secret-scanning blocks the push anyway). Drop your own free Groq key into
- * `.env` as REPOYETI_BUILTIN_GROQ_KEY and "Generate" lights up. Get one in ~3 clicks at
- * https://console.groq.com/keys (walkthrough in README → "AI setup"). The owner's own
- * key/provider in config ALWAYS wins over this (see resolveApiKey / isBuiltinProvider).
- *
- * Read at call time from REPOYETI_BUILTIN_GROQ_KEY, else the placeholder below (which stays
- * DORMANT). ACTIVE only when the value looks like a real Groq key (`gsk_…`) and isn't the
- * `…REPLACE…` placeholder; `REPOYETI_BUILTIN_GROQ_KEY=""` force-disables it.
+ * AI is bring-your-own-key: RepoYeti ships with NO baked-in key. Groq revokes any key committed to
+ * a public repo (and GitHub secret-scanning blocks the push anyway), so a shipped "free" key is
+ * dead on arrival — there's no safe way to bundle one. Owners add their own free key in Settings →
+ * AI; Groq is the suggested provider (free + fast, ~30s to set up — see AI_CATALOG `suggested`).
  */
-const BUILTIN_GROQ_KEY = "gsk_REPLACE_with_your_own_free_groq_key";
-export const BUILTIN_AI = {
-  provider: "groq" as AiProviderId,
-  model: process.env.REPOYETI_BUILTIN_GROQ_MODEL ?? "llama-3.1-8b-instant",
-};
 
-/** The active built-in key, or null when unset / placeholder / force-disabled. Read at call time. */
-export function builtinApiKey(): string | null {
-  const k = (process.env.REPOYETI_BUILTIN_GROQ_KEY ?? BUILTIN_GROQ_KEY).trim();
-  return k.startsWith("gsk_") && !k.includes("REPLACE") ? k : null;
-}
-
-/** True when `provider` is served by the built-in key (the owner has set no key of their own). */
-export function isBuiltinProvider(cfg: RepoYetiConfig, provider: AiProviderId): boolean {
-  return (
-    provider === BUILTIN_AI.provider &&
-    !cfg.ai?.providers?.[provider]?.apiKey &&
-    builtinApiKey() !== null
-  );
-}
-
-/** Effective API key for a provider: the owner's key wins, else the built-in key (Groq only). */
+/** Effective API key for a provider — the owner's own key, or null when none is set. */
 export function resolveApiKey(cfg: RepoYetiConfig, provider: AiProviderId): string | null {
-  const own = cfg.ai?.providers?.[provider]?.apiKey;
-  if (own) return own;
-  if (provider === BUILTIN_AI.provider) return builtinApiKey();
-  return null;
+  return cfg.ai?.providers?.[provider]?.apiKey ?? null;
 }
 
-/** Effective model for a provider: the owner's selection wins, else the built-in default model. */
+/** Effective model for a provider — the owner's selection, or null when none is picked. */
 export function resolveModel(cfg: RepoYetiConfig, provider: AiProviderId): string | null {
-  const own = cfg.ai?.providers?.[provider]?.model;
-  if (own) return own;
-  if (isBuiltinProvider(cfg, provider)) return BUILTIN_AI.model;
-  return null;
+  return cfg.ai?.providers?.[provider]?.model ?? null;
 }
 
 /** Which provider "Generate" uses: the owner's choice if usable, else the first usable provider. */
@@ -462,16 +475,11 @@ export function redactAi(cfg: RepoYetiConfig): RedactedAiConfig {
     defaultProvider: null,
     style: cfg.ai?.style ?? "conventional",
     yolo: cfg.ai?.yolo ?? false,
+    commitEnabled: cfg.ai?.commitEnabled !== false, // default ON
   };
   for (const id of AI_PROVIDERS) {
-    // "configured" = the owner set a key OR the built-in key covers it (Groq).
     if (resolveApiKey(cfg, id)) {
-      const builtin = isBuiltinProvider(cfg, id);
-      out.providers[id] = {
-        configured: true,
-        model: resolveModel(cfg, id),
-        ...(builtin ? { builtin: true } : {}),
-      };
+      out.providers[id] = { configured: true, model: resolveModel(cfg, id) };
     }
   }
   out.defaultProvider = effectiveDefaultProvider(cfg);

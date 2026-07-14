@@ -25,14 +25,20 @@ export function useAi(
   // BYOK AI settings (redacted — never holds a key). `aiEnabled` gates the Generate button.
   // Style is hardcoded to Conventional Commits (no UI picker); owners can still override
   // it in ~/.repoyeti/config.json. The daemon mirrors this default.
-  const aiSettings = ref<AiSettings>({ providers: {}, defaultProvider: null, style: "conventional", yolo: false });
+  const aiSettings = ref<AiSettings>({ providers: {}, defaultProvider: null, style: "conventional", yolo: false, commitEnabled: true });
   const aiReady = ref(false);
   /** Provider catalog from GET /api/ai/catalog — safe display metadata, no secrets. */
   const aiCatalog = ref<AiCatalogEntry[]>([]);
-  const aiEnabled = computed(() => {
+  /** A usable provider is connected (a default provider with a model) — AI can actually run. */
+  const aiUsable = computed(() => {
     const dp = aiSettings.value.defaultProvider;
     return !!(dp && aiSettings.value.providers[dp]?.model);
   });
+  /** Whether the AI commit buttons are SHOWN. Default on, independent of whether a key exists —
+   *  clicking with no usable provider nudges the owner to add one (see RepoCardCommit). */
+  const aiCommitEnabled = computed(() => aiSettings.value.commitEnabled !== false);
+  // Back-compat alias: `aiEnabled` historically meant "a usable provider is connected".
+  const aiEnabled = aiUsable;
 
   // ── BYOK AI ───────────────────────────────────────────────────────────────────
   async function loadAiCatalog(): Promise<void> {
@@ -74,6 +80,17 @@ export function useAi(
       aiSettings.value = await api.ai.setYolo(yolo);
     } catch (e) {
       aiSettings.value = { ...aiSettings.value, yolo: prev }; // roll back
+      throw e;
+    }
+  }
+  /** Toggle whether the AI commit buttons are shown (optimistic; rolls back on failure). */
+  async function setCommitEnabled(commitEnabled: boolean): Promise<void> {
+    const prev = aiSettings.value.commitEnabled;
+    aiSettings.value = { ...aiSettings.value, commitEnabled };
+    try {
+      aiSettings.value = await api.ai.setCommitEnabled(commitEnabled);
+    } catch (e) {
+      aiSettings.value = { ...aiSettings.value, commitEnabled: prev }; // roll back
       throw e;
     }
   }
@@ -128,6 +145,8 @@ export function useAi(
     aiCatalog,
     aiReady,
     aiEnabled,
+    aiUsable,
+    aiCommitEnabled,
     loadAiSettings,
     loadAiCatalog,
     connectProvider,
@@ -135,6 +154,7 @@ export function useAi(
     selectModel,
     setDefaultProvider,
     setYolo,
+    setCommitEnabled,
     setStyle,
     removeProvider,
     genCommitMessage,

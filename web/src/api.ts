@@ -137,6 +137,15 @@ export interface RuntimeStatus {
   mcpApprovalGate: boolean;
   /** Auto-deny timeout for a pending MCP approval, in seconds (owner setting; default 120). */
   mcpApprovalTimeoutSecs: number;
+  /** Whether a pending approval auto-DENIES after mcpApprovalTimeoutSecs (owner setting; default ON). */
+  mcpAutoDeny: boolean;
+  /** Whether a pending approval auto-APPROVES after mcpAutoApproveTimeoutSecs (owner setting; default OFF). */
+  mcpAutoApprove: boolean;
+  /** Auto-approve timeout for a pending MCP approval, in seconds (owner setting; default 120). */
+  mcpAutoApproveTimeoutSecs: number;
+  /** Providers whose AI key the boot-time liveness check found dead — the dashboard raises the
+   *  "AI key problem" notification for each on load (so it isn't missed if opened after boot). */
+  aiKeyInvalid?: Array<{ provider: string; label: string }>;
   /** "Open with…" default external editor id, or null to auto-pick the first installed one. */
   defaultEditor: string | null;
 }
@@ -341,6 +350,17 @@ export const api = {
     req<{ ok: boolean; mcpApprovalTimeoutSecs: number }>("PUT", "/api/settings", {
       mcpApprovalTimeoutSecs: secs,
     }),
+  /** Toggle whether a pending approval auto-denies after its timeout (owner setting; persisted). */
+  setMcpAutoDeny: (enabled: boolean) =>
+    req<{ ok: boolean; mcpAutoDeny: boolean }>("PUT", "/api/settings", { mcpAutoDeny: enabled }),
+  /** Toggle whether a pending approval auto-approves after its timeout (owner setting; persisted). */
+  setMcpAutoApprove: (enabled: boolean) =>
+    req<{ ok: boolean; mcpAutoApprove: boolean }>("PUT", "/api/settings", { mcpAutoApprove: enabled }),
+  /** Set the auto-approve timeout in seconds (server clamps to [10,3600] + persists). */
+  setMcpAutoApproveTimeoutSecs: (secs: number) =>
+    req<{ ok: boolean; mcpAutoApproveTimeoutSecs: number }>("PUT", "/api/settings", {
+      mcpAutoApproveTimeoutSecs: secs,
+    }),
 
   // ── "Open with…" external editors (loopback-only) ─────────────────────────────
   /** Detected editors on the daemon's machine + the effective default. */
@@ -362,7 +382,16 @@ export const api = {
   listRepos: () => req<{ repos: Repo[] }>("GET", "/api/repos").then((r) => r.repos),
   listIdentities: () => req<{ identities: Identity[] }>("GET", "/api/identities").then((r) => r.identities),
   detectedIdentities: () =>
-    req<{ detected: DetectedIdentity[] }>("GET", "/api/identities/detected").then((r) => r.detected),
+    req<{ detected: DetectedIdentity[]; dismissed: DetectedIdentity[] }>("GET", "/api/identities/detected"),
+  /** Dismiss a detected suggestion (by its stable id) so it stops re-appearing. */
+  dismissDetectedIdentity: (id: string) =>
+    req<{ ok: boolean; dismissedCount: number }>("POST", `/api/identities/detected/${id}/dismiss`),
+  /** Un-dismiss ONE suggestion (temporary undo + per-item restore). */
+  restoreDetectedIdentity: (id: string) =>
+    req<{ ok: boolean; dismissedCount: number }>("POST", `/api/identities/detected/${id}/restore`),
+  /** Un-dismiss everything — bring previously-hidden suggestions back. */
+  restoreDetectedIdentities: () =>
+    req<{ ok: boolean }>("POST", "/api/identities/detected/restore"),
 
   createIdentity: (input: Omit<Identity, "id">) =>
     req<{ identity: Identity }>("POST", "/api/identities", input).then((r) => r.identity),
@@ -499,6 +528,13 @@ export const api = {
       `/api/repos/${id}/stage`,
       { path },
     ),
+  /** Append a path to the repo's .gitignore (idempotent; anchored to the repo root). */
+  addToGitignore: (id: string, path: string) =>
+    req<{ ok: boolean; code: string; message?: string; pattern?: string; alreadyIgnored?: boolean }>(
+      "POST",
+      `/api/repos/${id}/gitignore`,
+      { path },
+    ),
   /** Changed-file list. `total`/`truncated` are set when the server capped an oversized
    *  list (MAX_CHANGED_FILES) so the UI can show a "showing N of M" notice. */
   changes: (id: string) =>
@@ -549,6 +585,8 @@ export const api = {
     settings: () => req<AiSettings>("GET", "/api/ai/settings"),
     /** Toggle smart-commit YOLO mode (commit the AI plan without the review editor). */
     setYolo: (yolo: boolean) => req<AiSettings>("PUT", "/api/ai/settings", { yolo }),
+    /** Toggle whether the AI commit buttons are shown at all (default on). */
+    setCommitEnabled: (commitEnabled: boolean) => req<AiSettings>("PUT", "/api/ai/settings", { commitEnabled }),
     /** Set the AI commit-message style (conventional / concise / detailed). */
     setStyle: (style: CommitStyle) => req<AiSettings>("PUT", "/api/ai/settings", { style }),
     connect: (provider: AiProviderId, apiKey: string) =>

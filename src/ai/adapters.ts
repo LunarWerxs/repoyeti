@@ -24,6 +24,19 @@ const OPENAI_KEEP = /^(gpt-|o[0-9]|chatgpt)/i;
 const OPENAI_DROP =
   /(embedding|tts|whisper|dall-?e|audio|realtime|image|moderation|transcribe|search|babbage|davinci)/i;
 
+/**
+ * Non-chat model ids to exclude from the commit-message model list for the OpenAI-compatible
+ * providers that expose a MIXED catalog (Groq serves Whisper/TTS/guard models from the same
+ * `/models` endpoint as its chat LLMs; DeepSeek/OpenRouter can too). Without this, `finalizeModels`
+ * sorts "whisper-large-v3-turbo" to the TOP of Groq's list and it becomes the auto-picked default —
+ * a transcription model that can't answer `/chat/completions` (the reported "Groq → Whisper" bug).
+ * Deliberately conservative: it drops speech/embedding/moderation/guard/image models but leaves
+ * vision-capable chat models (which CAN chat) alone.
+ */
+const NON_CHAT_MODEL =
+  /(whisper|tts|text-to-speech|playai|\bspeech\b|\baudio\b|embed|moderation|transcribe|rerank|guard|dall-?e|stable-diffusion|flux-|sdxl)/i;
+const isChatModel = (id: string): boolean => !NON_CHAT_MODEL.test(id);
+
 /** The `data[]` array of an OpenAI-style model list (or [] if shaped otherwise). */
 function dataList(json: unknown): Array<Record<string, unknown>> {
   const j = (json ?? {}) as Record<string, unknown>;
@@ -209,15 +222,17 @@ export const AI_ADAPTERS: Record<AiProviderId, AiAdapter> = {
   deepseek: openAiCompatible({
     modelsUrl: "https://api.deepseek.com/models",
     generateUrl: "https://api.deepseek.com/chat/completions",
+    keep: isChatModel,
   }),
   groq: openAiCompatible({
     modelsUrl: "https://api.groq.com/openai/v1/models",
     generateUrl: "https://api.groq.com/openai/v1/chat/completions",
+    keep: isChatModel, // drop Whisper/TTS/guard models Groq serves from the same endpoint
   }),
   openrouter: openAiCompatible({
     modelsUrl: "https://openrouter.ai/api/v1/models",
     generateUrl: "https://openrouter.ai/api/v1/chat/completions",
-    keep: (id) => id.endsWith(":free"), // free models only
+    keep: (id) => id.endsWith(":free") && isChatModel(id), // free CHAT models only
     label: (m) => String(m.name ?? m.id ?? ""), // OpenRouter ships a friendly `name`
   }),
 };

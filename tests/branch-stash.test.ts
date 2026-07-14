@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
 import {
@@ -85,13 +85,29 @@ test("checkout switches branches on a clean tree", async () => {
   expect((await readBranches(dir)).current).toBe("other");
 });
 
-test("checkout refuses a dirty working tree (never carries into a conflict)", async () => {
+test("checkout carries a non-conflicting dirty tree onto the target branch", async () => {
   const dir = await repo();
-  await gitCreateBranch(dir, "other", false);
-  writeFileSync(join(dir, "seed.txt"), "modified\n");
+  await gitCreateBranch(dir, "other", false); // "other" sits at the same commit as main
+  writeFileSync(join(dir, "seed.txt"), "modified\n"); // dirty, but both branches share this HEAD
+  const r = await gitCheckout(dir, "other");
+  expect(r.ok).toBe(true);
+  expect((await readBranches(dir)).current).toBe("other");
+  // the uncommitted edit came along instead of being refused
+  expect(readFileSync(join(dir, "seed.txt"), "utf8").replace(/\r\n/g, "\n")).toBe("modified\n");
+});
+
+test("checkout refuses only when the switch would overwrite a dirty file", async () => {
+  const dir = await repo();
+  // Give "other" a DIFFERENT seed.txt than main, so switching to it must rewrite that file.
+  await gitCreateBranch(dir, "other", true); // now on "other"
+  writeFileSync(join(dir, "seed.txt"), "on-other\n");
+  await $`git -C ${dir} -c user.name=T -c user.email=t@t.io commit -q -am on-other`.quiet();
+  await gitCheckout(dir, "main"); // back to a clean main (seed.txt = "seed\n")
+  // Dirty main's seed.txt, then try to switch to "other" whose seed.txt differs → must overwrite.
+  writeFileSync(join(dir, "seed.txt"), "dirty-main\n");
   const r = await gitCheckout(dir, "other");
   expect(r.ok).toBe(false);
-  expect(r.code).toBe("DIRTY_WORKING_TREE");
+  expect(r.code).toBe("WOULD_OVERWRITE");
 });
 
 test("checkout of a missing branch returns NOT_FOUND", async () => {

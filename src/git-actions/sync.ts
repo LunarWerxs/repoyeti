@@ -16,6 +16,15 @@ export function classify(err: unknown): ActionResult {
   const raw = err instanceof Error ? err.message : String(err);
   const low = raw.toLowerCase();
 
+  if (low.includes("would be overwritten") || low.includes("commit your changes or stash")) {
+    // A fast-forward that can't land without clobbering an uncommitted edit. git aborts
+    // atomically (nothing is touched), so this is safe to surface and retry after the owner
+    // commits or stashes — both of which RepoYeti can do from the phone.
+    return fail(
+      "WOULD_OVERWRITE",
+      "your uncommitted changes would be overwritten; commit or stash them first",
+    );
+  }
   if (
     low.includes("non-fast-forward") ||
     low.includes("fetch first") ||
@@ -69,14 +78,16 @@ export async function gitPullFfOnly(
   absPath: string,
   identity: Identity | null,
 ): Promise<ActionResult> {
-  // Preflight: never pull into an unsafe state.
+  // Preflight only for the one state a fast-forward genuinely can't handle: a detached HEAD has
+  // no branch to advance. A dirty working tree is deliberately NOT preflighted. `git pull
+  // --ff-only` is atomic and safe on a dirty tree: it fast-forwards when the incoming commits
+  // don't touch your uncommitted files (preserving those edits) and aborts cleanly
+  // (WOULD_OVERWRITE, classified above) only when they would be overwritten. So the pull runs
+  // whenever git can do it safely, instead of being refused up front on any local change.
   const pre = await readStatus(absPath);
   if (pre.error) return fail("ERROR", pre.error);
   if (pre.detached || !pre.branch) {
     return fail("DETACHED_HEAD", "detached HEAD — resolve at your desk");
-  }
-  if (pre.dirty > 0) {
-    return fail("DIRTY_WORKING_TREE", "working tree has uncommitted changes — resolve at your desk");
   }
   try {
     const git = gitFor(absPath);

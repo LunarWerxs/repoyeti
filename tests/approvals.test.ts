@@ -19,6 +19,11 @@ import {
   setApprovalTimeoutSecs,
   clampApprovalTimeoutSecs,
   clearAllPending,
+  setAutoDenyEnabled,
+  setAutoApproveEnabled,
+  setApproveTimeoutSecs,
+  autoDenyIsEnabled,
+  autoApproveIsEnabled,
   APPROVAL_TIMEOUT_MIN_S,
   APPROVAL_TIMEOUT_MAX_S,
 } from "../src/approvals.ts";
@@ -47,6 +52,9 @@ async function gitRepo(name: string): Promise<{ dir: string; id: string }> {
 beforeEach(() => {
   setApprovalGateEnabled(true);
   setApprovalTimeoutSecs(120);
+  setAutoDenyEnabled(true); // default: a pending request auto-denies at its timeout
+  setAutoApproveEnabled(false); // default: auto-approve is opt-in
+  setApproveTimeoutSecs(120);
   clearAllPending();
 });
 afterEach(() => {
@@ -106,6 +114,52 @@ test("timeout auto-denies a pending approval when nobody responds in time", asyn
   const outcome = await result;
   expect(outcome).toBe("timeout");
   expect(listPending().some((p) => p.id === id)).toBe(false);
+});
+
+test("auto-resolution: by default a pending request reports autoAction 'deny' with an expiry", () => {
+  const { id } = requestApproval("git_commit", "r", "message: x");
+  const p = listPending().find((e) => e.id === id)!;
+  expect(p.autoAction).toBe("deny");
+  expect(p.expiresAt).toBeGreaterThan(p.requestedAt);
+  expect(autoDenyIsEnabled()).toBe(true);
+  expect(autoApproveIsEnabled()).toBe(false);
+});
+
+test("auto-deny OFF + auto-approve OFF: no timer is armed — the request waits for a manual decision", async () => {
+  setAutoDenyEnabled(false);
+  setAutoApproveEnabled(false);
+  const { id, result } = requestApproval("git_push", "r", "(no arguments)");
+  const p = listPending().find((e) => e.id === id)!;
+  expect(p.autoAction).toBeNull();
+  expect(p.expiresAt).toBe(0);
+  // Give any (wrongly-armed) timer a chance to fire; it must still be pending.
+  await new Promise((r) => setTimeout(r, 60));
+  expect(listPending().some((e) => e.id === id)).toBe(true);
+  // A manual decision still resolves it (and clears it).
+  expect(deny(id)).toBe(true);
+  expect(await result).toBe("denied");
+});
+
+test("auto-approve ON: a pending request auto-APPROVES after its timeout (both timers cleared on settle)", async () => {
+  setAutoDenyEnabled(false); // isolate the approve timer
+  setAutoApproveEnabled(true);
+  setApproveTimeoutSecs(APPROVAL_TIMEOUT_MIN_S); // clamp floor (10s) is the fastest allowed
+  const { id, result } = requestApproval("git_fetch", null, "(no arguments)");
+  expect(listPending().find((e) => e.id === id)!.autoAction).toBe("approve");
+  const outcome = await result;
+  expect(outcome).toBe("approved");
+  expect(listPending().some((e) => e.id === id)).toBe(false);
+}, 15_000);
+
+test("both timers armed: the SHORTER duration wins (deny override shorter than approve)", async () => {
+  setAutoDenyEnabled(true);
+  setAutoApproveEnabled(true);
+  setApproveTimeoutSecs(APPROVAL_TIMEOUT_MAX_S); // approve far in the future
+  // A short deny override (20ms) beats the 1h approve timer → resolves 'timeout' (deny).
+  const { id, result } = requestApproval("git_checkout", null, "(no arguments)", 20);
+  expect(listPending().find((e) => e.id === id)!.autoAction).toBe("deny");
+  expect(await result).toBe("timeout");
+  expect(listPending().length).toBe(0);
 });
 
 test("clampApprovalTimeoutSecs clamps into [MIN, MAX] and falls back to the default on non-finite", () => {

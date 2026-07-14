@@ -101,6 +101,36 @@ function cancel(): void {
   showForm.value = false;
   editingId.value = null;
 }
+// Whether the "hidden" (dismissed-but-still-detected) list is expanded for review.
+const showDismissed = ref(false);
+
+/** Hide a detected suggestion — detection re-reads the machine, so this is the only way to make an
+ *  unwanted one (or one whose saved copy you deleted) stop coming back. Offers a temporary Undo. */
+async function dismiss(d: DetectedIdentity): Promise<void> {
+  try {
+    await store.dismissDetectedIdentity(d.id);
+    toast(t("identity.detected.dismissed", { name: d.title }), {
+      action: { label: t("identity.detected.undo"), onClick: () => void store.restoreDetectedIdentity(d.id) },
+    });
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : t("identity.detected.dismissFailed"));
+  }
+}
+/** Bring ONE dismissed suggestion back (from the Undo action or the hidden list). */
+async function restoreOne(d: DetectedIdentity): Promise<void> {
+  try {
+    await store.restoreDetectedIdentity(d.id);
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : t("identity.detected.restoreFailed"));
+  }
+}
+async function restoreDismissed(): Promise<void> {
+  try {
+    await store.restoreDetectedIdentities();
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : t("identity.detected.restoreFailed"));
+  }
+}
 
 function missingText(i: DetectedIdentity): string {
   const fields = i.missing.filter((field) => field !== "sshKeyPath");
@@ -157,21 +187,41 @@ async function remove(id: string): Promise<void> {
         <!-- local machine suggestions -->
         <div class="flex items-center justify-between gap-2">
           <div class="text-[12px] font-medium text-muted-foreground">{{ $t("identity.detected.title") }}</div>
-          <Tooltip>
-            <TooltipTrigger as-child>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                :aria-label="$t('identity.detected.refresh')"
-                :disabled="store.detectedIdentitiesLoading"
-                @click="store.loadDetectedIdentities()"
-              >
-                <RefreshCw :class="store.detectedIdentitiesLoading && 'animate-spin'" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{{ $t("identity.detected.refresh") }}</TooltipContent>
-          </Tooltip>
+          <div class="flex items-center gap-1">
+            <button
+              v-if="store.dismissedDetectedIdentities.length"
+              type="button"
+              :aria-expanded="showDismissed"
+              class="rounded px-1.5 py-0.5 text-[11px] text-muted-foreground underline-offset-2 outline-none transition-colors hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring/40"
+              @click="showDismissed = !showDismissed"
+            >
+              {{
+                showDismissed
+                  ? $t("identity.detected.hideDismissed")
+                  : $t(
+                      "identity.detected.hiddenCount",
+                      { count: store.dismissedDetectedIdentities.length },
+                      store.dismissedDetectedIdentities.length,
+                    )
+              }}
+            </button>
+            <Tooltip>
+              <TooltipTrigger as-child>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  :aria-label="$t('identity.detected.refresh')"
+                  :disabled="store.detectedIdentitiesLoading"
+                  @click="store.loadDetectedIdentities()"
+                >
+                  <RefreshCw :class="store.detectedIdentitiesLoading && 'animate-spin'" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{{ $t("identity.detected.refresh") }}</TooltipContent>
+            </Tooltip>
+          </div>
         </div>
+        <p class="-mt-1.5 text-[11px] text-muted-foreground/80">{{ $t("identity.detected.hint") }}</p>
         <div v-if="shownDetected.length" v-auto-animate class="flex flex-col gap-2">
           <div
             v-for="d in shownDetected"
@@ -196,6 +246,20 @@ async function remove(id: string): Promise<void> {
               <Plus />
               {{ $t("identity.detected.use") }}
             </Button>
+            <Tooltip>
+              <TooltipTrigger as-child>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  class="shrink-0 text-muted-foreground hover:text-destructive"
+                  :aria-label="$t('identity.detected.dismiss')"
+                  @click="dismiss(d)"
+                >
+                  <X />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{{ $t("identity.detected.dismiss") }}</TooltipContent>
+            </Tooltip>
           </div>
         </div>
         <div
@@ -204,6 +268,35 @@ async function remove(id: string): Promise<void> {
         >
           {{ $t("identity.detected.empty") }}
         </div>
+
+        <!-- dismissed (hidden) suggestions — expandable review + per-item / all restore -->
+        <ExpandTransition :open="showDismissed && store.dismissedDetectedIdentities.length > 0">
+          <div class="flex flex-col gap-2 rounded-xl border border-dashed border-border/70 bg-secondary/20 p-2.5">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-[11px] font-medium text-muted-foreground">{{ $t("identity.detected.dismissedTitle") }}</span>
+              <button
+                type="button"
+                class="rounded px-1.5 py-0.5 text-[11px] text-muted-foreground underline-offset-2 outline-none transition-colors hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring/40"
+                @click="restoreDismissed"
+              >
+                {{ $t("identity.detected.restoreAll") }}
+              </button>
+            </div>
+            <div
+              v-for="d in store.dismissedDetectedIdentities"
+              :key="d.id"
+              class="flex items-center gap-2 rounded-lg border border-border/60 bg-background/40 px-2.5 py-1.5"
+            >
+              <div class="min-w-0 flex-1">
+                <div class="truncate text-[12px] text-muted-foreground">{{ d.title }}</div>
+                <div class="mono truncate text-[11px] text-muted-foreground/70">{{ d.detail }}</div>
+              </div>
+              <Button variant="ghost" size="sm" class="shrink-0" @click="restoreOne(d)">
+                {{ $t("identity.detected.restore") }}
+              </Button>
+            </div>
+          </div>
+        </ExpandTransition>
 
         <!-- identity list -->
         <div

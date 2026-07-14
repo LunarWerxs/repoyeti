@@ -14,6 +14,7 @@ test("statusForCode maps every code family to the right HTTP status", () => {
   expect(statusForCode("NOT_FOUND")).toBe(404);
   expect(statusForCode("BAD_PROVIDER")).toBe(404);
   expect(statusForCode("DIRTY_WORKING_TREE")).toBe(409);
+  expect(statusForCode("WOULD_OVERWRITE")).toBe(409);
   expect(statusForCode("NON_FAST_FORWARD")).toBe(409);
   expect(statusForCode("SUBMODULE_NOT_ACTIONABLE")).toBe(409);
   expect(statusForCode("SSH_AUTH_FAILED")).toBe(502);

@@ -2,6 +2,9 @@
  * Mutating VCS actions, each funnelled through `runAction` (core.ts) so it goes behind the
  * per-repo op-queue and re-broadcasts status afterward. Plus the bulk fetch-all helper.
  */
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { getWatchableRepos } from "../db.ts";
 import { enqueue } from "../opqueue.ts";
 import { resolveRepoIdentity, enforceIdentityPolicy } from "../identity.ts";
@@ -168,6 +171,71 @@ export async function stageFile(repoId: string, relPath: string): Promise<StageR
   return { ok: false, code: result.code === "ERROR" ? "ERROR" : "STAGE_FAILED", message: result.message };
 }
 
+/** Result of appending a path to the repo's .gitignore (the changes-tree "Add to .gitignore"). */
+export interface GitignoreResult {
+  ok: boolean;
+  code: "OK" | "NOT_FOUND" | "ERROR" | "SUBMODULE_NOT_ACTIONABLE" | "UNSUPPORTED";
+  message?: string;
+  /** The .gitignore pattern that was written (or found already present). */
+  pattern?: string;
+  /** True when the pattern was already ignored — a no-op, still reported as ok. */
+  alreadyIgnored?: boolean;
+}
+
+/**
+ * Append a repo-relative path to the repo's root .gitignore — the changes-tree "Add to .gitignore"
+ * action. Untrusted-path safe (confined to the repo like discard/stage) and behind the per-repo
+ * op-queue. Idempotent: if the exact pattern is already present it's a no-op. The pattern is
+ * anchored to the repo root (leading slash) and written with forward slashes so it means exactly
+ * this path on every platform. .gitignore only makes sense for git backends (Lore is refused).
+ *
+ * Note this only EDITS .gitignore — it does not `git rm --cached` an already-tracked file (git
+ * ignores .gitignore for tracked paths). Untracked files vanish from the changes list on the
+ * post-write refresh; a tracked file keeps showing until the owner also removes it from the index.
+ */
+export async function addToGitignore(repoId: string, relPath: string): Promise<GitignoreResult> {
+  const g = guardRepo<"SUBMODULE_NOT_ACTIONABLE">(repoId, "SUBMODULE_NOT_ACTIONABLE");
+  if (g.fail) return g.fail;
+  const repo = g.repo;
+  const backend = backendFor(repo.vcs);
+  if (backend.marker !== ".git") {
+    return { ok: false, code: "UNSUPPORTED", message: ".gitignore is only supported for git repositories" };
+  }
+  const r = resolveRepoPath(repo.absPath, relPath);
+  if ("error" in r) return { ok: false, code: "ERROR", message: r.error };
+  // Never write a pattern that reaches into the VCS marker dir (.git).
+  if (r.clean.split("/").includes(backend.marker)) {
+    return { ok: false, code: "ERROR", message: `refusing to touch a ${backend.marker} directory` };
+  }
+  const pattern = `/${r.clean}`; // anchored to the repo root = this exact path, not a loose glob
+  const gitignorePath = join(repo.absPath, ".gitignore");
+  const result = await enqueue(repoId, async () => {
+    try {
+      const existing = existsSync(gitignorePath) ? readFileSync(gitignorePath, "utf8") : "";
+      const present = existing.split(/\r?\n/).some((l) => {
+        const t = l.trim();
+        return t === pattern || t === r.clean; // treat an anchored or bare prior entry as "already ignored"
+      });
+      if (present) return { ok: true as const, alreadyIgnored: true };
+      // Guarantee a newline before our line (so we never glue onto a no-trailing-newline last line).
+      const sep = existing.length === 0 || existing.endsWith("\n") ? "" : "\n";
+      const next = `${existing}${sep}${pattern}\n`;
+      // Atomic write (tmp + rename), same idiom as writeFileContent — a crash mid-write can't
+      // leave a half-written .gitignore.
+      const tmp = `${gitignorePath}.${randomUUID()}.tmp`;
+      writeFileSync(tmp, next, "utf8");
+      renameSync(tmp, gitignorePath);
+      return { ok: true as const, alreadyIgnored: false };
+    } catch (e) {
+      return { ok: false as const, message: e instanceof Error ? e.message : String(e) };
+    }
+  });
+  if (!result.ok) return { ok: false, code: "ERROR", message: result.message };
+  // Refresh AFTER the queue slot releases (refreshRepo enqueues again → would deadlock if nested).
+  await refreshRepo(repo.id, repo.absPath);
+  return { ok: true, code: "OK", pattern, alreadyIgnored: result.alreadyIgnored };
+}
+
 // ── smart commit (AI multi-commit splitter) ─────────────────────────────────────────
 
 export interface SmartCommitOutcome {
@@ -284,12 +352,12 @@ export async function smartCommitRepo(
     // network round-trip (no-op when unpinned).
     await ensureRepoAccount(repo);
 
-    // Post-commit sync (mirrors the UI's "commit & sync"): pull --ff-only, THEN push — but only if
+    // Post-commit sync (mirrors the UI's "commit & sync"): pull --ff-only, THEN push, but only if
     // the pull actually succeeded. Pushing after a failed pull would publish the just-made local
     // commits without first confirming the branch is fast-forwarded to upstream (exactly the
-    // NON_FAST_FORWARD race the pull-first order exists to avoid), and a dirty-tree failure — e.g.
-    // leftover unassigned files after a partial-group commit — would be silently overridden by a
-    // blind push. So a failed pull short-circuits: the commits are safe locally; sync is skipped.
+    // NON_FAST_FORWARD race the pull-first order exists to avoid). The ff-only pull leaves any
+    // leftover unassigned files untouched and succeeds unless the incoming update would overwrite
+    // them; a genuine failure short-circuits and skips the push, so the commits stay safe locally.
     const pull = await backend.pull(repo.absPath, identity);
     if (!pull.ok) return { ...base, synced: false, syncCode: pull.code, syncMessage: pull.message };
     const push = await backend.push(repo.absPath, identity);

@@ -4,6 +4,7 @@
 // getMonaco here is what pulls monaco-editor into this component's own chunk.
 import { onMounted, onBeforeUnmount, ref, useTemplateRef, watch } from "vue";
 import { getMonaco, monacoThemeFor, type EditorTheme } from "@/lib/monaco-setup";
+import type { LineChange } from "@/lib/line-diff";
 
 // Derive Monaco's types from getMonaco's return — no direct monaco-editor type import,
 // so this stays in lock-step with the editor.api build that monaco-setup actually loads.
@@ -25,6 +26,9 @@ const props = withDefaults(
     editable?: boolean;
     /** Soft-wrap long lines (Monaco wordWrap "on"/"off"). */
     wordWrap?: boolean;
+    /** VS Code-style "dirty diff" gutter markers (added/modified/deleted lines vs HEAD). Empty/
+     *  omitted = no gutter. */
+    changedLines?: LineChange[];
   }>(),
   { editable: false, wordWrap: false },
 );
@@ -34,6 +38,29 @@ const host = useTemplateRef<HTMLElement>("host");
 let monaco: MonacoApi | null = null;
 let editor: CodeEditor | null = null;
 let model: TextModel | null = null;
+let gutterIds: string[] = []; // dirty-diff decoration ids (deltaDecorations tracking)
+
+/** Paint the dirty-diff gutter markers from `changedLines`. Re-applied whenever the model or the
+ *  ranges change; cleared when there are none (or the editor is editable — a live edit's line
+ *  numbers no longer match HEAD, so the stale gutter would mislead). */
+function applyGutter(): void {
+  if (!editor || !monaco) return;
+  const decos =
+    props.editable || !props.changedLines?.length
+      ? []
+      : props.changedLines.map((c) => ({
+          range: new monaco!.Range(c.startLine, 1, c.endLine, 1),
+          options: {
+            linesDecorationsClassName: `dirty-gutter dirty-gutter-${c.kind}`,
+            overviewRuler: {
+              color:
+                c.kind === "add" ? "#3fb950" : c.kind === "delete" ? "#f85149" : "#58a6ff",
+              position: monaco!.editor.OverviewRulerLane.Left,
+            },
+          },
+        }));
+  gutterIds = editor.deltaDecorations(gutterIds, decos);
+}
 
 // Mirror MonacoDiffViewer: keep the editor hidden until its first paint, then fade it in,
 // so opening the panel doesn't pop the content in abruptly. While hidden the host is
@@ -86,6 +113,7 @@ onMounted(async () => {
   });
   // Surface every edit to the parent, which owns the dirty/draft state.
   editor.onDidChangeModelContent(() => emit("change", editor!.getValue()));
+  applyGutter();
   revealNextFrame();
 });
 
@@ -100,10 +128,15 @@ watch(
     const old = model;
     model = makeModel(monaco);
     editor.setModel(model);
+    gutterIds = []; // decorations belonged to the old model
+    applyGutter();
     revealNextFrame();
     old?.dispose();
   },
 );
+
+// Repaint the gutter when the changed-line ranges arrive/update (the parent computes them async).
+watch(() => props.changedLines, applyGutter, { deep: true });
 
 // Toggle writability. Leaving edit mode discards any unsaved edits back to the source
 // (the setValue fires onDidChangeModelContent, so the parent's dirty state clears too).
@@ -113,6 +146,7 @@ watch(
     editor?.updateOptions({ readOnly: !on, domReadOnly: !on });
     if (!on && model && model.getValue() !== props.value) model.setValue(props.value);
     if (on) editor?.focus();
+    applyGutter(); // hide the (now line-mismatched) gutter while editing; restore after
   },
 );
 
@@ -144,3 +178,35 @@ onBeforeUnmount(() => {
     :class="ready ? 'opacity-100' : 'opacity-0'"
   />
 </template>
+
+<style scoped>
+/* Dirty-diff gutter markers (VS Code-style) painted in Monaco's line-decorations margin. `:deep`
+   so these reach the decoration elements Monaco creates inside the editor host at runtime. */
+:deep(.dirty-gutter)::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  width: 3px;
+  height: 100%;
+  border-radius: 1px;
+}
+:deep(.dirty-gutter-add)::before {
+  background: #3fb950; /* added lines — green */
+}
+:deep(.dirty-gutter-modify)::before {
+  background: #58a6ff; /* changed lines — blue */
+}
+/* Deleted lines have no line of their own → a small red triangle at the boundary. */
+:deep(.dirty-gutter-delete)::before {
+  left: 1px;
+  top: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 0;
+  transform: translateY(-50%);
+  border-left: 5px solid #f85149;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  background: transparent;
+}
+</style>

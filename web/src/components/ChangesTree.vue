@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef } from "vue";
 import { useI18n } from "vue-i18n";
-import { Check, ChevronRight, FolderOpen, Plus, Undo2 } from "@lucide/vue";
+import { Ban, Check, ChevronRight, Copy, Eye, FolderOpen, Plus, SquarePen, Undo2 } from "@lucide/vue";
 import type { DiffStat as DiffStatT, TreeNode } from "../types";
 import { fileVisual } from "@/lib/file-icons";
 import { fmtCount } from "@/lib/diffstat";
@@ -11,6 +11,13 @@ import { useTreeSelection } from "@/lib/changes-selection";
 import { statusColor } from "@/lib/git-status-colors";
 import DiffStat from "./DiffStat.vue";
 import ExpandTransition from "@/shell/ExpandTransition.vue";
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+} from "@/components/ui/context-menu";
 
 const { t } = useI18n();
 
@@ -45,6 +52,9 @@ const emit = defineEmits<{
   stage: [path: string];
   reveal: [path: string];
   move: [payload: { from: string; toDir: string }];
+  editor: [path: string];
+  gitignore: [path: string];
+  copyPath: [path: string];
 }>();
 
 // Shared collapsed-folder state (provided once by RepoCard; see @/lib/changes-tree).
@@ -227,8 +237,14 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
         <span class="truncate text-[#93939f]">{{ n.name }}</span>
       </button>
       <!-- file row — opens the read-only viewer (spacer keeps it aligned under folders).
-           Wrapped so the hover action buttons are SIBLINGS (button-in-button is invalid). -->
-      <div v-else class="tree-row-cv group/file relative">
+           Wrapped so the hover action buttons are SIBLINGS (button-in-button is invalid).
+           Right-click opens a ContextMenu (same actions as the hover buttons, plus Open / Open in
+           editor / Add to .gitignore / Copy path). Trigger `as-child` merges onto the row wrapper
+           (no extra DOM); the menu Content mounts lazily on right-click, so it's far lighter than an
+           eager per-row Tooltip. -->
+      <ContextMenu v-else>
+        <ContextMenuTrigger as-child>
+          <div class="tree-row-cv group/file relative">
         <button
           type="button"
           draggable="true"
@@ -259,8 +275,8 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
                on top of this slot (see below), matching the checkbox's reserve-space convention. -->
           <span class="mono ml-auto flex shrink-0 items-center gap-1.5">
             <DiffStat v-if="n.stat" :stat="n.stat" show="both" :title="diffTitle(n.stat)" />
-            <span class="w-[74px] shrink-0" aria-hidden="true" />
-            <span class="text-[11px] font-bold" :style="{ color: statusColor(n.status) }">{{
+            <span class="w-[84px] shrink-0" aria-hidden="true" />
+            <span class="pl-1 text-[11px] font-bold" :style="{ color: statusColor(n.status) }">{{
               n.status
             }}</span>
           </span>
@@ -306,7 +322,7 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
              Hidden-until-hover on pointer devices, but always visible on touch (pointer-coarse) —
              phones have no :hover, so hover-only reveal would make them unreachable there. -->
         <div
-          class="absolute top-1/2 right-4 flex -translate-y-1/2 items-center gap-0.5 opacity-0 pointer-coarse:opacity-70 group-hover/file:opacity-100 focus-within:opacity-100"
+          class="absolute top-1/2 right-7 flex -translate-y-1/2 items-center gap-0.5 opacity-0 pointer-coarse:opacity-70 group-hover/file:opacity-100 focus-within:opacity-100"
         >
           <!-- reveal this file's repo in the OS file manager (same convention as "Open with…" → File Explorer/Finder). -->
           <button
@@ -342,7 +358,41 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
             <Undo2 :size="12" />
           </button>
         </div>
-      </div>
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent class="w-52">
+          <ContextMenuItem @select="open(n)">
+            <Eye :size="15" />
+            <span>{{ $t("repo.changes.ctxOpen") }}</span>
+          </ContextMenuItem>
+          <ContextMenuItem @select="emit('editor', n.path)">
+            <SquarePen :size="15" />
+            <span>{{ $t("repo.changes.ctxEditor") }}</span>
+          </ContextMenuItem>
+          <ContextMenuItem @select="emit('reveal', n.path)">
+            <FolderOpen :size="15" />
+            <span>{{ $t("repo.changes.revealAction") }}</span>
+          </ContextMenuItem>
+          <ContextMenuItem @select="emit('copyPath', n.path)">
+            <Copy :size="15" />
+            <span>{{ $t("repo.changes.ctxCopyPath") }}</span>
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem @select="emit('stage', n.path)">
+            <Plus :size="15" />
+            <span>{{ $t("repo.changes.stageAction") }}</span>
+          </ContextMenuItem>
+          <ContextMenuItem @select="emit('gitignore', n.path)">
+            <Ban :size="15" />
+            <span>{{ $t("repo.changes.ctxGitignore") }}</span>
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem variant="destructive" @select="emit('discard', n.path)">
+            <Undo2 :size="15" />
+            <span>{{ $t("repo.discard.action") }}</span>
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
       <!-- children render only while this folder is expanded -->
       <ExpandTransition v-if="n.children && n.children.length" :open="isOpen(n.path)">
         <ChangesTree
@@ -354,6 +404,9 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
           @stage="emit('stage', $event)"
           @reveal="emit('reveal', $event)"
           @move="emit('move', $event)"
+          @editor="emit('editor', $event)"
+          @gitignore="emit('gitignore', $event)"
+          @copy-path="emit('copyPath', $event)"
         />
       </ExpandTransition>
     </template>

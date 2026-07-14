@@ -41,10 +41,20 @@ export function register(app: Hono, { cfg }: Deps): void {
     return (AI_PROVIDERS as readonly string[]).includes(p) ? (p as AiProviderId) : null;
   };
   const ensureAi = (): NonNullable<RepoYetiConfig["ai"]> => (cfg.ai ??= { providers: {} });
-  const aiErr = (c: Context, e: unknown) =>
-    e instanceof AiError
-      ? jsonError(c, e.code as ApiErrorCode, e.message)
-      : jsonError(c, "AI_ERROR", e instanceof Error ? e.message : String(e));
+  const providerLabel = (id: AiProviderId): string => AI_CATALOG.find((e) => e.id === id)?.label ?? id;
+  // Turn a raw AiError into a client message. A 401/403 (AI_AUTH_FAILED) is enriched with WHICH
+  // provider's key failed, so the owner isn't left staring at a bare "invalid or unauthorized key"
+  // wondering what to fix.
+  const aiErr = (c: Context, e: unknown, provider?: AiProviderId) => {
+    if (e instanceof AiError) {
+      if (e.code === "AI_AUTH_FAILED" && provider) {
+        const label = providerLabel(provider);
+        return jsonError(c, e.code as ApiErrorCode, `${label} rejected the API key. Update your ${label} key in Settings → AI.`);
+      }
+      return jsonError(c, e.code as ApiErrorCode, e.message);
+    }
+    return jsonError(c, "AI_ERROR", e instanceof Error ? e.message : String(e));
+  };
 
   // Static provider catalog — safe display metadata (no secrets).
   // Separate endpoint so the UI can cache it independently of per-user settings.
@@ -60,6 +70,7 @@ export function register(app: Hono, { cfg }: Deps): void {
     const ai = ensureAi();
     if (p.data.style != null) ai.style = p.data.style;
     if (typeof p.data.yolo === "boolean") ai.yolo = p.data.yolo;
+    if (typeof p.data.commitEnabled === "boolean") ai.commitEnabled = p.data.commitEnabled;
     if (p.data.defaultProvider !== undefined) {
       const dp = p.data.defaultProvider == null ? undefined : (p.data.defaultProvider as AiProviderId);
       if (dp !== undefined && !resolveApiKey(cfg, dp)) {
@@ -83,8 +94,17 @@ export function register(app: Hono, { cfg }: Deps): void {
       const models = await listModels(provider, apiKey);
       const ai = ensureAi();
       const prev = ai.providers[provider]?.model ?? null;
-      // Keep a still-valid prior choice, else auto-pick one so it works immediately.
-      const model = prev && models.some((m) => m.id === prev) ? prev : (models[0]?.id ?? null);
+      // Auto-pick a model so it works immediately: keep a still-valid prior choice, else the
+      // provider's curated `recommended` model (config.ts AI_CATALOG) when the live list has it,
+      // else the first CHAT model (non-chat models are already filtered out in adapters.ts, so
+      // models[0] is a safe fallback — no more Groq → Whisper default).
+      const recommended = AI_CATALOG.find((e) => e.id === provider)?.recommended;
+      const model =
+        prev && models.some((m) => m.id === prev)
+          ? prev
+          : recommended && models.some((m) => m.id === recommended)
+            ? recommended
+            : (models[0]?.id ?? null);
       // The key bytes go to the OS keychain; config.json (written by saveConfig) keeps only
       // the model. apiKey stays in the in-memory cfg so this running daemon can use it.
       await setSecret(aiKeyName(provider), apiKey);
@@ -93,7 +113,7 @@ export function register(app: Hono, { cfg }: Deps): void {
       saveConfig(cfg);
       return c.json({ ok: true, models, settings: redactAi(cfg) });
     } catch (e) {
-      return aiErr(c, e);
+      return aiErr(c, e, provider);
     }
   });
 
@@ -107,7 +127,7 @@ export function register(app: Hono, { cfg }: Deps): void {
     try {
       return c.json({ ok: true, models: await listModels(provider, apiKey) });
     } catch (e) {
-      return aiErr(c, e);
+      return aiErr(c, e, provider);
     }
   });
 
@@ -176,7 +196,7 @@ export function register(app: Hono, { cfg }: Deps): void {
       );
       return c.json({ ok: true, message, provider, model });
     } catch (e) {
-      return aiErr(c, e);
+      return aiErr(c, e, provider);
     }
   });
 
@@ -211,7 +231,7 @@ export function register(app: Hono, { cfg }: Deps): void {
     } catch (e) {
       // A bad/rejected key is worth surfacing (the owner must fix it); anything else
       // (provider down, garbage response) falls back to the deterministic plan.
-      if (e instanceof AiError && e.code === "AI_AUTH_FAILED") return aiErr(c, e);
+      if (e instanceof AiError && e.code === "AI_AUTH_FAILED") return aiErr(c, e, provider);
       const plan = heuristicPlan(collected.input!);
       return c.json({ ok: true, plan, provider, model, fallback: true });
     }

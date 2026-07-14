@@ -126,6 +126,9 @@ export const DiscardSchema = z.object({ path: nonEmpty });
 // ── stage one file's working-tree change into the index ──────────────────────────────
 export const StageSchema = z.object({ path: nonEmpty });
 
+// ── add one path to the repo's .gitignore (the changes-tree "Add to .gitignore" action) ──
+export const GitignoreAddSchema = z.object({ path: nonEmpty });
+
 // ── remotes (set-url / remove; name defaults to "origin" in the handler) ──────────────
 export const RemoteSetSchema = z.object({ url: nonEmpty, name: z.string().trim().optional() });
 export const RemoteDeleteSchema = z.object({ name: z.string().trim().optional() });
@@ -160,6 +163,7 @@ export const AiSettingsSchema = z.object({
   style: z.enum(["conventional", "concise", "detailed"]).optional(),
   defaultProvider: z.string().nullish(), // provider validity → NOT_CONFIGURED in the handler
   yolo: z.boolean().optional(), // smart-commit: skip the review editor and commit the AI plan
+  commitEnabled: z.boolean().optional(), // whether the AI commit buttons are shown at all
 });
 
 export const ProviderUpdateSchema = z.object({

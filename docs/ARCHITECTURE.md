@@ -497,7 +497,10 @@ These were not in the original briefs; they will bite if ignored.
 4. A local commit on the laptop updates the phone's dirty + ahead counts within 3s via SSE — **no reload**.
 5. From the phone, selecting an identity and tapping Pull runs `git pull` with `GIT_SSH_COMMAND` pointing at
    that identity's key (`IdentitiesOnly=yes`); result (success or structured error) shows within 5s.
-6. Pull on a dirty tree → **409 `DIRTY_WORKING_TREE`** ("resolve at your desk"); pull never executes.
+6. Pull is fast-forward-only and runs even on a dirty tree: it fast-forwards and preserves the local
+   edits when the incoming commits don't touch the uncommitted files, and aborts atomically → **409
+   `WOULD_OVERWRITE`** ("commit or stash first") only when they would be overwritten. A detached HEAD
+   is still refused (**409 `DETACHED_HEAD`**).
 7. Push on a diverged remote → **409 `NON_FAST_FORWARD`**; `--force` → **403** regardless of state.
 8. Any `/api/*` request without an authenticated owner session → **401, empty body** (no version, no
    surface, no data); a Sign-in-with-Connections login by a *different* user → **401 `AUTH_WRONG_OWNER`**.
@@ -1101,8 +1104,10 @@ plumbing.
 
 - **Colours go through semantic tokens** (`success` / `warning` / `info` / `primary` / `destructive`),
   never raw Tailwind palette classes.
-- **Deliberately bespoke, leave alone:** `web/src/components/FileViewer.vue` (resizable Monaco) and
-  `src/config.ts`'s `BUILTIN_GROQ_KEY` (a real, intentionally-public throwaway key — never scrub it).
+- **Deliberately bespoke, leave alone:** `web/src/components/FileViewer.vue` (resizable Monaco).
+- **AI is bring-your-own-key** — no bundled key (Groq revokes any key committed to a public repo, so a
+  shipped one is dead on arrival). Owners add their own in Settings → AI; Groq is the *suggested*
+  provider (`AI_CATALOG` `suggested` flag). Keys live in the OS keychain, never in `config.json`.
 
 ### 16.3 A few pieces stay app-specific by design
 

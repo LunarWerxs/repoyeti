@@ -52,7 +52,7 @@ test("POST /branch creates (201), rejects duplicate (409) and invalid name (400)
   expect((await bad.json()).code).toBe("INVALID_REF_NAME");
 });
 
-test("POST /checkout switches on a clean tree, 409s on a dirty one", async () => {
+test("POST /checkout switches on a clean tree, and carries a non-conflicting dirty tree", async () => {
   const { dir, id } = await repoWithId();
   const app = createApp(localCfg());
   await app.request(`/api/repos/${id}/branch`, J({ name: "dev", switch: false }));
@@ -61,10 +61,11 @@ test("POST /checkout switches on a clean tree, 409s on a dirty one", async () =>
   expect(ok.status).toBe(200);
   expect((await ok.json()).ok).toBe(true);
 
+  // "dev" and "main" sit at the same commit, so a dirty seed.txt carries over cleanly.
   writeFileSync(join(dir, "seed.txt"), "dirty\n");
   const dirty = await app.request(`/api/repos/${id}/checkout`, J({ branch: "main" }));
-  expect(dirty.status).toBe(409);
-  expect((await dirty.json()).code).toBe("DIRTY_WORKING_TREE");
+  expect(dirty.status).toBe(200);
+  expect((await dirty.json()).ok).toBe(true);
 });
 
 test("DELETE /branch removes a merged branch and refuses a protected one", async () => {

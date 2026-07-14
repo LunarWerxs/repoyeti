@@ -43,7 +43,19 @@ const hasUpstream = computed(() => isLore.value || hasRemote.value);
 // AI commit message + smart-commit are now VCS-agnostic (the daemon's VcsBackend collects the
 // diff / stages groups via `lore diff` / `lore stage`+`lore commit` for Lore), so they're shown
 // whenever AI is enabled, on git and Lore alike.
-const aiHere = computed(() => store.aiEnabled);
+// The AI commit buttons (✨ Generate + Auto) are shown when the owner leaves AI commit messages
+// enabled (default on) — NOT gated on having a key. Clicking with no usable provider nudges them
+// to add one (see the aiUsable guard in generate/runSmart).
+const aiHere = computed(() => store.aiCommitEnabled);
+// True once a provider + model is actually connected — AI can really run.
+const aiUsable = computed(() => store.aiUsable);
+/** Guard the AI actions: if no key is connected, tell the owner how to fix it (or hide the button).
+ *  Returns true when it's safe to proceed. */
+function ensureAiUsable(): boolean {
+  if (aiUsable.value) return true;
+  toast.error(t("repo.commit.noAiKey"), { description: t("repo.commit.noAiKeyHint") });
+  return false;
+}
 const selectedCount = computed(() => props.treeSelection.count.value); // a ComputedRef → auto-unwraps in template
 
 // ── commit (stage-all + commit, optional AI draft) ────────────────────────────
@@ -70,6 +82,7 @@ function onSmartCommitted(): void {
 const smartSync = ref(false);
 /** The Smart Commit button: open the review editor, or run YOLO if the owner enabled it. */
 function runSmart(sync = false): void {
+  if (!ensureAiUsable()) return;
   smartSync.value = sync;
   if (store.aiSettings.yolo) void runYolo(sync);
   else smartOpen.value = true;
@@ -121,6 +134,7 @@ async function loadRecentMsgs(): Promise<void> {
 }
 
 async function generate(): Promise<void> {
+  if (!ensureAiUsable()) return;
   generating.value = true;
   try {
     commitMsg.value = await store.genCommitMessage(props.repo.id);
@@ -312,8 +326,11 @@ defineExpose({ loadRecentMsgs, recentMsgs });
         </DropdownMenu>
       </div>
       <!-- Smart-commit (AI multi-commit split): inline "Auto" split button, right of Commit.
-           The chevron mirrors the regular Commit dropdown — plain vs. commit-and-sync. -->
-      <div v-if="aiHere && st && st.dirty > 1" class="flex">
+           The chevron mirrors the regular Commit dropdown — plain vs. commit-and-sync. Shown for
+           ANY dirty repo (dirty > 0) so it stays consistent across every card — with a single file
+           it just AI-drafts that one commit; the >1 threshold used to hide it on 1-file repos,
+           which read as "the button randomly went missing". -->
+      <div v-if="aiHere && st && st.dirty > 0" class="flex">
         <Tooltip>
           <TooltipTrigger as-child>
             <Button

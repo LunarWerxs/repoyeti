@@ -1,6 +1,7 @@
 import type { Hono } from "hono";
 import type { Deps } from "../deps.ts";
 import { jsonError } from "../../contract.ts";
+import { saveConfig } from "../../config.ts";
 import { parseBody, IdentityCreateSchema, IdentityUpdateSchema } from "../../schemas.ts";
 import {
   listIdentities,
@@ -13,14 +14,50 @@ import {
 } from "../../db.ts";
 import { detectIdentities } from "../../identity-detect.ts";
 
-export function register(app: Hono, _deps: Deps): void {
+export function register(app: Hono, { cfg }: Deps): void {
   // ── identities (CRUD) ──────────────────────────────────────────────────────
   app.get("/api/identities", (c) => c.json({ identities: listIdentities() }));
-  app.get("/api/identities/detected", async (c) =>
-    c.json({
-      detected: await detectIdentities(getWatchableRepos().map((r) => ({ name: r.name, absPath: r.absPath }))),
-    }),
-  );
+  // Detected suggestions from the machine (git config / SSH / gh), split into what's shown vs what
+  // the owner dismissed — detection re-reads live state, so the dismiss list is the only thing that
+  // makes a "deleted" suggestion stay gone. Returning the DISMISSED items (not just a count) lets
+  // the UI show them for review + per-item restore.
+  app.get("/api/identities/detected", async (c) => {
+    const dismissed = new Set(cfg.dismissedIdentities ?? []);
+    const all = await detectIdentities(getWatchableRepos().map((r) => ({ name: r.name, absPath: r.absPath })));
+    return c.json({
+      detected: all.filter((d) => !dismissed.has(d.id)),
+      dismissed: all.filter((d) => dismissed.has(d.id)),
+    });
+  });
+
+  // Dismiss a detected suggestion (by its stable id) so it stops re-appearing on every refresh.
+  app.post("/api/identities/detected/:id/dismiss", (c) => {
+    const id = c.req.param("id");
+    if (!id) return jsonError(c, "BAD_REQUEST", "missing detected-identity id");
+    const list = new Set(cfg.dismissedIdentities ?? []);
+    list.add(id);
+    cfg.dismissedIdentities = [...list];
+    saveConfig(cfg);
+    return c.json({ ok: true, dismissedCount: cfg.dismissedIdentities.length });
+  });
+
+  // Un-dismiss ONE suggestion (the temporary-undo path + per-item restore in the dismissed list).
+  app.post("/api/identities/detected/:id/restore", (c) => {
+    const id = c.req.param("id");
+    if (!id) return jsonError(c, "BAD_REQUEST", "missing detected-identity id");
+    if (cfg.dismissedIdentities?.length) {
+      cfg.dismissedIdentities = cfg.dismissedIdentities.filter((d) => d !== id);
+      saveConfig(cfg);
+    }
+    return c.json({ ok: true, dismissedCount: cfg.dismissedIdentities?.length ?? 0 });
+  });
+
+  // Un-dismiss everything — bring all previously-dismissed suggestions back.
+  app.post("/api/identities/detected/restore", (c) => {
+    cfg.dismissedIdentities = [];
+    saveConfig(cfg);
+    return c.json({ ok: true });
+  });
 
   app.post("/api/identities", async (c) => {
     const p = await parseBody(c, IdentityCreateSchema);

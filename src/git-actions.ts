@@ -1,7 +1,8 @@
 /**
  * Safe remote git actions — fetch / pull / push — with the non-negotiable guards:
- *  - The daemon NEVER leaves a repo half-merged. Pull is fast-forward-only and is
- *    refused outright on a dirty tree or detached HEAD ("resolve at your desk").
+ *  - The daemon NEVER leaves a repo half-merged. Pull is fast-forward-only: it runs even on a
+ *    dirty tree (git aborts atomically as WOULD_OVERWRITE if your edits would be overwritten,
+ *    otherwise the fast-forward preserves them) and is refused only on a detached HEAD.
  *  - Push is never `--force`. A non-fast-forward push is reported, not forced.
  *  - Every failure maps to a stable, first-class error code the UI can render.
  *

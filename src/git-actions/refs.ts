@@ -105,18 +105,18 @@ export function isValidBranchName(name: string): boolean {
 }
 
 /**
- * Switch to an existing branch. Guarded exactly like pull: refused on a dirty working
- * tree ("resolve at your desk") so a checkout can never carry changes into a conflict.
- * Uses `git switch`, which refuses to silently detach onto a remote-tracking ref (it will
- * dwim-create a local tracking branch for an unambiguous `origin/<name>`, which is safe).
+ * Switch to an existing branch. Like pull, this lets git decide instead of pre-refusing: `git
+ * switch` carries your uncommitted edits onto the target branch when they don't collide, and
+ * aborts atomically (WOULD_OVERWRITE, "commit or stash first", classified in sync.ts) only when a
+ * file the switch must change is dirty. So a clean-enough dirty tree switches fine, matching how
+ * create-and-switch already carries edits (see gitCreateBranch). `git switch` also refuses to
+ * silently detach onto a remote-tracking ref (it will dwim-create a local tracking branch for an
+ * unambiguous `origin/<name>`, which is safe).
  */
 export async function gitCheckout(absPath: string, branch: string): Promise<ActionResult> {
   if (!isValidBranchName(branch)) return fail("INVALID_REF_NAME", "invalid branch name");
   const pre = await readStatus(absPath);
   if (pre.error) return fail("ERROR", pre.error);
-  if (pre.dirty > 0) {
-    return fail("DIRTY_WORKING_TREE", "working tree has uncommitted changes — stash or resolve at your desk");
-  }
   if (pre.branch === branch) return ok("already on branch");
   try {
     await gitFor(absPath).raw(["switch", branch]);
@@ -187,10 +187,10 @@ export async function gitDeleteBranch(absPath: string, name: string): Promise<Ac
 const stashRef = (index: number): string => `stash@{${Math.max(0, Math.floor(index))}}`;
 
 /**
- * Stash the working tree (including untracked files) — the phone-side escape from the
- * "dirty tree blocks pull" dead-end: stash → pull → pop. Always safe (a save can never
- * conflict). Refuses a clean tree (nothing to stash). Attributed to the repo's identity so
- * the stash commit objects carry the right author.
+ * Stash the working tree (including untracked files) — the phone-side escape when an
+ * uncommitted edit overlaps an incoming update and the pull stops with WOULD_OVERWRITE:
+ * stash → pull → pop. Always safe (a save can never conflict). Refuses a clean tree (nothing
+ * to stash). Attributed to the repo's identity so the stash commit objects carry the right author.
  */
 export async function gitStashSave(
   absPath: string,

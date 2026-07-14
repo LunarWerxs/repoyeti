@@ -37,8 +37,6 @@ interface Row {
   connecting: boolean;
   loadingModels: boolean;
   confirmRemove: boolean;
-  /** Built-in provider only: reveal the "bring your own key" input instead of the built-in note. */
-  useOwnKey: boolean;
   models: AiModel[];
 }
 const blank = (): Row => ({
@@ -47,7 +45,6 @@ const blank = (): Row => ({
   connecting: false,
   loadingModels: false,
   confirmRemove: false,
-  useOwnKey: false,
   models: [],
 });
 const rows = reactive<Record<string, Row>>({});
@@ -62,13 +59,18 @@ const isConfigured = (id: AiProviderId): boolean => !!settings.value.providers[i
 // Y5: the YOLO/style rows below act on AI-generated commit messages, moot with zero
 // providers connected, so collapse them away entirely rather than show dead controls.
 const anyProviderConfigured = computed(() => Object.keys(settings.value.providers).length > 0);
-/** Groq served by the free built-in key (owner hasn't pasted their own key for it). */
-const isBuiltin = (id: AiProviderId): boolean => settings.value.providers[id]?.builtin === true;
 const savedModel = (id: AiProviderId): string | null => settings.value.providers[id]?.model ?? null;
 const nameOf = (id: AiProviderId): string => PROVIDERS.value.find((p) => p.id === id)?.label ?? id;
 
 function modelOptions(id: AiProviderId): { label: string; value: string }[] {
-  const opts = rowFor(id).models.map((m) => ({ label: m.label || m.id, value: m.id }));
+  // Mark the provider's curated `recommended` model (config.ts AI_CATALOG) when the live list has
+  // it — a suffix rather than a separate badge because shadcn's SelectItem wraps the whole slot in
+  // SelectItemText (so the trigger mirrors it too, which is fine: the picked model reads as such).
+  const rec = PROVIDERS.value.find((p) => p.id === id)?.recommended;
+  const opts = rowFor(id).models.map((m) => {
+    const label = m.label || m.id;
+    return { label: m.id === rec ? `${label} · ${t("settings.recommended")}` : label, value: m.id };
+  });
   const sel = savedModel(id);
   if (sel && !opts.some((o) => o.value === sel)) opts.unshift({ label: sel, value: sel });
   return opts;
@@ -80,8 +82,7 @@ watch(
   (isOpen) => {
     if (!isOpen) return;
     for (const p of PROVIDERS.value) {
-      // The built-in provider shows no model picker, so it needs no model list.
-      if (isConfigured(p.id) && !isBuiltin(p.id) && rowFor(p.id).models.length === 0) {
+      if (isConfigured(p.id) && rowFor(p.id).models.length === 0) {
         void refreshModels(p.id);
       }
     }
@@ -98,7 +99,6 @@ async function connect(id: AiProviderId): Promise<void> {
     const models = await store.connectProvider(id, key);
     row.models = models;
     row.keyInput = "";
-    row.useOwnKey = false; // now owner-keyed → show the normal model picker
     toast.success(t("settings.toastConnected", { name: nameOf(id), count: models.length }, models.length));
   } catch (e) {
     toast.error(e instanceof ApiError ? e.message : t("settings.toastConnectFailed"));
@@ -145,6 +145,15 @@ async function remove(id: AiProviderId): Promise<void> {
   }
 }
 
+// Toggle whether the AI commit buttons (Generate + Auto) show on repo cards at all.
+async function onCommitEnabled(enabled: boolean): Promise<void> {
+  try {
+    await store.setCommitEnabled(enabled);
+  } catch {
+    toast.error(t("settings.aiCommitEnableFailed"));
+  }
+}
+
 // Toggle smart-commit YOLO mode (commit the AI plan without the review editor).
 async function onYolo(enabled: boolean): Promise<void> {
   try {
@@ -167,6 +176,18 @@ async function onStyle(style: string): Promise<void> {
 <template>
   <!-- AI commit messages ──────────────────────────────────────── -->
   <SettingsGroup :label="$t('settings.cardAi')" :description="$t('settings.aiDescription')">
+    <!-- Master toggle: show the AI commit buttons at all (default on, even with no key). -->
+    <SettingsRow :label="$t('settings.aiCommitEnable')">
+      <template #info><InfoHint :text="$t('settings.aiCommitEnableHint')" /></template>
+      <template #control>
+        <Switch
+          :model-value="store.aiCommitEnabled"
+          :aria-label="$t('settings.aiCommitEnable')"
+          @update:model-value="(v: boolean) => onCommitEnabled(v)"
+        />
+      </template>
+    </SettingsRow>
+
     <!-- Providers -->
     <div class="flex flex-col gap-1.5 px-3.5 py-3">
       <span class="text-[12px] text-muted-foreground">{{ $t("settings.providers") }}</span>
@@ -184,18 +205,18 @@ async function onStyle(style: string): Promise<void> {
             <div class="flex min-w-0 items-center gap-2">
               <span class="truncate text-[13px] font-semibold">{{ p.label }}</span>
               <Badge
-                v-if="isBuiltin(p.id)"
-                variant="info"
-                class="px-1.5 py-0 text-[10px]"
-              >
-                {{ $t("settings.badgeBuiltin") }}
-              </Badge>
-              <Badge
-                v-else-if="isConfigured(p.id)"
+                v-if="isConfigured(p.id)"
                 variant="success"
                 class="gap-1 px-1.5 py-0 text-[10px]"
               >
                 <Check :size="10" /> {{ $t("settings.badgeActive") }}
+              </Badge>
+              <Badge
+                v-else-if="p.suggested"
+                variant="info"
+                class="px-1.5 py-0 text-[10px]"
+              >
+                {{ $t("settings.badgeSuggested") }}
               </Badge>
               <Badge
                 v-if="settings.defaultProvider === p.id"
@@ -214,15 +235,16 @@ async function onStyle(style: string): Promise<void> {
 
           <CollapsibleContent>
             <div class="flex flex-col gap-2.5 border-t border-border/60 px-3 py-3">
-              <!-- tier + provider link -->
+              <!-- tier + provider link. The "Free tier available" badge is a catalog fact about the
+                   VENDOR (they offer a no-cost tier) — NOT a statement about the owner's key/plan —
+                   so an InfoHint spells that out (owners kept reading it as "only free tier works"). -->
               <div class="flex items-center justify-between gap-2">
-                <Badge
-                  v-if="p.free"
-                  variant="success"
-                  class="px-1.5 py-0 text-[10px]"
-                >
-                  {{ $t("settings.badgeFreeTier") }}
-                </Badge>
+                <span v-if="p.free" class="flex items-center gap-1">
+                  <Badge variant="success" class="px-1.5 py-0 text-[10px]">
+                    {{ $t("settings.badgeFreeTier") }}
+                  </Badge>
+                  <InfoHint :text="$t('settings.freeTierHint')" />
+                </span>
                 <a
                   :href="`https://${p.url}`"
                   target="_blank"
@@ -231,63 +253,36 @@ async function onStyle(style: string): Promise<void> {
                 >{{ p.url }}</a>
               </div>
 
-              <!-- built-in free key (Groq, zero setup) → use as-is or switch to your own key -->
-              <div v-if="isBuiltin(p.id) && !rowFor(p.id).useOwnKey" class="flex flex-col gap-2.5">
-                <div class="text-[12px] text-muted-foreground">
-                  {{ $t("settings.builtinKeyNote") }}
-                  <span class="mono text-foreground">{{ savedModel(p.id) }}</span>
-                </div>
+              <!-- not configured → bring your own key. For the suggested provider (Groq), a short
+                   nudge: it's free + fast and takes ~30s, so a fresh install has an obvious path. -->
+              <div v-if="!isConfigured(p.id)" class="flex flex-col gap-2.5">
+                <p v-if="p.suggested" class="text-[12px] text-muted-foreground">
+                  {{ $t("settings.suggestedNudge") }}
+                  <a
+                    :href="`https://${p.url}`"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="text-primary underline-offset-2 hover:underline"
+                  >{{ p.url }}</a>
+                </p>
                 <div class="flex items-center gap-2">
+                  <Input
+                    v-model="rowFor(p.id).keyInput"
+                    type="password"
+                    class="flex-1"
+                    :aria-label="`${p.label} API key`"
+                    :placeholder="p.keyPlaceholder"
+                    @keyup.enter="connect(p.id)"
+                  />
                   <Button
-                    v-if="settings.defaultProvider !== p.id"
-                    variant="secondary"
                     size="sm"
-                    @click="makeDefault(p.id)"
-                  >
-                    {{ $t("settings.btnSetDefault") }}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    class="ml-auto text-muted-foreground"
-                    @click="rowFor(p.id).useOwnKey = true"
+                    :disabled="!rowFor(p.id).keyInput.trim() || rowFor(p.id).connecting"
+                    @click="connect(p.id)"
                   >
                     <Link2 />
-                    {{ $t("settings.btnUseOwnKey") }}
+                    {{ $t("settings.btnConnect") }}
                   </Button>
                 </div>
-              </div>
-
-              <!-- not configured (or "use your own key" on the built-in) → paste a key and connect -->
-              <div
-                v-else-if="!isConfigured(p.id) || (isBuiltin(p.id) && rowFor(p.id).useOwnKey)"
-                class="flex items-center gap-2"
-              >
-                <Input
-                  v-model="rowFor(p.id).keyInput"
-                  type="password"
-                  class="flex-1"
-                  :aria-label="`${p.label} API key`"
-                  :placeholder="p.keyPlaceholder"
-                  @keyup.enter="connect(p.id)"
-                />
-                <Button
-                  size="sm"
-                  :disabled="!rowFor(p.id).keyInput.trim() || rowFor(p.id).connecting"
-                  @click="connect(p.id)"
-                >
-                  <Link2 />
-                  {{ $t("settings.btnConnect") }}
-                </Button>
-                <Button
-                  v-if="isBuiltin(p.id) && rowFor(p.id).useOwnKey"
-                  variant="ghost"
-                  size="icon-sm"
-                  :aria-label="$t('common.cancel')"
-                  @click="rowFor(p.id).useOwnKey = false; rowFor(p.id).keyInput = ''"
-                >
-                  <X />
-                </Button>
               </div>
 
               <!-- owner-configured → choose a model, set default, or remove -->

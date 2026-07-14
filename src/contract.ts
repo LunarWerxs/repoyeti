@@ -20,6 +20,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 export type ApiErrorCode =
   // ── git action guards (mirror git-actions.ts) ──
   | "DIRTY_WORKING_TREE"
+  | "WOULD_OVERWRITE"
   | "NON_FAST_FORWARD"
   | "DETACHED_HEAD"
   | "NO_UPSTREAM"
@@ -152,6 +153,7 @@ export function statusForCode(code: ApiCode): ContentfulStatusCode {
       return 404;
     // 409 — the repo/owner state conflicts with the request ("resolve at your desk").
     case "DIRTY_WORKING_TREE":
+    case "WOULD_OVERWRITE":
     case "NON_FAST_FORWARD":
     case "DETACHED_HEAD":
     case "NO_UPSTREAM":

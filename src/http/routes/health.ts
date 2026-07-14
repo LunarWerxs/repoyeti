@@ -53,8 +53,15 @@ import {
   getApprovalTimeoutSecs,
   setApprovalGateEnabled,
   setApprovalTimeoutSecs,
+  autoDenyIsEnabled,
+  autoApproveIsEnabled,
+  getApproveTimeoutSecs,
+  setAutoDenyEnabled,
+  setAutoApproveEnabled,
+  setApproveTimeoutSecs,
 } from "../../approvals.ts";
 import { isKnownEditor } from "../../service/index.ts";
+import { invalidAiKeys } from "../../ai-keycheck.ts";
 
 /**
  * Resolve `loreServersEnabled`, deriving + persisting a one-time default on first read so
@@ -130,9 +137,16 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       // so it can act on it live, not just at boot — this is just what Settings reflects on load.
       hideTrayIcon: cfg.hideTrayIcon === true,
       // ⭐ Agent Safety Rail: whether mutating MCP tool calls are gated behind a human
-      // approve/deny (owner setting; default ON), and the auto-deny timeout in seconds.
+      // approve/deny (owner setting; default ON), the auto-deny/-approve toggles, and their
+      // timeouts in seconds.
       mcpApprovalGate: approvalGateEnabled(),
       mcpApprovalTimeoutSecs: getApprovalTimeoutSecs(),
+      mcpAutoDeny: autoDenyIsEnabled(),
+      mcpAutoApprove: autoApproveIsEnabled(),
+      mcpAutoApproveTimeoutSecs: getApproveTimeoutSecs(),
+      // Providers whose AI key the boot-time liveness check found dead — so a dashboard that opens
+      // AFTER boot still raises the "AI key problem" notification, not just one connected at boot.
+      aiKeyInvalid: invalidAiKeys(),
       // "Open with…" default external editor id (null = auto-pick the first installed). The
       // catalogue + per-machine availability come from GET /api/editors.
       defaultEditor: cfg.defaultEditor ?? null,
@@ -290,6 +304,24 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       saveConfig(cfg);
       broadcast("settings_changed", { mcpApprovalTimeoutSecs: cfg.mcpApprovalTimeoutSecs });
     }
+    if (typeof b.mcpAutoDeny === "boolean") {
+      cfg.mcpAutoDeny = b.mcpAutoDeny;
+      setAutoDenyEnabled(b.mcpAutoDeny);
+      saveConfig(cfg);
+      broadcast("settings_changed", { mcpAutoDeny: cfg.mcpAutoDeny });
+    }
+    if (typeof b.mcpAutoApprove === "boolean") {
+      cfg.mcpAutoApprove = b.mcpAutoApprove;
+      setAutoApproveEnabled(b.mcpAutoApprove);
+      saveConfig(cfg);
+      broadcast("settings_changed", { mcpAutoApprove: cfg.mcpAutoApprove });
+    }
+    if (typeof b.mcpAutoApproveTimeoutSecs === "number" && Number.isFinite(b.mcpAutoApproveTimeoutSecs)) {
+      // setApproveTimeoutSecs clamps to [10, 3600] → persist the clamped value.
+      cfg.mcpAutoApproveTimeoutSecs = setApproveTimeoutSecs(b.mcpAutoApproveTimeoutSecs);
+      saveConfig(cfg);
+      broadcast("settings_changed", { mcpAutoApproveTimeoutSecs: cfg.mcpAutoApproveTimeoutSecs });
+    }
     // "Open with…" default editor. An empty string clears the preference (auto-pick the first
     // installed editor); any other value must be a known catalog id, else it's ignored.
     if (typeof b.defaultEditor === "string") {
@@ -323,6 +355,9 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       hideTrayIcon: cfg.hideTrayIcon === true,
       mcpApprovalGate: approvalGateEnabled(),
       mcpApprovalTimeoutSecs: getApprovalTimeoutSecs(),
+      mcpAutoDeny: autoDenyIsEnabled(),
+      mcpAutoApprove: autoApproveIsEnabled(),
+      mcpAutoApproveTimeoutSecs: getApproveTimeoutSecs(),
       defaultEditor: cfg.defaultEditor ?? null,
     });
   });

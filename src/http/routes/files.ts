@@ -2,10 +2,11 @@ import type { Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { Deps } from "../deps.ts";
 import { jsonError, statusForCode, type ApiErrorCode } from "../../contract.ts";
-import { parseBody, DiscardSchema, StageSchema } from "../../schemas.ts";
+import { parseBody, DiscardSchema, StageSchema, GitignoreAddSchema } from "../../schemas.ts";
 import {
   discardFile,
   stageFile,
+  addToGitignore,
   getChanges,
   searchChangedContent,
   readFileContent,
@@ -119,6 +120,23 @@ export function register(app: Hono, { cfg }: Deps): void {
     const result = await stageFile(id, p.data.path);
     if (result.ok) return c.json(result);
     const status: ContentfulStatusCode = result.code === "NOT_FOUND" ? 404 : statusForCode(result.code as ApiErrorCode);
+    return c.json(result, status);
+  });
+
+  // Append a path to the repo's .gitignore (the changes-tree "Add to .gitignore" action). Mutating
+  // (writes .gitignore) → same remote-editing gate as file writes/discard/move. The path is
+  // normalised + confined to the repo inside addToGitignore.
+  app.post("/api/repos/:id/gitignore", async (c) => {
+    const id = requireId(c);
+    if (id instanceof Response) return id;
+    const blocked = remoteEditingBlocked(c, cfg);
+    if (blocked) return blocked;
+    const p = await parseBody(c, GitignoreAddSchema);
+    if (!p.ok) return p.res;
+    const result = await addToGitignore(id, p.data.path);
+    if (result.ok) return c.json(result);
+    const status: ContentfulStatusCode =
+      result.code === "NOT_FOUND" ? 404 : result.code === "UNSUPPORTED" ? 400 : statusForCode(result.code as ApiErrorCode);
     return c.json(result, status);
   });
 

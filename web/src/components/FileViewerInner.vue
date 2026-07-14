@@ -16,6 +16,7 @@ import {
   ExternalLink,
   WrapText,
   WholeWord,
+  Highlighter,
 } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { t } from "@/i18n";
@@ -40,11 +41,13 @@ import {
   wordLevelDiff,
   wordWrap,
   diffSplitView,
+  dirtyDiffGutter,
   editorDirty,
   confirmDiscardEdits,
   type ViewerMode,
   type ViewerTarget,
 } from "@/lib/file-viewer";
+import { diffLineChanges, type LineChange } from "@/lib/line-diff";
 import { useStore } from "@/store";
 
 const props = withDefaults(
@@ -229,6 +232,57 @@ watch(
   { immediate: true },
 );
 
+// ── dirty-diff gutter (Content mode) ────────────────────────────────────────────
+// VS Code-style: even with the Diff tab off, mark changed lines in the Content view's gutter. The
+// primary content fetch stays as-is (fast); this pulls HEAD↔working in the BACKGROUND only when it's
+// meaningful (a changed working-tree file, gutter pref on, full text in hand) and computes the line
+// ranges client-side. A large-file compact patch is skipped (no whole-file text to line up).
+const changedLines = ref<LineChange[]>([]);
+let gutterToken = 0;
+watch(
+  () =>
+    [
+      viewerMode.value,
+      content.value,
+      dirtyDiffGutter.value,
+      props.target?.repoId,
+      props.target?.path,
+      props.target?.status,
+      props.target?.commit,
+      fromHead.value,
+      binary.value,
+      truncated.value,
+    ] as const,
+  async () => {
+    const tgt = props.target;
+    const eligible =
+      !!tgt &&
+      dirtyDiffGutter.value &&
+      viewerMode.value === "content" &&
+      !tgt.commit &&
+      !!tgt.status &&
+      tgt.status !== "D" &&
+      !fromHead.value &&
+      !binary.value &&
+      !truncated.value &&
+      !!content.value;
+    if (!eligible) {
+      changedLines.value = [];
+      return;
+    }
+    const token = ++gutterToken;
+    try {
+      const res = await api.fileDiff(tgt.repoId, tgt.path);
+      if (token !== gutterToken) return; // superseded by a newer open/toggle
+      // Compact-patch (large file) has no whole-file original to diff against the shown text.
+      changedLines.value = res.mode === "patch" ? [] : diffLineChanges(res.original ?? "", content.value);
+    } catch {
+      if (token === gutterToken) changedLines.value = [];
+    }
+  },
+  { immediate: true },
+);
+
 // ── edit actions ──────────────────────────────────────────────────────────────
 // Switch Content↔Diff, prompting first if there are unsaved edits to discard.
 async function requestMode(m: ViewerMode): Promise<void> {
@@ -406,6 +460,11 @@ onBeforeUnmount(() => {
             {{ $t("fileViewer.wordWrap") }}
             <Check v-if="wordWrap" :size="14" class="ml-auto text-primary" />
           </DropdownMenuItem>
+          <DropdownMenuItem v-if="viewerMode === 'content'" @select.prevent="dirtyDiffGutter = !dirtyDiffGutter">
+            <Highlighter :size="14" />
+            {{ $t("fileViewer.dirtyGutter") }}
+            <Check v-if="dirtyDiffGutter" :size="14" class="ml-auto text-primary" />
+          </DropdownMenuItem>
           <DropdownMenuItem v-if="diffEditable" @select.prevent="wordLevelDiff = !wordLevelDiff">
             <WholeWord :size="14" />
             {{ $t("fileViewer.wordDiff") }}
@@ -508,6 +567,7 @@ onBeforeUnmount(() => {
             :theme="editorTheme"
             :editable="editing"
             :word-wrap="wordWrap"
+            :changed-lines="viewerMode === 'content' ? changedLines : []"
             @change="onEditorChange"
           />
         </div>

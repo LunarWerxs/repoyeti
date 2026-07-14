@@ -28,6 +28,7 @@ import { refreshRepo, startWatching, watchOne, stopWatching } from "../service/i
 import { startRemoteSync, stopRemoteSync } from "../remote-sync.ts";
 import { startAutoCommit, stopAutoCommit } from "../auto-commit.ts";
 import { startAutoUpdate, stopAutoUpdate, setAutoUpdateHooks } from "../auto-update.ts";
+import { checkAiKeys } from "../ai-keycheck.ts";
 import { broadcast } from "../bus.ts";
 import { setServerPort, startManagedTunnel, stopManagedTunnel } from "../runtime.ts";
 import {
@@ -288,6 +289,12 @@ export async function start(rest: string[]): Promise<void> {
     },
   });
   startAutoUpdate();
+
+  // 6e) best-effort AI key liveness check (owner-keyed providers only). A key that went dead
+  //     between runs surfaces as a dashboard notification now, instead of a cryptic failure at the
+  //     owner's next "Generate". Fire-and-forget — it runs after the server is already up (above),
+  //     never blocks boot, and only a confirmed auth failure raises a notification.
+  void checkAiKeys(liveCfg);
 
   // 7) discover the filesystem in the BACKGROUND — index/watch/refresh each repo as it's
   //    found and broadcast `repo_added` so the dashboard fills in live. A huge or slow root

@@ -21,7 +21,7 @@ defineProps<{ connected: boolean; repoCount: number }>();
 const emit = defineEmits<{
   reload: [];
   add: [];
-  settings: [mode: "toggle" | "open"];
+  settings: [mode: "toggle" | "open", tab?: string];
   remote: [];
 }>();
 
@@ -47,9 +47,12 @@ function toggleNotif(): void {
     store.markNotificationsRead();
   }
 }
-function openScanFromNotif(): void {
+// A bell entry's click routes by its `kind`: "ai-key" → open Settings on the Automation tab (where
+// AI providers live), everything else (the scan "new projects" entry) → the scan modal.
+function onNotifClick(n: { kind?: "scan" | "ai-key" }): void {
   notifOpen.value = false;
-  store.scanOpen = true;
+  if (n.kind === "ai-key") emit("settings", "open", "automation");
+  else store.scanOpen = true;
 }
 
 function firstFetchFailureDescription(failed: Array<{ name: string; code: string }>): string | undefined {
@@ -342,7 +345,7 @@ onBeforeUnmount(() => {
                 type="button"
                 role="menuitem"
                 class="flex w-full flex-col items-start gap-0.5 rounded-sm px-2 py-2 text-left outline-hidden transition-colors hover:bg-accent focus:bg-accent"
-                @click="openScanFromNotif"
+                @click="onNotifClick(n)"
               >
                 <span class="text-[13px] font-medium text-foreground">{{ n.title }}</span>
                 <span v-if="n.body" class="text-[12px] text-muted-foreground">{{ n.body }}</span>
@@ -493,6 +496,7 @@ onBeforeUnmount(() => {
               type="button"
               role="menuitem"
               :disabled="cleaningUpMissing"
+              :title="$t('header.cleanupMissingTooltip')"
               class="relative flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-hidden transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0"
               @click="cleanupMissing"
             >

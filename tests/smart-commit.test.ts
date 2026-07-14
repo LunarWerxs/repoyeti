@@ -19,10 +19,6 @@ import type { RepoYetiConfig } from "../src/config.ts";
 import type { Identity } from "../src/db.ts";
 import { mkScratchDir } from "./helpers/scratch.ts";
 
-// Force the built-in Groq key OFF so "no provider configured" is deterministic regardless of
-// any REPOYETI_BUILTIN_GROQ_KEY in a dev .env (mirrors tests/ai.test.ts).
-process.env.REPOYETI_BUILTIN_GROQ_KEY = "";
-
 const ID: Identity = { id: "x", displayName: "T", gitUsername: "Tester", gitEmail: "t@test.io", sshKeyPath: null };
 const localCfg = (): RepoYetiConfig => ({ roots: [], port: 7171, maxDepth: 6, maxRepos: 200 });
 const J = (body: unknown) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });

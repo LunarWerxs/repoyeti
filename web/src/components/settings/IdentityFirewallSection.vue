@@ -102,6 +102,15 @@ async function save(): Promise<void> {
           </Button>
         </div>
       </div>
+      <!-- No saved git identities yet → a rule has nothing to pin to. Say so (and why the Add
+           button below is disabled) instead of leaving it looking broken. -->
+      <div
+        v-else-if="!store.identities.length"
+        class="flex items-start gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-[12px] text-muted-foreground"
+      >
+        <ShieldAlert :size="14" class="mt-0.5 shrink-0" />
+        <span>{{ $t("identity.firewall.needIdentityFirst") }}</span>
+      </div>
       <div
         v-else
         class="flex items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-[12px] text-muted-foreground"
@@ -111,7 +120,13 @@ async function save(): Promise<void> {
       </div>
 
       <div class="flex items-center gap-2">
-        <Button variant="outline" size="sm" :disabled="!store.identities.length" @click="addRow">
+        <Button
+          variant="outline"
+          size="sm"
+          :disabled="!store.identities.length"
+          :title="!store.identities.length ? $t('identity.firewall.needIdentityFirst') : undefined"
+          @click="addRow"
+        >
           <Plus />
           {{ $t("identity.firewall.add") }}
         </Button>

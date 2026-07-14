@@ -11,17 +11,22 @@ import DiscoverySection from "./settings/DiscoverySection.vue";
 import CloudSyncSection from "./settings/CloudSyncSection.vue";
 import AppearanceSection from "./settings/AppearanceSection.vue";
 import EditorSection from "./settings/EditorSection.vue";
-import SyncHotkeysSection from "./settings/SyncHotkeysSection.vue";
+import UpdatesHotkeysSection from "./settings/UpdatesHotkeysSection.vue";
 import AutoCommitSection from "./settings/AutoCommitSection.vue";
+import BackgroundSyncSection from "./settings/BackgroundSyncSection.vue";
 import AgentSafetySection from "./settings/AgentSafetySection.vue";
 import IdentityFirewallSection from "./settings/IdentityFirewallSection.vue";
 import AiProvidersSection from "./settings/AiProvidersSection.vue";
 
 const open = defineModel<boolean>("open", { required: true });
-const props = withDefaults(defineProps<{ side?: PushPanelSide; rightOffsetPx?: number }>(), {
-  side: "right",
-  rightOffsetPx: 0,
-});
+const props = withDefaults(
+  defineProps<{ side?: PushPanelSide; rightOffsetPx?: number; targetTab?: string | null }>(),
+  {
+    side: "right",
+    rightOffsetPx: 0,
+    targetTab: null,
+  },
+);
 
 const { t } = useI18n();
 
@@ -35,10 +40,22 @@ const tabs = computed<{ id: TabId; label: string }[]>(() => [
   { id: "automation", label: t("settings.tabs.automation") },
   { id: "access", label: t("settings.tabs.access") },
 ]);
-// Every open lands back on General — the tab most visits need.
+const TAB_IDS: readonly TabId[] = ["general", "identities", "automation", "access"];
+const asTab = (v: string | null | undefined): TabId | null =>
+  v && (TAB_IDS as readonly string[]).includes(v) ? (v as TabId) : null;
+// Each open lands on the deep-link target if one was requested (e.g. the AI-key notification →
+// Automation), else back on General — the tab most visits need.
 watch(open, (isOpen) => {
-  if (isOpen) tab.value = "general";
+  if (isOpen) tab.value = asTab(props.targetTab) ?? "general";
 });
+// Handle a deep-link that arrives while the panel is ALREADY open (open didn't transition).
+watch(
+  () => props.targetTab,
+  (t) => {
+    const target = asTab(t);
+    if (open.value && target) tab.value = target;
+  },
+);
 </script>
 
 <template>
@@ -60,12 +77,12 @@ watch(open, (isOpen) => {
            `open` watcher that fires when the panel opens, which would never run for a section
            first mounted by a later tab click. -->
 
-      <!-- General: appearance, folders to scan, editor, sync + hotkeys ──────── -->
+      <!-- General: appearance, folders to scan, editor, updates + hotkeys ────── -->
       <div v-show="tab === 'general'" class="flex flex-col gap-4">
         <AppearanceSection />
         <DiscoverySection :open="open" />
         <EditorSection />
-        <SyncHotkeysSection />
+        <UpdatesHotkeysSection />
       </div>
 
       <!-- Identities: git identities, GitHub accounts, ⭐ Identity Firewall ──── -->
@@ -74,9 +91,10 @@ watch(open, (isOpen) => {
         <IdentityFirewallSection :open="open" />
       </div>
 
-      <!-- Automation: auto-commit, ⭐ Agent Safety Rail, AI providers ────────── -->
+      <!-- Automation: auto-commit, background sync, ⭐ Agent Safety Rail, AI providers ── -->
       <div v-show="tab === 'automation'" class="flex flex-col gap-4">
         <AutoCommitSection />
+        <BackgroundSyncSection />
         <AgentSafetySection />
         <AiProvidersSection :open="open" />
       </div>

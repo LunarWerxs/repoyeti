@@ -72,9 +72,12 @@ export function useSettingsNotifications(pullRepo?: (repoId: string) => Promise<
   // In-memory only (not persisted across reloads) — each is a lightweight rolling record
   // raised alongside a toast; see notifyNewProjects() below for the one producer today.
   const NEW_PROJECTS_NOTIFICATION_ID = "scan-new-projects";
-  const notifications = ref<{ id: string; title: string; body?: string; ts: number; read: boolean }[]>(
-    [],
-  );
+  const AI_KEY_INVALID_NOTIFICATION_PREFIX = "ai-key-invalid:";
+  // `kind` tells the header bell where a click should go ("scan" → the scan modal, "ai-key" →
+  // Settings → AI). Absent = a plain informational entry with no navigation.
+  const notifications = ref<
+    { id: string; title: string; body?: string; ts: number; read: boolean; kind?: "scan" | "ai-key" }[]
+  >([]);
   const unreadCount = computed(() => notifications.value.filter((n) => !n.read).length);
   function markNotificationsRead(): void {
     for (const n of notifications.value) n.read = true;
@@ -206,7 +209,7 @@ export function useSettingsNotifications(pullRepo?: (repoId: string) => Promise<
       existing.ts = Date.now();
       existing.read = false;
     } else {
-      notifications.value.unshift({ id: NEW_PROJECTS_NOTIFICATION_ID, title, body, ts: Date.now(), read: false });
+      notifications.value.unshift({ id: NEW_PROJECTS_NOTIFICATION_ID, title, body, ts: Date.now(), read: false, kind: "scan" });
     }
     toast.success(title, {
       description: body,
@@ -220,6 +223,39 @@ export function useSettingsNotifications(pullRepo?: (repoId: string) => Promise<
     if (desktopNotify.value && typeof Notification !== "undefined" && Notification.permission === "granted") {
       try {
         new Notification(title, { body, tag: "repoyeti-new-projects" });
+      } catch {
+        /* notification construction can throw on some platforms — never break the SSE loop */
+      }
+    }
+  }
+
+  // Providers we've already TOASTED about this session — so the live SSE broadcast (browser open at
+  // boot) and the /api/status catch-up (browser opened later) never double-toast the same dead key.
+  // The persistent bell entry is always (idempotently) refreshed regardless.
+  const aiKeyToasted = new Set<string>();
+
+  /** A configured AI provider's key was rejected on the liveness check. Refreshes a persistent bell
+   *  entry (rolling, one per provider) so the owner sees it even after the toast fades — a dead key
+   *  needs their attention (it silently breaks every "Generate"). Toasts once per provider/session. */
+  function notifyAiKeyInvalid(providerLabel: string): void {
+    const label = providerLabel || t("notify.aiKeyInvalidProvider");
+    const title = t("notify.aiKeyInvalidTitle");
+    const body = t("notify.aiKeyInvalidBody", { provider: label });
+    const id = `${AI_KEY_INVALID_NOTIFICATION_PREFIX}${label}`;
+    const existing = notifications.value.find((n) => n.id === id);
+    if (existing) {
+      existing.body = body;
+      existing.ts = Date.now();
+      existing.read = false;
+    } else {
+      notifications.value.unshift({ id, title, body, ts: Date.now(), read: false, kind: "ai-key" });
+    }
+    if (aiKeyToasted.has(label)) return; // bell refreshed above; don't re-toast the same dead key
+    aiKeyToasted.add(label);
+    toast.warning(title, { description: body });
+    if (desktopNotify.value && typeof Notification !== "undefined" && Notification.permission === "granted") {
+      try {
+        new Notification(title, { body, tag: `repoyeti-ai-key-${label}` });
       } catch {
         /* notification construction can throw on some platforms — never break the SSE loop */
       }
@@ -242,5 +278,6 @@ export function useSettingsNotifications(pullRepo?: (repoId: string) => Promise<
     notifyAutoCommitted,
     notifyAutoCommitBlocked,
     notifyNewProjects,
+    notifyAiKeyInvalid,
   };
 }

@@ -23,6 +23,7 @@ export function useRepoFeedback(): {
   function friendly(code: string): string {
     const map: Record<string, string> = {
       DIRTY_WORKING_TREE: t("repo.err.dirtyWorkingTree"),
+      WOULD_OVERWRITE: t("repo.err.wouldOverwrite"),
       NON_FAST_FORWARD: t("repo.err.nonFastForward"),
       DETACHED_HEAD: t("repo.err.detachedHead"),
       NO_UPSTREAM: t("repo.err.noUpstream"),

@@ -80,10 +80,21 @@ test("cmdReparseHazard: %VAR% / ^ in an arg is unsafe on EVERY win32 launch (all
 // RepoYeti-specific pieces layered ON TOP of it: cmdReparseHazard (above) and the `.cmd`-shim
 // exception that deliberately stays OFF the detach hand-off (openInEditor test below).
 
-test("systemRevealArgv: the OS file manager per platform", () => {
+test("systemRevealArgv: the OS file manager per platform (folder only)", () => {
   expect(systemRevealArgv("win32", "C:/r")).toEqual(["explorer", "C:/r"]);
   expect(systemRevealArgv("darwin", "/r")).toEqual(["open", "/r"]);
   expect(systemRevealArgv("linux", "/r")).toEqual(["xdg-open", "/r"]);
+});
+
+test("systemRevealArgv: with a file, SELECTS it (reveal), per platform", () => {
+  // win32: `/select,<path>` as ONE argv token; darwin: `open -R <file>`; linux has no select verb
+  // so it opens the file's parent folder.
+  expect(systemRevealArgv("win32", "C:\\r", "C:\\r\\sub\\a.txt")).toEqual([
+    "explorer",
+    "/select,C:\\r\\sub\\a.txt",
+  ]);
+  expect(systemRevealArgv("darwin", "/r", "/r/sub/a.txt")).toEqual(["open", "-R", "/r/sub/a.txt"]);
+  expect(systemRevealArgv("linux", "/r", "/r/sub/a.txt")).toEqual(["xdg-open", "/r/sub"]);
 });
 
 // ── probeEditor (injected which/exists/env — no real machine access) ───────────

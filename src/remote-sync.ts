@@ -77,15 +77,19 @@ export interface SyncedRepo {
 }
 
 /**
- * Whether a repo can be safely fast-forwarded with no risk of a conflict or merge: it has a
- * remote, isn't errored/detached, is genuinely behind, has NO local commits to diverge
- * (ahead === 0), and a clean working tree. This mirrors gitPullFfOnly's own preflight, so we
- * never even attempt a pull that the action would refuse — and a real `git pull --ff-only`
- * still self-guards if the tree changed between the check and the pull.
+ * Whether a repo is a safe candidate for an unattended fast-forward: it has a remote, isn't
+ * errored/detached, is genuinely behind, and has NO local commits to diverge (ahead === 0).
+ * A dirty tree is fine: exactly like the manual pull, `git pull --ff-only` fast-forwards when the
+ * incoming commits don't touch the uncommitted files and aborts harmlessly (WOULD_OVERWRITE) when
+ * they do, in which case the repo simply stays "behind" and warns. We DO skip a repo that's
+ * mid-merge/conflicted or mid-operation (rebase/cherry-pick/revert): auto-acting on a broken or
+ * half-finished tree is never wanted, and git would refuse the pull anyway. A real
+ * `git pull --ff-only` still self-guards if the tree changed between this check and the pull.
  */
 export function canAutoPull(s: RepoStatus | null | undefined): boolean {
   return (
-    !!s && !!s.remote && !s.error && !s.detached && s.behind > 0 && s.ahead === 0 && s.dirty === 0
+    !!s && !!s.remote && !s.error && !s.detached && s.behind > 0 && s.ahead === 0 &&
+    !s.conflicted && !s.gitOperation
   );
 }
 
@@ -131,8 +135,9 @@ async function tick(): Promise<void> {
   let post = getWatchableRepos();
 
   // "Keep in sync": auto fast-forward the repos that can safely take the new commits, then
-  // re-read so the behind-warning below only fires for repos we COULDN'T auto-resolve (dirty,
-  // diverged, detached) — i.e. the ones that genuinely need the owner's attention.
+  // re-read so the behind-warning below only fires for repos we COULDN'T auto-resolve (diverged,
+  // detached, mid-operation, or a dirty edit that overlaps the incoming update), i.e. the ones
+  // that genuinely need the owner's attention.
   if (keepInSync) {
     const pullable = post.filter((r) => canAutoPull(r.status));
     if (pullable.length > 0) {

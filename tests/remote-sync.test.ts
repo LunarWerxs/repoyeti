@@ -80,12 +80,14 @@ const ffSafe = (over: Partial<RepoStatus> = {}): RepoStatus => ({
   ...over,
 });
 
-test("canAutoPull only greenlights a clean, behind, non-diverged repo with a remote", () => {
+test("canAutoPull greenlights a behind, non-diverged repo (dirty ok; skips mid-operation)", () => {
   expect(canAutoPull(ffSafe())).toBe(true);
   expect(canAutoPull(null)).toBe(false);
   expect(canAutoPull(ffSafe({ behind: 0 }))).toBe(false); // not behind → nothing to pull
   expect(canAutoPull(ffSafe({ ahead: 1 }))).toBe(false); // diverged → not a fast-forward
-  expect(canAutoPull(ffSafe({ dirty: 3 }))).toBe(false); // local changes → could conflict
+  expect(canAutoPull(ffSafe({ dirty: 3 }))).toBe(true); // dirty is fine — ff-only pull self-guards
+  expect(canAutoPull(ffSafe({ conflicted: true }))).toBe(false); // mid-merge → don't auto-act
+  expect(canAutoPull(ffSafe({ gitOperation: "rebase-merge" }))).toBe(false); // mid-operation
   expect(canAutoPull(ffSafe({ detached: true }))).toBe(false); // detached HEAD
   expect(canAutoPull(ffSafe({ remote: null }))).toBe(false); // nothing to pull from
   expect(canAutoPull(ffSafe({ error: "boom" }))).toBe(false); // unhealthy

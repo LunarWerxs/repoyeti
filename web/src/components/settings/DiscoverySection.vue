@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Trash2, Plus, Loader2 } from "@lucide/vue";
 import { toast } from "vue-sonner";
@@ -17,6 +17,30 @@ const store = useStore();
 const { t } = useI18n();
 
 // ── scan roots (discovery folders) ─────────────────────────────────────────────
+// Most owners scan on-demand (whole-computer / a folder) rather than keeping watched roots, so the
+// roots config is collapsed behind a toggle (default off). Purely a display preference — persisted
+// per-browser in localStorage, no daemon setting. A count rides the label so a configured owner
+// isn't surprised their roots are "hidden" while collapsed.
+const SCAN_FOLDERS_KEY = "repoyeti.showScanFolders";
+const showScanFolders = ref(
+  (() => {
+    try {
+      return localStorage.getItem(SCAN_FOLDERS_KEY) === "1";
+    } catch {
+      return false;
+    }
+  })(),
+);
+watch(showScanFolders, (v) => {
+  try {
+    localStorage.setItem(SCAN_FOLDERS_KEY, v ? "1" : "0");
+  } catch {
+    /* private mode / storage disabled — the in-memory ref still drives this session */
+  }
+});
+const scanFoldersLabel = computed(() =>
+  store.roots.length ? `${t("settings.scanFoldersEnable")} (${store.roots.length})` : t("settings.scanFoldersEnable"),
+);
 const newRoot = ref("");
 const addingRoot = ref(false);
 const confirmRemoveRoot = ref<string | null>(null);
@@ -106,43 +130,56 @@ async function onLoreServersEnabled(enabled: boolean): Promise<void> {
 
 <template>
   <!-- Scan folders (discovery roots) ───────────────────────────────── -->
+  <!-- Collapsed behind a toggle (default off): most owners scan on demand and never keep watched
+       roots, so the list/input is hidden until they opt in. -->
   <SettingsGroup :label="$t('settings.cardRoots')" :description="$t('settings.rootsHint')">
-    <div class="flex flex-col gap-2.5 px-3.5 py-3">
-      <p v-if="!store.roots.length" class="text-[12.5px] text-muted-foreground">
-        {{ $t("settings.rootsEmpty") }}
-      </p>
-      <div
-        v-for="r in store.roots"
-        :key="r"
-        class="flex items-center gap-2 rounded-md border border-border bg-secondary/30 px-2.5 py-1.5"
-      >
-        <code class="mono min-w-0 flex-1 truncate text-[12px]" :title="r">{{ r }}</code>
-        <Button
-          :variant="confirmRemoveRoot === r ? 'destructive' : 'ghost'"
-          size="sm"
-          class="shrink-0"
-          :aria-label="$t('settings.rootsRemove')"
-          @click="removeRoot(r)"
-          @blur="confirmRemoveRoot = null"
-        >
-          <Trash2 />
-          <span v-if="confirmRemoveRoot === r">{{ $t("settings.rootsRemove") }}</span>
-        </Button>
-      </div>
-      <form class="flex items-center gap-2 pt-0.5" @submit.prevent="addRoot">
-        <Input
-          v-model="newRoot"
-          class="mono min-w-0 flex-1 text-[12.5px]"
-          :placeholder="$t('settings.rootsPlaceholder')"
-          :aria-label="$t('settings.rootsAdd')"
+    <SettingsRow :label="scanFoldersLabel">
+      <template #control>
+        <Switch
+          :model-value="showScanFolders"
+          :aria-label="$t('settings.scanFoldersEnable')"
+          @update:model-value="(v: boolean) => (showScanFolders = v)"
         />
-        <Button type="submit" size="sm" class="shrink-0" :disabled="!newRoot.trim() || addingRoot">
-          <Loader2 v-if="addingRoot" class="animate-spin" />
-          <Plus v-else />
-          {{ $t("settings.rootsAdd") }}
-        </Button>
-      </form>
-    </div>
+      </template>
+    </SettingsRow>
+    <ExpandTransition :open="showScanFolders">
+      <div class="flex flex-col gap-2.5 px-3.5 py-3">
+        <p v-if="!store.roots.length" class="text-[12.5px] text-muted-foreground">
+          {{ $t("settings.rootsEmpty") }}
+        </p>
+        <div
+          v-for="r in store.roots"
+          :key="r"
+          class="flex items-center gap-2 rounded-md border border-border bg-secondary/30 px-2.5 py-1.5"
+        >
+          <code class="mono min-w-0 flex-1 truncate text-[12px]" :title="r">{{ r }}</code>
+          <Button
+            :variant="confirmRemoveRoot === r ? 'destructive' : 'ghost'"
+            size="sm"
+            class="shrink-0"
+            :aria-label="$t('settings.rootsRemove')"
+            @click="removeRoot(r)"
+            @blur="confirmRemoveRoot = null"
+          >
+            <Trash2 />
+            <span v-if="confirmRemoveRoot === r">{{ $t("settings.rootsRemove") }}</span>
+          </Button>
+        </div>
+        <form class="flex items-center gap-2 pt-0.5" @submit.prevent="addRoot">
+          <Input
+            v-model="newRoot"
+            class="mono min-w-0 flex-1 text-[12.5px]"
+            :placeholder="$t('settings.rootsPlaceholder')"
+            :aria-label="$t('settings.rootsAdd')"
+          />
+          <Button type="submit" size="sm" class="shrink-0" :disabled="!newRoot.trim() || addingRoot">
+            <Loader2 v-if="addingRoot" class="animate-spin" />
+            <Plus v-else />
+            {{ $t("settings.rootsAdd") }}
+          </Button>
+        </form>
+      </div>
+    </ExpandTransition>
   </SettingsGroup>
 
   <!-- Lore servers (clone-from-server registry) ─────────────────────────── -->
