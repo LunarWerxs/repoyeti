@@ -1,5 +1,12 @@
 [test]
 preload = ["./tests/setup.ts"]
+# web/ is Vitest's, not bun:test's. Bun's runner has no Vue SFC compiler, so a `.vue` import
+# resolves to a *string* path; @vue/test-utils then calls WeakMap.set(<string>) and throws
+# "WeakMap keys must be objects". The failure looks like a library bug but is just the wrong
+# runner. `bun run test` (in web/) drives Vitest and is what CI uses. Ignoring web/ here keeps a
+# bare `bun test` at the root honest; without it, it sweeps web/test/** and reports ~42 phantom
+# failures against a suite that is actually green.
+pathIgnorePatterns = ["web/**"]
 # NOTE (pre-release follow-up): a coverage GATE is desirable but bun's `coverageThreshold` is
 # PER-FILE, so a flat floor fails on the low-coverage integration entrypoints (daemon.ts/index.ts)
 # even though overall coverage is ~92%. Add `coveragePathIgnorePatterns` for the entrypoints, then
