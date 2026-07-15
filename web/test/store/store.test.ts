@@ -90,3 +90,62 @@ describe("store.loadLog pagination", () => {
     expect(store.logByRepo.r.ok).toBe(false);
   });
 });
+
+// ── AI settings writers ─────────────────────────────────────────────────────────
+//
+// The write path behind Settings → AI (and the smart-commit header's style picker). Covered here
+// rather than by driving the real dropdowns: the headless preview pane can't open reka-ui Select
+// portals — it pauses the animation frames they mount on while document.hidden — so the UI click
+// was the one thing left unverified. The component handlers are one-liners onto these, so this is
+// where the behaviour actually lives, including the rollback, which nothing exercised before.
+describe("AI settings writers", () => {
+  beforeEach(() => setActivePinia(createPinia()));
+  afterEach(() => vi.restoreAllMocks());
+
+  const settings = (over: Record<string, unknown> = {}) => ({
+    providers: {},
+    defaultProvider: null,
+    style: "conventional",
+    diffDetail: "balanced",
+    yolo: false,
+    commitEnabled: true,
+    ...over,
+  });
+
+  it("setDiffDetail sends only the dial and adopts what the daemon echoes back", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(settings({ diffDetail: "lean" })));
+    vi.stubGlobal("fetch", fetchMock);
+    const store = useStore();
+
+    await store.setDiffDetail("lean");
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toContain("/api/ai/settings");
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(String(init.body))).toEqual({ diffDetail: "lean" }); // no collateral fields
+    expect(store.aiSettings.diffDetail).toBe("lean");
+  });
+
+  it("setDiffDetail rolls back when the daemon rejects it", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ code: "ERROR", message: "nope" }, false, 500)));
+    const store = useStore();
+    expect(store.aiSettings.diffDetail).toBe("balanced"); // default
+
+    await expect(store.setDiffDetail("thorough")).rejects.toThrow();
+    expect(store.aiSettings.diffDetail).toBe("balanced"); // never left lying about the daemon
+  });
+
+  it("setStyle sends the style and rolls back on failure", async () => {
+    const ok = vi.fn(async () => jsonResponse(settings({ style: "detailed" })));
+    vi.stubGlobal("fetch", ok);
+    const store = useStore();
+    await store.setStyle("detailed");
+    const [, init] = ok.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({ style: "detailed" });
+    expect(store.aiSettings.style).toBe("detailed");
+
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ code: "ERROR" }, false, 500)));
+    await expect(store.setStyle("concise")).rejects.toThrow();
+    expect(store.aiSettings.style).toBe("detailed"); // reverted to the last known-good
+  });
+});
