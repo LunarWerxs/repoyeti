@@ -247,14 +247,17 @@ function condenseFileChunk(chunk: string): string {
   if (firstHunk === -1) return chunk; // no hunks (binary/rename-only) — already tiny, leave it
 
   const hunks = chunk.slice(firstHunk).split(/(?=^@@ )/m);
-  // symbol → tally. Consecutive hunks inside one function collapse into a single row.
-  const rows = new Map<string, { add: number; del: number; hunks: number }>();
+  // Enclosing declaration → tally. Several hunks share a label whenever they sit inside the same
+  // one, so each row records HOW MANY edits it covers and WHERE they start — see the note below
+  // on why that matters.
+  const rows = new Map<string, { add: number; del: number; hunks: number; lines: number[] }>();
   for (const h of hunks) {
     const head = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/m.exec(h);
     if (!head) continue;
     const sym = (head[2] ?? "").trim() || `@ line ${head[1]}`;
-    const row = rows.get(sym) ?? { add: 0, del: 0, hunks: 0 };
+    const row = rows.get(sym) ?? { add: 0, del: 0, hunks: 0, lines: [] };
     row.hunks++;
+    row.lines.push(Number(head[1]));
     for (const l of h.split("\n").slice(1)) {
       if (l.startsWith("+")) row.add++;
       else if (l.startsWith("-")) row.del++;
@@ -270,13 +273,25 @@ function condenseFileChunk(chunk: string): string {
   const named = [...rows.keys()].filter(looksLikeDeclaration).length;
   if (named * 2 < rows.size) return chunk;
 
+  // A label is the ENCLOSING declaration, which is not always the thing that changed. git's
+  // default heuristic is column-0-only, so an INDENTED method never becomes the label — edit two
+  // methods of one class and both hunks come back labelled `export class Widget {`. Merging those
+  // into a bare "+2/-2" would claim one edit where there were two, and the looksLikeDeclaration
+  // gate can't catch it (the label is a perfectly real declaration, just too coarse). So say what
+  // we actually know: how many separate edits, and where they start. "2 edits @L3,L8" lets the
+  // model describe two changes; "+2/-2" alone would have hidden one of them.
   const body = [...rows.entries()]
-    .map(([sym, r]) => `  ${sym.length > 90 ? `${sym.slice(0, 90)}…` : sym}  +${r.add}/-${r.del}`)
+    .map(([sym, r]) => {
+      const label = sym.length > 90 ? `${sym.slice(0, 90)}…` : sym;
+      const where = r.hunks > 1 ? `  ${r.hunks} edits @L${r.lines.join(",L")}` : `  @L${r.lines[0]}`;
+      return `  ${label}  +${r.add}/-${r.del}${where}`;
+    })
     .join("\n");
   return (
     `${fileHeader}\n` +
-    `# condensed: large file — every changed symbol is listed with its own +/- counts ` +
-    `(line bodies omitted)\n${body}\n`
+    `# condensed: large file — line bodies omitted. Each row is the ENCLOSING declaration git\n` +
+    `# reports for a change (a class row can cover several of its methods), with that region's\n` +
+    `# +/- counts, how many separate edits it covers, and the line each starts at.\n${body}\n`
   );
 }
 
@@ -293,20 +308,33 @@ function condenseFileChunk(chunk: string): string {
  * (see condenseFileChunk) rather than truncated — same reason you'd read a table of contents
  * instead of the first 3 pages.
  *
- * Pure + unit-testable. `folded` counts the files that got condensed.
+ * Pure + unit-testable. `shrunk` counts files that were shrunk AT ALL (condensed OR truncated);
+ * `condensed` counts only the ones that got a real symbol map. They differ whenever a file can't
+ * be mapped — a data blob, or the control-flow-noise case — and keeping them separate matters
+ * because "we summarised N files" and "we blind-truncated N files" are very different claims for
+ * anything downstream to make.
  */
-export function foldLargeFileDiffs(diff: string, perFileCap: number): { diff: string; folded: number } {
-  if (!diff) return { diff, folded: 0 };
+export function foldLargeFileDiffs(
+  diff: string,
+  perFileCap: number,
+): { diff: string; folded: number; condensed: number } {
+  if (!diff) return { diff, folded: 0, condensed: 0 };
   // Split BEFORE each "diff --git" so every chunk keeps its own header.
   const chunks = diff.split(/(?=^diff --git )/m);
   let folded = 0;
+  let condensedCount = 0;
   const out = chunks.map((chunk) => {
     if (chunk.length <= perFileCap) return chunk;
     folded++;
     const condensed = condenseFileChunk(chunk);
     // Never let the "summary" cost more than the truncation it replaced — a pathological file
     // (thousands of one-line hunks) can out-grow its own body. Fall through to the head cut.
-    if (condensed.length <= perFileCap) return condensed;
+    // condenseFileChunk also returns the chunk UNCHANGED when it refuses (no hunks, no rows, or
+    // junk labels), which lands here too — so only count a map when we actually emitted one.
+    if (condensed.length <= perFileCap && condensed !== chunk) {
+      condensedCount++;
+      return condensed;
+    }
     // Cut on a line boundary — half a diff line is worse than no line.
     const head = chunk.slice(0, perFileCap);
     const nl = head.lastIndexOf("\n");
@@ -314,7 +342,7 @@ export function foldLargeFileDiffs(diff: string, perFileCap: number): { diff: st
     const elided = chunk.slice(kept.length).split("\n").length - 1;
     return `${kept}\n… [${elided} more diff lines folded — large file; its full +/- stat is in the file list]\n`;
   });
-  return { diff: out.join(""), folded };
+  return { diff: out.join(""), folded, condensed: condensedCount };
 }
 
 /**

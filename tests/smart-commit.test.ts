@@ -257,6 +257,43 @@ test("a file with REAL declarations still condenses", () => {
   expect(diff).toContain("export function alpha");
 });
 
+// git's default funcname heuristic is COLUMN-0 only, so an indented method never becomes the hunk
+// label — edit two methods of one class and both hunks come back labelled with the class. Merging
+// them to a bare "+2/-2" would claim one edit where there were two, and looksLikeDeclaration can't
+// catch it (a class IS a real declaration, just too coarse). Verified against real git output.
+test("hunks sharing one coarse label report how many edits they cover, and where", () => {
+  const hunk = (line: number, n: number) =>
+    `@@ -${line},${n} +${line},${n} @@ export class Widget {\n${Array.from({ length: n }, (_, i) => `+    this.v${i} = ${line};`).join("\n")}\n`;
+  // two INDEPENDENT edits, both inside the same class → identical labels
+  const chunk = "diff --git a/src/widget.ts b/src/widget.ts\n" + hunk(3, 40) + hunk(80, 40);
+  const { diff, condensed } = foldLargeFileDiffs(chunk, 900);
+
+  expect(condensed).toBe(1);
+  expect(diff).toContain("export class Widget {");
+  expect(diff).toContain("2 edits"); // <- the fusion is DECLARED, not hidden
+  expect(diff).toContain("@L3,L80"); // <- and both locations survive
+  expect(diff).toContain("+80/-0"); // counts still cover the whole region
+});
+
+test("a single edit reports its line without pretending there were several", () => {
+  const chunk =
+    "diff --git a/src/a.ts b/src/a.ts\n" +
+    `@@ -5,60 +5,60 @@ export function alpha() {\n${Array.from({ length: 60 }, (_, i) => `+  const v${i} = ${i};`).join("\n")}\n`;
+  const { diff } = foldLargeFileDiffs(chunk, 500);
+  expect(diff).toContain("@L5");
+  expect(diff).not.toContain("edits @"); // singular edit → no "N edits" claim
+});
+
+// `folded` = shrunk at all; `condensed` = actually mapped. They diverge on a file that can't be
+// mapped, and conflating them would let something downstream claim "summarised" for a blind cut.
+test("foldLargeFileDiffs separates 'shrunk' from 'actually condensed'", () => {
+  const blob = `diff --git a/data/blob.json b/data/blob.json\n@@ -1 +1 @@\n${"+x".repeat(5000)}\n`;
+  const r = foldLargeFileDiffs(blob, 900);
+  expect(r.folded).toBe(1); // it WAS shrunk...
+  expect(r.condensed).toBe(0); // ...but truncated, not mapped — no structure to map
+  expect(r.diff).toContain("diff lines folded");
+});
+
 test("foldLargeFileDiffs never cuts a diff line in half when it falls back to a head cut", () => {
   // No hunk headers at all → nothing to condense → the head-cut path still applies.
   const chunk = `diff --git a/a.ts b/a.ts\n${Array.from({ length: 400 }, (_, i) => `+line ${i}`).join("\n")}\n`;
@@ -268,7 +305,7 @@ test("foldLargeFileDiffs never cuts a diff line in half when it falls back to a 
 
 test("foldLargeFileDiffs is a no-op below the cap", () => {
   const d = "diff --git a/a.ts b/a.ts\n@@ -1 +1 @@\n-a\n+b\n";
-  expect(foldLargeFileDiffs(d, 2000)).toEqual({ diff: d, folded: 0 });
+  expect(foldLargeFileDiffs(d, 2000)).toEqual({ diff: d, folded: 0, condensed: 0 });
   expect(foldLargeFileDiffs("", 2000).folded).toBe(0);
 });
 
