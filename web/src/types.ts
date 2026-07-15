@@ -398,6 +398,11 @@ export interface AiCatalogEntry {
 }
 export type CommitStyle = "conventional" | "concise" | "detailed";
 
+/** How much of EACH changed file the smart-commit planner reads (mirrors src/config.ts). A cost
+ *  dial: the planner always gets the complete file list, so this only trades how much of a large
+ *  file's body feeds its message against tokens spent per commit. */
+export type DiffDetail = "lean" | "balanced" | "thorough";
+
 /** A registered Lore server RepoYeti can clone repos from (mirrors src/config.ts LoreServer). */
 export interface LoreServer {
   id: string;
@@ -420,6 +425,8 @@ export interface AiSettings {
   providers: Partial<Record<AiProviderId, AiProviderState>>;
   defaultProvider: AiProviderId | null;
   style: CommitStyle;
+  /** How much of each changed file the smart-commit planner reads — the token-cost dial. */
+  diffDetail: DiffDetail;
   /** Smart-commit YOLO mode: commit the AI plan immediately, skipping the review editor. */
   yolo: boolean;
   /** Whether the AI commit buttons (Generate + Auto) are shown at all (default true). */
@@ -439,6 +446,15 @@ export interface CommitGroup {
 }
 
 /** A full proposed plan (read-only suggestion; the owner edits it before executing). */
+/** Mirrors the daemon's AiCode (src/ai/commit-message.ts). */
+export type AiCode =
+  | "OK"
+  | "AI_AUTH_FAILED"
+  | "AI_UNREACHABLE"
+  | "AI_BAD_REQUEST"
+  | "AI_RATE_LIMITED"
+  | "AI_ERROR";
+
 export interface CommitPlan {
   groups: CommitGroup[];
   /** Files the planner couldn't place — the UI blocks commit until each is in a group. */
@@ -447,6 +463,10 @@ export interface CommitPlan {
   degraded: boolean;
   /** True when the diff shown to the AI was capped (large change-set). */
   truncated: boolean;
+  /** Why it degraded, so the banner states the real cause (e.g. a spent rate limit) rather than
+   *  always blaming the model. `degradedMessage` is the provider's own text. */
+  degradedCode?: AiCode;
+  degradedMessage?: string;
 }
 
 export interface CommitPlanResponse {

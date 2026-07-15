@@ -9,6 +9,7 @@ import type {
   AiSettings,
   CommitPlanResponse,
   CommitStyle,
+  DiffDetail,
   SmartCommitResult,
 } from "../types";
 
@@ -23,9 +24,17 @@ export function useAi(
   asResult: (e: unknown) => ActionResult,
 ) {
   // BYOK AI settings (redacted — never holds a key). `aiEnabled` gates the Generate button.
-  // Style is hardcoded to Conventional Commits (no UI picker); owners can still override
-  // it in ~/.repoyeti/config.json. The daemon mirrors this default.
-  const aiSettings = ref<AiSettings>({ providers: {}, defaultProvider: null, style: "conventional", yolo: false, commitEnabled: true });
+  // Style defaults to Conventional Commits; it's pickable from Settings → AI and from the
+  // smart-commit plan header, and owners can still set it in ~/.repoyeti/config.json. The
+  // daemon mirrors this default.
+  const aiSettings = ref<AiSettings>({
+    providers: {},
+    defaultProvider: null,
+    style: "conventional",
+    diffDetail: "balanced",
+    yolo: false,
+    commitEnabled: true,
+  });
   const aiReady = ref(false);
   /** Provider catalog from GET /api/ai/catalog — safe display metadata, no secrets. */
   const aiCatalog = ref<AiCatalogEntry[]>([]);
@@ -104,6 +113,17 @@ export function useAi(
       throw e;
     }
   }
+  /** Set the smart-commit diff-detail dial (optimistic; rolls back on failure). */
+  async function setDiffDetail(diffDetail: DiffDetail): Promise<void> {
+    const prev = aiSettings.value.diffDetail;
+    aiSettings.value = { ...aiSettings.value, diffDetail };
+    try {
+      aiSettings.value = await api.ai.setDiffDetail(diffDetail);
+    } catch (e) {
+      aiSettings.value = { ...aiSettings.value, diffDetail: prev }; // roll back
+      throw e;
+    }
+  }
   async function removeProvider(provider: AiProviderId): Promise<void> {
     aiSettings.value = await api.ai.removeProvider(provider);
   }
@@ -156,6 +176,7 @@ export function useAi(
     setYolo,
     setCommitEnabled,
     setStyle,
+    setDiffDetail,
     removeProvider,
     genCommitMessage,
     genCommitPlan,

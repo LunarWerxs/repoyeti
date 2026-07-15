@@ -34,6 +34,8 @@ export {
   collectCommitDiff,
   collectPathsDiff,
   isNoisyPath,
+  foldLargeFileDiffs,
+  DIFF_DETAIL_CAPS,
   collectCommitPlanInput,
   fileDiffPatch,
   grepChangedContent,

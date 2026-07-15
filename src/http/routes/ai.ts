@@ -17,6 +17,7 @@ import {
   generateCommitMessage,
   generateCommitPlan,
   heuristicPlan,
+  clearRateGate,
   AiError,
 } from "../../ai.ts";
 import { jsonError, type ApiErrorCode } from "../../contract.ts";
@@ -69,6 +70,7 @@ export function register(app: Hono, { cfg }: Deps): void {
     if (!p.ok) return p.res;
     const ai = ensureAi();
     if (p.data.style != null) ai.style = p.data.style;
+    if (p.data.diffDetail != null) ai.diffDetail = p.data.diffDetail;
     if (typeof p.data.yolo === "boolean") ai.yolo = p.data.yolo;
     if (typeof p.data.commitEnabled === "boolean") ai.commitEnabled = p.data.commitEnabled;
     if (p.data.defaultProvider !== undefined) {
@@ -110,6 +112,10 @@ export function register(app: Hono, { cfg }: Deps): void {
       await setSecret(aiKeyName(provider), apiKey);
       ai.providers[provider] = { apiKey, model };
       if (!ai.defaultProvider) ai.defaultProvider = provider;
+      // A new key is exactly how an owner fixes a spent quota (upgraded tier / different account),
+      // so drop any rate-limit pause we're holding for this provider — otherwise the fix would
+      // look like it didn't work until the pause aged out.
+      clearRateGate(provider);
       saveConfig(cfg);
       return c.json({ ok: true, models, settings: redactAi(cfg) });
     } catch (e) {
@@ -176,11 +182,12 @@ export function register(app: Hono, { cfg }: Deps): void {
     if (!model) return jsonError(c, "NO_MODEL", `pick a model for ${provider} in Settings`);
 
     // With `paths`, draft from only those files (smart-commit per-group regenerate); else the
-    // whole working tree (the normal "Generate" button).
+    // whole working tree (the normal "Generate" button). Both honor the owner's diff-detail dial.
+    const msgDetail = cfg.ai?.diffDetail ?? "balanced";
     const collected =
       p.data.paths?.length
-        ? await collectRepoPathsDiff(id, p.data.paths)
-        : await collectRepoDiff(id);
+        ? await collectRepoPathsDiff(id, p.data.paths, msgDetail)
+        : await collectRepoDiff(id, msgDetail);
     if (!collected.ok) {
       const status: ContentfulStatusCode =
         collected.code === "NOT_FOUND" ? 404 : collected.code === "NOTHING_TO_COMMIT" ? 409 : 400;
@@ -218,7 +225,11 @@ export function register(app: Hono, { cfg }: Deps): void {
 
     // Empty selection means "nothing checked" → plan the whole tree, so an empty array is
     // treated the same as omitting `paths` entirely (never an accidental empty-scope plan).
-    const collected = await planCommitInput(id, p.data.paths?.length ? p.data.paths : undefined);
+    const collected = await planCommitInput(
+      id,
+      p.data.paths?.length ? p.data.paths : undefined,
+      cfg.ai?.diffDetail ?? "balanced",
+    );
     if (!collected.ok) {
       const status: ContentfulStatusCode =
         collected.code === "NOT_FOUND" ? 404 : collected.code === "NOTHING_TO_COMMIT" ? 409 : 400;
@@ -230,9 +241,17 @@ export function register(app: Hono, { cfg }: Deps): void {
       return c.json({ ok: true, plan, provider, model });
     } catch (e) {
       // A bad/rejected key is worth surfacing (the owner must fix it); anything else
-      // (provider down, garbage response) falls back to the deterministic plan.
+      // (provider down, rate limit, garbage response) still falls back to the deterministic
+      // plan so Smart Commit never dead-ends — but the REASON rides along. It used to be
+      // dropped here, which made a rate-limited request (where the model never ran at all)
+      // render as "AI couldn't structure this" — a wrong answer to a question the owner can
+      // actually act on ("your daily token cap is spent; retry at X / switch provider").
       if (e instanceof AiError && e.code === "AI_AUTH_FAILED") return aiErr(c, e, provider);
-      const plan = heuristicPlan(collected.input!);
+      const reason =
+        e instanceof AiError
+          ? { code: e.code, message: e.message }
+          : { code: "AI_ERROR" as const, message: e instanceof Error ? e.message : String(e) };
+      const plan = heuristicPlan(collected.input!, reason);
       return c.json({ ok: true, plan, provider, model, fallback: true });
     }
   });

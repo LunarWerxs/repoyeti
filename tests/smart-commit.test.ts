@@ -8,10 +8,21 @@ import {
   generateCommitPlan,
   planSystemPrompt,
   planUserPrompt,
+  AiError,
+  clearRateGate,
+  rateGateRemainingMs,
   type CommitPlanInput,
   type FetchFn,
 } from "../src/ai.ts";
-import { gitCommitGroups, collectCommitPlanInput, collectPathsDiff, isNoisyPath } from "../src/git-actions.ts";
+import {
+  gitCommitGroups,
+  collectCommitPlanInput,
+  collectPathsDiff,
+  isNoisyPath,
+  foldLargeFileDiffs,
+  DIFF_DETAIL_CAPS,
+} from "../src/git-actions.ts";
+import { planMaxTokens } from "../src/ai/adapters.ts";
 import { smartCommitRepo, planCommitInput, collectRepoPathsDiff } from "../src/service/index.ts";
 import { createApp } from "../src/http/app.ts";
 import { mustUpsertRepo } from "./helpers/upsert.ts";
@@ -174,6 +185,159 @@ test("plan prompts mention the file-level rule and list every path", () => {
   };
   expect(planSystemPrompt("conventional")).toContain("FILE level");
   expect(planUserPrompt(input)).toContain("src/x.ts");
+});
+
+// ── payload budget: size folding + right-sized reservation ──────────────────────
+//
+// Both exist because of a measurement: one generated `data/car-embeddings.json` was 97% of a real
+// 40k planner diff (106 other files shared 3%), and every plan reserved 4096 output tokens to
+// produce ~900 — on a 100k/day budget that is ~7 commits/day.
+
+test("foldLargeFileDiffs caps any one file and leaves small ones untouched", () => {
+  const small = "diff --git a/small.ts b/small.ts\n@@ -1 +1 @@\n-a\n+b\n";
+  const huge = `diff --git a/data/blob.json b/data/blob.json\n@@ -1 +1 @@\n${"+x".repeat(5000)}\n`;
+  const { diff, folded } = foldLargeFileDiffs(small + huge, 2000);
+
+  expect(folded).toBe(1);
+  expect(diff).toContain("small.ts"); // the small file survives verbatim
+  expect(diff).toContain("-a\n+b"); //   ...body intact
+  expect(diff).toContain("data/blob.json"); // the big file is still PRESENT (name/header kept)
+  expect(diff).toContain("diff lines folded"); // ...but its body is folded, in-band
+  expect(diff.length).toBeLessThan(small.length + huge.length); // and the payload actually shrank
+});
+
+test("foldLargeFileDiffs never cuts a diff line in half", () => {
+  const chunk = `diff --git a/a.ts b/a.ts\n${Array.from({ length: 400 }, (_, i) => `+line ${i}`).join("\n")}\n`;
+  const { diff } = foldLargeFileDiffs(chunk, 500);
+  const body = diff.split("\n").filter((l) => l.startsWith("+line "));
+  // every retained body line is whole (no truncated tail like "+line 12" -> "+lin")
+  for (const l of body) expect(l).toMatch(/^\+line \d+$/);
+});
+
+test("foldLargeFileDiffs is a no-op below the cap", () => {
+  const d = "diff --git a/a.ts b/a.ts\n@@ -1 +1 @@\n-a\n+b\n";
+  expect(foldLargeFileDiffs(d, 2000)).toEqual({ diff: d, folded: 0 });
+  expect(foldLargeFileDiffs("", 2000).folded).toBe(0);
+});
+
+test("the diff-detail dial is monotonic on BOTH bounds: lean < balanced < thorough", () => {
+  // A dial nobody can trust is worse than a constant — each step must actually send more.
+  // Both bounds matter: with only perFile moving, the flat total cap binds first and every
+  // setting produces an identical payload on a many-file repo (measured — that was the bug).
+  for (const k of ["perFile", "msgTotal", "planTotal"] as const) {
+    expect(DIFF_DETAIL_CAPS.lean[k]).toBeLessThan(DIFF_DETAIL_CAPS.balanced[k]);
+    expect(DIFF_DETAIL_CAPS.balanced[k]).toBeLessThan(DIFF_DETAIL_CAPS.thorough[k]);
+  }
+  // `balanced` must stay exactly the historical caps, so the default changes nothing.
+  expect(DIFF_DETAIL_CAPS.balanced.msgTotal).toBe(24_000);
+  expect(DIFF_DETAIL_CAPS.balanced.planTotal).toBe(40_000);
+
+  const huge = `diff --git a/big.ts b/big.ts\n${Array.from({ length: 2000 }, (_, i) => `+line ${i}`).join("\n")}\n`;
+  const sizes = (["lean", "balanced", "thorough"] as const).map(
+    (d) => foldLargeFileDiffs(huge, DIFF_DETAIL_CAPS[d].perFile).diff.length,
+  );
+  expect(sizes[0]!).toBeLessThan(sizes[1]!);
+  expect(sizes[1]!).toBeLessThan(sizes[2]!);
+  // even the richest setting still folds a runaway file — the dial tunes the cap, it can't remove it
+  expect(sizes[2]!).toBeLessThan(huge.length);
+});
+
+test("planMaxTokens sizes the reservation to the change-set, with a floor and a cap", () => {
+  expect(planMaxTokens(1)).toBe(512); // floor: never so small the JSON gets cut off
+  expect(planMaxTokens(11)).toBe(916); // a normal commit: ~4x smaller than the old flat 4096
+  expect(planMaxTokens(107)).toBe(4096); // cap: a huge plan still gets the ceiling
+  expect(planMaxTokens(10_000)).toBe(4096); // never above the ceiling
+});
+
+// A 429 means the request was REJECTED — the model never ran, so "the AI couldn't structure this"
+// is the wrong story. It must surface as its own code, carrying the provider's text (which says
+// which limit tripped and when it resets) so the owner can act on it.
+test("a rate-limited provider surfaces AI_RATE_LIMITED with the provider's own message", async () => {
+  const body = JSON.stringify({
+    error: { message: "Rate limit reached ... on tokens per day (TPD): Limit 100000. Try again in 4h55m.", code: "rate_limit_exceeded" },
+  });
+  const fakeFetch: FetchFn = async () => new Response(body, { status: 429 });
+  const input: CommitPlanInput = {
+    files: [{ path: "a.ts", status: "M", additions: 1, removals: 0, binary: false }],
+    diff: "",
+    truncated: false,
+  };
+  const err = await generateCommitPlan("groq", "gsk_x", "llama", input, "conventional", fakeFetch).catch((e) => e);
+  expect(err).toBeInstanceOf(AiError);
+  expect((err as AiError).code).toBe("AI_RATE_LIMITED");
+  expect((err as AiError).status).toBe(429);
+  expect((err as AiError).message).toContain("tokens per day");
+});
+
+// Anti-hammer: a provider that just said 429 will say it again. Re-asking burns request quota and
+// makes the owner wait to hear the same thing, so the second ask is answered from memory.
+test("a 429 gates further generation calls instead of re-hammering the provider", async () => {
+  clearRateGate("groq");
+  let calls = 0;
+  const fakeFetch: FetchFn = async () => {
+    calls++;
+    return new Response(JSON.stringify({ error: { message: "Rate limit reached. Try again in 3h." } }), {
+      status: 429,
+      headers: { "retry-after": "13010" }, // Groq really does hand back ~3.6h
+    });
+  };
+  const input: CommitPlanInput = {
+    files: [{ path: "a.ts", status: "M", additions: 1, removals: 0, binary: false }],
+    diff: "",
+    truncated: false,
+  };
+  const run = () => generateCommitPlan("groq", "gsk_x", "llama", input, "conventional", fakeFetch).catch((e) => e);
+
+  const first = await run();
+  expect((first as AiError).code).toBe("AI_RATE_LIMITED");
+  expect(calls).toBe(1);
+
+  const second = await run(); // must NOT reach the network
+  expect((second as AiError).code).toBe("AI_RATE_LIMITED");
+  expect((second as AiError).message).toContain("Rate limit reached"); // provider's words, replayed
+  expect(calls).toBe(1); // <- the whole point: still 1
+
+  // The local pause is capped (a minute), NOT the provider's 3.6h — an owner who upgrades their
+  // tier or swaps keys must recover quickly rather than stay blocked by our own cache.
+  expect(rateGateRemainingMs("groq")).toBeGreaterThan(0);
+  expect(rateGateRemainingMs("groq")).toBeLessThanOrEqual(60_000);
+
+  clearRateGate("groq");
+  expect(rateGateRemainingMs("groq")).toBe(0); // connecting a new key clears it
+});
+
+test("heuristicPlan carries the degraded reason so the UI can state the real cause", () => {
+  const input: CommitPlanInput = {
+    files: [{ path: "src/a.ts", status: "M", additions: 1, removals: 0, binary: false }],
+    diff: "",
+    truncated: false,
+  };
+  const plain = heuristicPlan(input);
+  expect(plain.degraded).toBe(true);
+  expect(plain.degradedCode).toBeUndefined(); // no reason given → nothing invented
+
+  const withReason = heuristicPlan(input, { code: "AI_RATE_LIMITED", message: "Limit 100000 reached" });
+  expect(withReason.degradedCode).toBe("AI_RATE_LIMITED");
+  expect(withReason.degradedMessage).toContain("Limit 100000");
+});
+
+// The style setting used to be accepted here and then ignored, so switching styles changed the
+// plan's messages only by model luck. Each style must produce materially different instructions.
+test("planSystemPrompt actually honors the commit-message style", () => {
+  const conventional = planSystemPrompt("conventional");
+  const concise = planSystemPrompt("concise");
+  const detailed = planSystemPrompt("detailed");
+
+  expect(conventional).not.toBe(concise);
+  expect(conventional).not.toBe(detailed);
+  expect(concise).not.toBe(detailed);
+
+  // concise = subject only; the other two ask for a real body.
+  expect(concise).toContain("Omit `body`");
+  expect(conventional).toContain("`body` explaining WHAT changed and WHY");
+  expect(detailed).toContain("`body`");
+  // every style still forbids the type/scope prefix leaking into `subject` (the editor adds it)
+  for (const p of [conventional, concise, detailed]) expect(p).toContain("BARE imperative summary");
 });
 
 // ── gitCommitGroups (real repo) ──────────────────────────────────────────────────

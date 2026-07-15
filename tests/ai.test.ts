@@ -127,6 +127,21 @@ test("cleanCommitMessage strips code fences and wrapping quotes", () => {
   expect(cleanCommitMessage("  plain message  ")).toBe("plain message");
 });
 
+// Git's subject is everything up to the first blank line, so a body running straight on after
+// line 1 makes the WHOLE message the subject. Observed live: llama-3.3-70b did exactly this
+// despite the prompt asking for the blank line.
+test("cleanCommitMessage forces git's blank line between subject and body", () => {
+  expect(cleanCommitMessage("feat: add thing\n- one\n- two")).toBe("feat: add thing\n\n- one\n- two");
+  // already correct → unchanged (no double-spacing)
+  expect(cleanCommitMessage("feat: add thing\n\n- one")).toBe("feat: add thing\n\n- one");
+  // subject-only stays a single line
+  expect(cleanCommitMessage("feat: add thing")).toBe("feat: add thing");
+  // a trailing space on the subject (also observed live) is trimmed
+  expect(cleanCommitMessage("feat: add thing   \nbody")).toBe("feat: add thing\n\nbody");
+  // blank-line-only tail collapses to a plain subject rather than trailing newlines
+  expect(cleanCommitMessage("feat: add thing\n\n   ")).toBe("feat: add thing");
+});
+
 // ── network paths behind an injected fetch (no real provider hit) ────────────────
 function fakeFetch(status: number, body: unknown, capture?: (url: string, init?: RequestInit) => void): FetchFn {
   return async (url, init) => {
@@ -189,10 +204,36 @@ test("collectCommitDiff captures status + diff and never mutates the index", asy
   expect(staged).toBe("");
 });
 
-test("collectCommitDiff caps a huge diff with a truncation marker", async () => {
+test("collectCommitDiff FOLDS one huge file rather than spending the whole payload on it", async () => {
   const dir = await seededRepo();
   writeFileSync(join(dir, "base.txt"), "x\n".repeat(40_000)); // ~80 KB modification
   const out = await collectCommitDiff(dir);
+  expect(out.length).toBeLessThan(25_000); // bounded, as it always was...
+  // ...but now bounded by FOLDING rather than by lopping the tail off the payload. This used to
+  // ship ~24k of one file's diff and end in "…[truncated]"; a runaway file now costs only its
+  // per-file slice, which is the whole point (that file was 97% of a real repo's diff).
+  expect(out.length).toBeLessThan(8_000);
+  expect(out).toContain("diff lines folded"); // and it says what it dropped, in-band
+  expect(out).toContain("base.txt"); // the file is still named + visible to the model
+});
+
+test("collectCommitDiff still truncates when even the FOLDED diff overruns the cap", async () => {
+  const dir = await seededRepo();
+  // 40 tracked files, each modified well past its fold slice: every file costs ~2k folded, so the
+  // SUM still overruns DIFF_CAP — the payload-level truncation marker must survive folding.
+  for (let i = 0; i < 40; i++) writeFileSync(join(dir, `f${i}.txt`), "seed\n");
+  await $`git -C ${dir} add -A`.quiet();
+  await $`git -C ${dir} -c user.name=Seed -c user.email=s@s.io commit -q -m more`.quiet();
+  for (let i = 0; i < 40; i++) writeFileSync(join(dir, `f${i}.txt`), "y\n".repeat(3_000));
+  const out = await collectCommitDiff(dir);
   expect(out.length).toBeLessThan(25_000);
   expect(out.endsWith("…[truncated]")).toBe(true);
+});
+
+test("the diff-detail dial changes what the message path sends", async () => {
+  const dir = await seededRepo();
+  writeFileSync(join(dir, "base.txt"), "x\n".repeat(40_000));
+  const lean = await collectCommitDiff(dir, "lean");
+  const thorough = await collectCommitDiff(dir, "thorough");
+  expect(lean.length).toBeLessThan(thorough.length); // ✨ Generate honors the dial, not just Auto
 });

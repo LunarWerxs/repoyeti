@@ -32,6 +32,8 @@ export {
   cleanCommitMessage,
   listModels,
   generateCommitMessage,
+  clearRateGate,
+  rateGateRemainingMs,
 } from "./commit-message.ts";
 
 export type { PlanInputFile, CommitPlanInput, CommitPlanGroup, CommitPlan } from "./commit-plan.ts";

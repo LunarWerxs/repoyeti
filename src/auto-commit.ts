@@ -181,7 +181,9 @@ type BuiltPlan =
  * dead-ends on a provider hiccup (mirrors the /commit-plan route's fallback).
  */
 async function buildPlan(repoId: string): Promise<BuiltPlan> {
-  const collected = await planCommitInput(repoId);
+  // Honor the owner's diff-detail dial here too — auto-commit runs unattended on a timer, so it's
+  // the LAST place that should quietly spend more tokens per commit than they asked for.
+  const collected = await planCommitInput(repoId, undefined, cfgRef?.ai?.diffDetail ?? "balanced");
   if (!collected.ok || !collected.input) return { ok: false, reason: collected.code ?? "ERROR" };
   const input = collected.input;
   const cfg = cfgRef;

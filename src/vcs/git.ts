@@ -72,8 +72,8 @@ export const gitBackend: VcsBackend = {
   discardFile: gitDiscardFile,
   stageFile: gitStageFile,
 
-  collectAiDiff: (absPath, paths) =>
-    paths?.length ? collectPathsDiff(absPath, paths) : collectCommitDiff(absPath),
+  collectAiDiff: (absPath, paths, detail) =>
+    paths?.length ? collectPathsDiff(absPath, paths, detail) : collectCommitDiff(absPath, detail),
   commitGroups: gitCommitGroups,
   searchContent: grepChangedContent,
 };

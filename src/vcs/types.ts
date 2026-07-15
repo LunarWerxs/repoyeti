@@ -16,6 +16,7 @@ import type { Identity, RepoStatus } from "../db.ts";
 import type { ChangedFile } from "../read/status.ts";
 import type { ActionResult, CommitGroupSpec, CommitGroupsResult } from "../contract.ts";
 import type { BranchList, LogResult, StashList, CommitDetail, MergeFilter, RefScope } from "../read/inspect.ts";
+import type { DiffDetail } from "../config.ts";
 
 export type VcsKind = "git" | "lore";
 
@@ -106,8 +107,9 @@ export interface VcsBackend {
 
   // ── AI commit-diff · smart-commit grouping · content search ──
   /** A compact, bounded working-tree diff snapshot for an AI commit-message/plan prompt.
-   *  `paths` scopes it to a subset (smart-commit per-group regenerate); omitted = whole tree. */
-  collectAiDiff(absPath: string, paths?: string[]): Promise<string>;
+   *  `paths` scopes it to a subset (smart-commit per-group regenerate); omitted = whole tree.
+   *  `detail` is the owner's diff-detail dial — how much of EACH file to include. */
+  collectAiDiff(absPath: string, paths?: string[], detail?: DiffDetail): Promise<string>;
   /** Execute a multi-commit plan: stage each group's files in isolation and commit it, in order. */
   commitGroups(absPath: string, identity: Identity | null, groups: CommitGroupSpec[]): Promise<CommitGroupsResult>;
   /** Of `paths` (the changed-file set), the ones whose working-tree content contains `needle`

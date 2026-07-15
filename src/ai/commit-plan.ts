@@ -5,8 +5,8 @@
 // split across commits) — see docs/ARCHITECTURE.md §14 (Smart Commit) for why (the safety invariant). The plan
 // is a SUGGESTION: the daemon validates it, the owner edits it, and a separate call commits.
 import type { AiProviderId, CommitStyle } from "../config.ts";
-import { AI_ADAPTERS } from "./adapters.ts";
-import { AiError, requestJson, type FetchFn } from "./commit-message.ts";
+import { AI_ADAPTERS, planMaxTokens } from "./adapters.ts";
+import { AiError, requestJson, type AiCode, type FetchFn } from "./commit-message.ts";
 import { normalizeRelPath } from "../paths.ts";
 
 const PLAN_TIMEOUT_MS = 45_000;
@@ -58,6 +58,12 @@ export interface CommitPlan {
   degraded: boolean;
   /** Mirrors CommitPlanInput.truncated (the diff was capped). */
   truncated: boolean;
+  /** WHY it degraded, when it did. Without this the UI can only guess, and it guessed WRONG:
+   *  a rate-limited request (the model never even ran) was reported as "AI couldn't structure
+   *  this". The code picks the headline; `degradedMessage` carries the provider's own text,
+   *  which is the actionable part (which limit, and when it resets). */
+  degradedCode?: AiCode;
+  degradedMessage?: string;
 }
 
 /** The conventional-commits types we accept; anything else is coerced to `chore`. */
@@ -71,7 +77,41 @@ function coerceType(t: unknown): string {
   return CONVENTIONAL_TYPES.has(s) ? s : "chore";
 }
 
-export function planSystemPrompt(_style: CommitStyle): string {
+/**
+ * Per-commit MESSAGE rules for the plan, derived from the owner's "Commit message style".
+ * This exists because the setting used to be accepted and then ignored here — every plan got
+ * the same terse "≤72-char summary, body optional" instruction no matter which style was
+ * selected, so switching styles only ever changed the messages by model luck. Mirrors
+ * systemPromptFor() in commit-message.ts so a plan card and a per-card regenerate agree.
+ */
+function planMessageRules(style: CommitStyle): string {
+  // `subject` is the BARE summary — the editor renders "type(scope): subject" itself, so a
+  // model that prefixes the type here would double it up.
+  const subject =
+    "7. Each `subject` is a BARE imperative summary (≤72 chars, no trailing period, and NO " +
+    "`type:`/`scope:` prefix — the `type` and `scope` fields carry that). Use a conventional " +
+    "`type` (feat, fix, refactor, test, docs, chore, style, perf, build, ci) and an optional " +
+    "lowercase `scope`.\n";
+  switch (style) {
+    case "concise":
+      return `${subject}8. Omit \`body\` entirely — the subject alone carries the change.\n`;
+    case "detailed":
+      return (
+        `${subject}8. Give every non-trivial commit a \`body\`: a few sentences, or "- " bullets, ` +
+        "covering what changed, why, and anything a reviewer should be warned about. Never just " +
+        "restate the subject.\n"
+      );
+    default: // conventional — the Conventional Commits shape most tooling (and VS Code) emits
+      return (
+        `${subject}8. Give every non-trivial commit a \`body\` explaining WHAT changed and WHY. ` +
+        'Use "- " bullets when there is more than one notable point, one point per bullet. ' +
+        "Describe intent and effect — not a file-by-file restatement of the diff — and never " +
+        "repeat the subject. Only a genuinely trivial one-file change may omit `body`.\n"
+      );
+  }
+}
+
+export function planSystemPrompt(style: CommitStyle): string {
   return (
     "You are a senior engineer splitting a messy working tree into a series of small, " +
     "logically-scoped git commits. You are given the list of changed FILES and a unified diff.\n\n" +
@@ -89,8 +129,8 @@ export function planSystemPrompt(_style: CommitStyle): string {
     "tests → docs/CI. New files that others depend on come before their dependents.\n" +
     "6. If ONE file genuinely contains two unrelated changes, put it in the commit for its " +
     "dominant change and mention the secondary change in that commit's `body`.\n" +
-    "7. Each `subject` is an imperative, ≤72-char summary. Use a conventional `type` " +
-    "(feat, fix, refactor, test, docs, chore, style, perf, build, ci) and an optional lowercase `scope`.\n\n" +
+    planMessageRules(style) +
+    "\n" +
     "OUTPUT: return ONLY a JSON object (no prose, no markdown fences) of this exact shape:\n" +
     `{"groups":[{"type":"feat","scope":"auth","subject":"add token refresh","body":"optional longer text","files":["src/auth.ts","tests/auth.test.ts"],"rationale":"short why"}],"leftovers":[]}\n` +
     "Put a file in `leftovers` ONLY if you truly cannot decide where it belongs. " +
@@ -211,7 +251,7 @@ function bucketType(files: string[]): string {
  * owner still gets a sensible, editable split when the AI is unavailable or returns garbage.
  * Pure + unit-testable. Always marks `degraded: true` so the UI can explain itself.
  */
-export function heuristicPlan(input: CommitPlanInput): CommitPlan {
+export function heuristicPlan(input: CommitPlanInput, reason?: { code: AiCode; message: string }): CommitPlan {
   const buckets = new Map<string, string[]>();
   for (const f of input.files) {
     const b = topSegment(f.path);
@@ -224,7 +264,13 @@ export function heuristicPlan(input: CommitPlanInput): CommitPlan {
     // subject already carries the conventional prefix; keep type/scope for the editor too.
     return { type, ...(scope ? { scope } : {}), subject: subject.replace(/^[^:]+:\s*/, ""), files };
   });
-  return { groups, leftovers: [], degraded: true, truncated: input.truncated };
+  return {
+    groups,
+    leftovers: [],
+    degraded: true,
+    truncated: input.truncated,
+    ...(reason ? { degradedCode: reason.code, degradedMessage: reason.message } : {}),
+  };
 }
 
 /**
@@ -242,8 +288,13 @@ export async function generateCommitPlan(
 ): Promise<CommitPlan> {
   const adapter = AI_ADAPTERS[provider];
   const system = planSystemPrompt(style);
-  const build = adapter.jsonBody ?? adapter.buildBody;
   const knownPaths = input.files.map((f) => f.path);
+  // Reserve only what THIS change-set's reply plausibly needs — the reservation is billed against
+  // the provider's budget whether the model uses it or not.
+  const maxTokens = planMaxTokens(input.files.length);
+  const build = adapter.jsonBody
+    ? (m: string, s: string, u: string) => adapter.jsonBody!(m, s, u, maxTokens)
+    : adapter.buildBody;
 
   const ask = async (user: string): Promise<CommitPlan | null> => {
     const json = await requestJson(
@@ -251,6 +302,7 @@ export async function generateCommitPlan(
       { method: "POST", headers: adapter.headers(apiKey), body: JSON.stringify(build(model, system, user)) },
       fetchImpl,
       PLAN_TIMEOUT_MS,
+      provider, // gate on 429 so re-clicking Auto can't machine-gun a limited provider
     );
     return parseCommitPlan(adapter.extractCompletion(json), knownPaths);
   };

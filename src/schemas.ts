@@ -161,6 +161,7 @@ export const ConnectSchema = z.object({ apiKey: z.string().optional() }); // NO_
 
 export const AiSettingsSchema = z.object({
   style: z.enum(["conventional", "concise", "detailed"]).optional(),
+  diffDetail: z.enum(["lean", "balanced", "thorough"]).optional(), // how much of each file the planner reads
   defaultProvider: z.string().nullish(), // provider validity → NOT_CONFIGURED in the handler
   yolo: z.boolean().optional(), // smart-commit: skip the review editor and commit the AI plan
   commitEnabled: z.boolean().optional(), // whether the AI commit buttons are shown at all

@@ -9,7 +9,13 @@
 import type { AiProviderId, CommitStyle } from "../config.ts";
 import { AI_ADAPTERS, parseModels, type AiModel } from "./adapters.ts";
 
-export type AiCode = "OK" | "AI_AUTH_FAILED" | "AI_UNREACHABLE" | "AI_BAD_REQUEST" | "AI_ERROR";
+export type AiCode =
+  | "OK"
+  | "AI_AUTH_FAILED"
+  | "AI_UNREACHABLE"
+  | "AI_BAD_REQUEST"
+  | "AI_RATE_LIMITED"
+  | "AI_ERROR";
 
 export class AiError extends Error {
   code: AiCode;
@@ -26,6 +32,43 @@ export type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
 
 const REQUEST_TIMEOUT_MS = 20_000;
 
+// ── rate-limit gate (anti-hammer) ────────────────────────────────────────────────
+//
+// A provider that just answered 429 will answer 429 again. Re-asking costs a round-trip, burns
+// request quota, and makes the owner wait to be told the same thing — so once a generation call
+// is rate-limited we remember it and answer from memory for a bit.
+//
+// The wait is deliberately NOT the provider's own `retry-after`: Groq hands back values like
+// 13010s (3.6h), and hard-blocking for hours would be wrong the moment the owner upgrades their
+// tier, swaps the key, or the rolling window frees up (Groq's daily budget decays continuously —
+// observed dropping while idle). So we cap the local pause at a minute: enough that clicking
+// "Auto" or flipping styles can't machine-gun the API, short enough to self-heal. The provider's
+// real message (which does say "try again in 3h36m") is kept and re-surfaced verbatim.
+const GATE_MAX_MS = 60_000;
+/** provider id → when we may probe again, plus the message to answer with until then. */
+const rateGate = new Map<string, { until: number; message: string }>();
+
+/** Seconds from a `Retry-After` header (delta-seconds or HTTP-date), or null. */
+function parseRetryAfter(h: string | null): number | null {
+  if (!h) return null;
+  const secs = Number(h.trim());
+  if (Number.isFinite(secs) && secs >= 0) return secs;
+  const when = Date.parse(h);
+  return Number.isFinite(when) ? Math.max(0, (when - Date.now()) / 1000) : null;
+}
+
+/** Clear a provider's pause — call when its key/model changes, so a fix takes effect at once. */
+export function clearRateGate(provider?: string): void {
+  if (provider) rateGate.delete(provider);
+  else rateGate.clear();
+}
+
+/** For tests/diagnostics: ms until `provider` may be probed again (0 = not gated). */
+export function rateGateRemainingMs(provider: string): number {
+  const g = rateGate.get(provider);
+  return g ? Math.max(0, g.until - Date.now()) : 0;
+}
+
 // ── prompt building (PURE) ───────────────────────────────────────────────────────
 
 const BASE_SYSTEM =
@@ -34,12 +77,23 @@ const BASE_SYSTEM =
 
 export function systemPromptFor(style: CommitStyle): string {
   switch (style) {
+    // The default, and the one tuned to read like a hand-written repo commit (the shape VS Code /
+    // Copilot emit): Conventional-Commits subject, blank line, then a body that says WHY. The old
+    // wording ended at "add a blank line then a short body", which models happily read as
+    // "subject only" — hence messages that felt too terse to be useful.
     case "conventional":
       return (
         BASE_SYSTEM +
-        " Use the Conventional Commits format: a `type(scope): summary` subject line in the " +
-        "imperative mood (types: feat, fix, docs, style, refactor, perf, test, build, ci, chore), " +
-        "at most 72 characters. If the change is non-trivial, add a blank line then a short body."
+        " Follow the Conventional Commits format.\n" +
+        "SUBJECT (first line): `type(scope): description`, at most 72 characters, imperative mood " +
+        '("add", never "added"/"adds"), no trailing period, description in lower case. `type` is ' +
+        "one of feat, fix, docs, style, refactor, perf, test, build, ci, chore. `scope` is an " +
+        "optional lowercase subsystem — omit it rather than invent a vague one.\n" +
+        "BODY: unless the change is a trivial one-liner, add a blank line after the subject, then " +
+        'explain WHAT changed and WHY. Use "- " bullets when there is more than one notable ' +
+        "point, one point per bullet, wrapped at about 72 characters. Describe intent and effect, " +
+        "not a file-by-file restatement of the diff. Never repeat the subject line, and never " +
+        "pad with filler — if there is genuinely only one thing to say, say only that."
       );
     case "detailed":
       return (
@@ -59,7 +113,8 @@ export function systemPromptFor(style: CommitStyle): string {
 const userPromptFor = (diff: string): string =>
   `Write a commit message for the following staged/working changes.\n\n${diff}`;
 
-/** Strip stray code fences / wrapping quotes a model sometimes adds despite instructions. */
+/** Strip stray code fences / wrapping quotes a model sometimes adds despite instructions, and
+ *  enforce git's subject/body separator. */
 export function cleanCommitMessage(text: string): string {
   let s = text.trim();
   // Remove a leading/trailing ``` fence (optionally ```text).
@@ -67,6 +122,18 @@ export function cleanCommitMessage(text: string): string {
   // Remove symmetric wrapping quotes.
   if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
     s = s.slice(1, -1).trim();
+  }
+  // Git defines the SUBJECT as everything up to the first blank line. A model that runs its body
+  // straight on after line 1 — observed live, despite the prompt asking for the blank line — turns
+  // the entire message into one enormous subject in `git log --oneline`, shortlogs and every UI
+  // that shows "the first line". The prompt can ask; only this can guarantee. Structural, so it's
+  // fixed here rather than left to the model's goodwill.
+  const nl = s.indexOf("\n");
+  if (nl !== -1) {
+    const subject = s.slice(0, nl).trimEnd();
+    const rest = s.slice(nl + 1);
+    if (rest.trim()) s = `${subject}\n\n${rest.replace(/^\s*\n/, "")}`;
+    else s = subject;
   }
   return s;
 }
@@ -82,13 +149,24 @@ function extractErrMessage(json: unknown, fallback: string): string {
     .slice(0, 280);
 }
 
-/** One JSON request with a timeout; maps non-2xx + network/timeout to AiError. */
+/**
+ * One JSON request with a timeout; maps non-2xx + network/timeout to AiError.
+ *
+ * `gate` opts this call into the rate-limit pause above. Only GENERATION calls pass it — model
+ * listing deliberately does not, so a rate-limited plan can never stop the owner from connecting
+ * or re-picking a key in Settings (the one screen where they'd go to fix it).
+ */
 export async function requestJson(
   url: string,
   init: RequestInit,
   fetchImpl: FetchFn,
   timeoutMs = REQUEST_TIMEOUT_MS,
+  gate?: string,
 ): Promise<unknown> {
+  if (gate) {
+    const g = rateGate.get(gate);
+    if (g && Date.now() < g.until) throw new AiError("AI_RATE_LIMITED", g.message, 429);
+  }
   let res: Response;
   try {
     res = await fetchImpl(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
@@ -110,8 +188,21 @@ export async function requestJson(
     if (res.status === 400 || res.status === 404 || res.status === 422) {
       throw new AiError("AI_BAD_REQUEST", message, res.status);
     }
+    // 429 is its own thing, and the provider's own text is the useful part — it names the limit
+    // that tripped and when it resets ("… tokens per day (TPD): Limit 100000 … try again in
+    // 4h55m"). Callers surface `message` verbatim rather than guessing at the cause: a free-tier
+    // daily cap is a wildly different fix (wait / upgrade / switch provider) from "the AI failed".
+    if (res.status === 429) {
+      if (gate) {
+        const retryS = parseRetryAfter(res.headers.get("retry-after"));
+        const pause = Math.min(retryS != null ? retryS * 1000 : GATE_MAX_MS, GATE_MAX_MS);
+        rateGate.set(gate, { until: Date.now() + pause, message });
+      }
+      throw new AiError("AI_RATE_LIMITED", message, res.status);
+    }
     throw new AiError("AI_ERROR", message, res.status);
   }
+  if (gate) rateGate.delete(gate); // recovered → stop answering from memory
   return json;
 }
 
@@ -152,6 +243,8 @@ export async function generateCommitMessage(
       body: JSON.stringify(adapter.buildBody(model, system, user)),
     },
     fetchImpl,
+    REQUEST_TIMEOUT_MS,
+    provider, // share the rate-limit pause with the plan call — same provider, same budget
   );
   const text = adapter.extractCompletion(json);
   const cleaned = cleanCommitMessage(text ?? "");

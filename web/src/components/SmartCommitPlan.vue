@@ -13,14 +13,15 @@ import {
   Sparkles,
   Loader2,
   AlertTriangle,
+  ChevronDown,
   GitCommitHorizontal,
-  Combine,
+  Pencil,
   RefreshCw,
 } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { useStore } from "../store";
 import { ApiError } from "../api";
-import type { CommitPlan, DiffStat as DiffStatT } from "../types";
+import type { AiCode, CommitPlan, CommitStyle, DiffStat as DiffStatT } from "../types";
 import CommitCard from "./smart-commit-plan/CommitCard.vue";
 import UnassignedFiles from "./smart-commit-plan/UnassignedFiles.vue";
 import { cn } from "@/lib/utils";
@@ -33,6 +34,15 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+} from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 const props = defineProps<{
@@ -64,9 +74,17 @@ const loading = ref(false);
 const committing = ref(false);
 const error = ref<string | null>(null);
 const degraded = ref(false);
+/** WHY the plan degraded (from the daemon), so the banner can state the real cause instead of
+ *  always blaming the model — a rate-limited request never reached it at all. */
+const degradedCode = ref<AiCode | null>(null);
+const degradedMessage = ref("");
 const truncated = ref(false);
 const groups = ref<EditableGroup[]>([]);
 const leftovers = ref<string[]>([]);
+/** Signature of the plan as the AI last drafted it (set in applyPlan). `isDirty` compares the live
+ *  plan against this so re-drafting actions (style change, Regenerate) can warn before discarding
+ *  hand edits — subject/body rewrites, files dragged between commits, merges/reorders/removals. */
+const planBaseline = ref("");
 /** Per-group "regenerating message" flags, keyed by group key. */
 const regenBusy = reactive<Record<string, boolean>>({});
 /** Path whose inline diff is expanded, or null. Single-open across the whole editor, so at
@@ -123,6 +141,9 @@ const statByPath = computed<Record<string, DiffStatT>>(() => {
   return out;
 });
 const totalFiles = computed(() => groups.value.reduce((n, g) => n + g.files.length, 0));
+/** Which mode the split button's main half runs: "& sync" when the owner picked "Auto commit &
+ *  sync" and there's somewhere to push. The chevron beside it offers the other mode. */
+const primarySync = computed(() => !!props.defaultSync && props.hasRemote);
 const canCommit = computed(
   () =>
     !loading.value &&
@@ -137,6 +158,22 @@ function composeSubject(type: string, scope: string | undefined, subject: string
   return `${prefix}: ${subject}`;
 }
 
+/** Order-sensitive fingerprint of everything the owner can hand-edit — message text plus which
+ *  files sit in which commit, and their order. `key` is deliberately excluded (it's a churn-only
+ *  internal id). Two plans with the same fingerprint look identical to the owner. */
+function planSignature(gs: EditableGroup[], lo: string[]): string {
+  return JSON.stringify([gs.map((g) => [g.subjectLine, g.body, g.files]), lo]);
+}
+/** True once the live plan diverges from what the AI drafted — i.e. the owner has edits worth not
+ *  silently throwing away. False on a pristine plan, while loading, or in the error state. */
+const isDirty = computed(
+  () =>
+    !loading.value &&
+    !error.value &&
+    groups.value.length > 0 &&
+    planSignature(groups.value, leftovers.value) !== planBaseline.value,
+);
+
 function applyPlan(plan: CommitPlan): void {
   groups.value = plan.groups.map((g) => ({
     key: nextKey(),
@@ -147,12 +184,38 @@ function applyPlan(plan: CommitPlan): void {
   }));
   leftovers.value = [...plan.leftovers];
   degraded.value = plan.degraded;
+  degradedCode.value = plan.degradedCode ?? null;
+  degradedMessage.value = plan.degradedMessage ?? "";
   truncated.value = plan.truncated;
+  planBaseline.value = planSignature(groups.value, leftovers.value); // fresh plan → clean slate
   openDiff.value = null; // a fresh plan → collapse any open preview
   openAll.value = null;
 }
 
+/** The degraded banner's headline. The plan still fell back to a folder-based grouping either
+ *  way, but WHY decides what the owner should do about it — waiting out a token cap and retrying
+ *  a flaky provider are not the same advice, and "the AI couldn't structure this" is simply false
+ *  when the request was rejected before the model ever saw it. Static t() keys so i18n-check
+ *  sees them referenced. */
+const degradedTitle = computed(() => {
+  switch (degradedCode.value) {
+    case "AI_RATE_LIMITED":
+      return t("repo.smartCommit.degradedRateLimited");
+    case "AI_UNREACHABLE":
+      return t("repo.smartCommit.degradedUnreachable");
+    default:
+      return t("repo.smartCommit.degraded");
+  }
+});
+
+/** Monotonic token for plan generations. Two generates can overlap (the style picker fires one
+ *  after saving the setting, and `loading` only covers the leg after that save), and the AI call
+ *  has no fixed duration — so a slower EARLIER response must never clobber a newer one. Each run
+ *  claims a token and drops its result if it's been superseded. */
+let genSeq = 0;
+
 async function generate(): Promise<void> {
+  const token = ++genSeq;
   loading.value = true;
   error.value = null;
   // Make sure the changes tree is loaded so file chips can show a status colour.
@@ -161,23 +224,103 @@ async function generate(): Promise<void> {
     // Empty selectedPaths (nothing checked) is passed through as-is — genCommitPlan/the API
     // layer already treat an empty array the same as "no scope", i.e. plan everything.
     const res = await store.genCommitPlan(props.repoId, undefined, props.selectedPaths);
+    if (token !== genSeq) return; // superseded mid-flight — a newer plan owns the editor now
     applyPlan(res.plan);
     if (res.fallback) degraded.value = true;
   } catch (e) {
+    if (token !== genSeq) return; // a stale failure must not blank a newer plan
     error.value = e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e);
     groups.value = [];
     leftovers.value = [];
   } finally {
-    loading.value = false;
+    if (token === genSeq) loading.value = false;
   }
 }
 
+// `immediate` matters: the caller mounts this dialog with `v-if="smartOpen"` at the very moment
+// it flips true, so `open` is already true on the first render and never transitions false→true
+// while the instance is alive. Without it the watch never fires and clicking "Auto" lands on an
+// empty "0 commits · 0 files" plan until the owner hits Regenerate — but clicking Auto IS the
+// request to generate.
 watch(
   () => props.open,
   (open) => {
     if (open) void generate();
   },
+  { immediate: true },
 );
+
+// ── commit-message style ────────────────────────────────────────────────────────
+// The same owner setting as Settings → AI → "Commit message style", surfaced here because this
+// is where its effect is actually visible. Changing it re-drafts the plan (the style only shapes
+// how messages are phrased, so a silent change would look like a no-op).
+const style = computed<CommitStyle>(() => store.aiSettings.style ?? "conventional");
+const styleLabel = computed(
+  () =>
+    ({
+      conventional: t("settings.aiStyleConventional"),
+      concise: t("settings.aiStyleConcise"),
+      detailed: t("settings.aiStyleDetailed"),
+    })[style.value],
+);
+// `next` is reka-ui's AcceptableValue (string | number | boolean | Record | null), so narrow it.
+async function onStyle(next: unknown): Promise<void> {
+  if (typeof next !== "string" || next === style.value || loading.value || committing.value) return;
+  // A style change re-drafts the whole plan. If the owner has hand edits, confirm first; otherwise
+  // apply straight away. (The picker's checkmark follows the saved setting, so bailing here leaves
+  // it visually on the old style until the change actually persists.)
+  if (isDirty.value) {
+    pendingStyle.value = next as CommitStyle;
+    confirmRedraft.value = "style";
+    return;
+  }
+  await applyStyle(next as CommitStyle);
+}
+async function applyStyle(next: CommitStyle): Promise<void> {
+  // Claim `loading` BEFORE the save round-trip, not just for the re-draft: setStyle() updates the
+  // setting optimistically, so without this the picker and Regenerate stay enabled (and `style`
+  // already reads as the new value) for the whole save — long enough to start a second, racing
+  // generate() off one click.
+  loading.value = true;
+  try {
+    await store.setStyle(next);
+  } catch {
+    loading.value = false;
+    toast.error(t("settings.aiStyleFailed"));
+    return;
+  }
+  await generate(); // takes `loading` from here and clears it when it settles
+}
+
+// ── re-draft confirmation ─────────────────────────────────────────────────────────
+// Both the style picker and the footer Regenerate button throw away hand edits by re-drafting.
+// When the plan `isDirty`, funnel them through one confirm modal instead of silently discarding.
+// null = closed; "style"/"regen" = which action is pending. pendingStyle rides along for "style".
+const confirmRedraft = ref<null | "style" | "regen">(null);
+const pendingStyle = ref<CommitStyle | null>(null);
+/** Footer Regenerate handler: confirm when there are edits to lose, otherwise just re-draft. */
+function requestRegenerate(): void {
+  if (loading.value || committing.value) return;
+  if (isDirty.value) {
+    confirmRedraft.value = "regen";
+    return;
+  }
+  void generate();
+}
+/** Owner clicked "Discard & re-draft" in the confirm modal. */
+function confirmRedraftProceed(): void {
+  const action = confirmRedraft.value;
+  const nextStyle = pendingStyle.value;
+  confirmRedraft.value = null;
+  pendingStyle.value = null;
+  if (action === "style" && nextStyle) void applyStyle(nextStyle);
+  else if (action === "regen") void generate();
+}
+/** Owner kept their edits — drop the pending action, leave the plan untouched. */
+function confirmRedraftCancel(): void {
+  confirmRedraft.value = null;
+  pendingStyle.value = null;
+}
 
 // ── editing ─────────────────────────────────────────────────────────────────────
 function pruneEmpty(): void {
@@ -219,12 +362,6 @@ function removeGroup(i: number): void {
   leftovers.value.push(...groups.value[i]!.files);
   groups.value.splice(i, 1);
 }
-function collapseToOne(): void {
-  const all = [...groups.value.flatMap((g) => g.files), ...leftovers.value];
-  groups.value = [{ key: nextKey(), subjectLine: groups.value[0]?.subjectLine ?? "chore: update changes", body: "", showBody: false, files: all }];
-  leftovers.value = [];
-}
-
 function finalMessage(g: EditableGroup): string {
   const subject = g.subjectLine.trim();
   const body = g.body.trim();
@@ -289,12 +426,42 @@ async function execute(sync: boolean): Promise<void> {
 <template>
   <Dialog v-model:open="isOpen">
     <DialogContent class="flex max-h-[85vh] flex-col gap-0 p-0 sm:max-w-2xl">
-      <DialogHeader class="border-b border-border px-5 py-4">
-        <DialogTitle class="flex items-center gap-2">
-          <Sparkles :size="18" class="text-primary" />
-          {{ $t("repo.smartCommit.title") }}
-        </DialogTitle>
-        <DialogDescription>{{ $t("repo.smartCommit.subtitle", { name: repoName }) }}</DialogDescription>
+      <!-- The subtitle is sr-only rather than deleted: reka-ui wires DialogDescription to the
+           dialog's aria-describedby, so screen readers still get the framing the sighted header
+           doesn't need to spell out. `mr-5` keeps the style picker clear of the close X, which
+           DialogContent pins at top-2 right-2. -->
+      <DialogHeader class="border-b border-border px-5 py-3.5">
+        <div class="flex items-center justify-between gap-3">
+          <DialogTitle class="flex items-center gap-2">
+            <Sparkles :size="18" class="text-primary" />
+            {{ $t("repo.smartCommit.title") }}
+          </DialogTitle>
+          <DropdownMenu>
+            <DropdownMenuTrigger as-child>
+              <Button
+                variant="ghost"
+                size="sm"
+                class="mr-5 h-7 gap-1.5 px-2 font-normal text-muted-foreground hover:text-foreground"
+                :disabled="loading || committing"
+                :aria-label="$t('settings.aiStyle')"
+                :title="$t('settings.aiStyle')"
+              >
+                <Pencil :size="13" />
+                <span>{{ styleLabel }}</span>
+                <ChevronDown :size="13" class="opacity-60" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" class="w-52">
+              <DropdownMenuLabel>{{ $t("settings.aiStyle") }}</DropdownMenuLabel>
+              <DropdownMenuRadioGroup :model-value="style" @update:model-value="onStyle">
+                <DropdownMenuRadioItem value="conventional">{{ $t("settings.aiStyleConventional") }}</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="concise">{{ $t("settings.aiStyleConcise") }}</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="detailed">{{ $t("settings.aiStyleDetailed") }}</DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+        <DialogDescription class="sr-only">{{ $t("repo.smartCommit.subtitle", { name: repoName }) }}</DialogDescription>
       </DialogHeader>
 
       <!-- scrolling body -->
@@ -323,7 +490,12 @@ async function execute(sync: boolean): Promise<void> {
             class="mb-3 flex items-start gap-2 rounded-md border border-warning/25 bg-warning/10 px-3 py-2 text-[12.5px] text-warning"
           >
             <AlertTriangle :size="15" class="mt-0.5 shrink-0" />
-            <span>{{ $t("repo.smartCommit.degraded") }}</span>
+            <div class="min-w-0">
+              <span>{{ degradedTitle }}</span>
+              <!-- The provider's own words. For a rate limit this is the whole answer — it names
+                   the limit that tripped and when it resets — so show it rather than paraphrase. -->
+              <p v-if="degradedMessage" class="mt-1 break-words text-[11.5px] opacity-80">{{ degradedMessage }}</p>
+            </div>
           </div>
           <div
             v-if="truncated"
@@ -378,14 +550,6 @@ async function execute(sync: boolean): Promise<void> {
       <DialogFooter class="flex-col gap-2 border-t border-border px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div class="flex items-center gap-3 text-[12px] text-muted-foreground">
           <span v-if="!loading && !error">{{ $t("repo.smartCommit.summary", { commits: groups.length, files: totalFiles }) }}</span>
-          <button
-            v-if="!loading && !error && groups.length > 1"
-            type="button"
-            class="inline-flex items-center gap-1 underline-offset-2 hover:underline"
-            @click="collapseToOne"
-          >
-            <Combine :size="13" />{{ $t("repo.smartCommit.commitAll") }}
-          </button>
         </div>
         <div class="flex items-center gap-2">
           <Tooltip>
@@ -395,34 +559,72 @@ async function execute(sync: boolean): Promise<void> {
                 size="sm"
                 :disabled="loading || committing"
                 :aria-label="$t('repo.smartCommit.regeneratePlan')"
-                @click="generate"
+                @click="requestRegenerate"
               >
                 <RefreshCw :size="15" :class="cn(loading && 'animate-spin')" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>{{ $t("repo.smartCommit.regeneratePlan") }}</TooltipContent>
           </Tooltip>
-          <Button
-            size="sm"
-            :variant="defaultSync && hasRemote ? 'secondary' : 'default'"
-            :disabled="!canCommit"
-            @click="execute(false)"
-          >
-            <Loader2 v-if="committing" :size="15" class="animate-spin" />
-            <GitCommitHorizontal v-else :size="15" />
-            <span>{{ $t("repo.smartCommit.commitAll") }}</span>
-          </Button>
-          <Button
-            v-if="hasRemote"
-            size="sm"
-            :variant="defaultSync ? 'default' : 'secondary'"
-            :disabled="!canCommit"
-            @click="execute(true)"
-          >
-            <RefreshCw v-if="defaultSync" :size="15" />
-            <span>{{ $t("repo.smartCommit.commitSync") }}</span>
-          </Button>
+          <!-- Split "Commit all ▾" — mirrors the Commit/Auto split buttons on the repo card: the
+               main half runs the default mode, the chevron picks the other. With no remote there's
+               nothing to sync to, so it collapses to a plain button. -->
+          <div class="flex">
+            <Button
+              size="sm"
+              :class="cn(hasRemote && 'rounded-r-none')"
+              :disabled="!canCommit"
+              @click="execute(primarySync)"
+            >
+              <Loader2 v-if="committing" :size="15" class="animate-spin" />
+              <RefreshCw v-else-if="primarySync" :size="15" />
+              <GitCommitHorizontal v-else :size="15" />
+              <span>{{ primarySync ? $t("repo.smartCommit.commitSync") : $t("repo.smartCommit.commitAll") }}</span>
+            </Button>
+            <DropdownMenu v-if="hasRemote">
+              <DropdownMenuTrigger as-child>
+                <Button
+                  size="sm"
+                  class="rounded-l-none border-l border-l-black/15 px-1.5 dark:border-l-white/20"
+                  :disabled="!canCommit"
+                  :aria-label="$t('repo.commit.menuLabel')"
+                >
+                  <ChevronDown :size="16" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" class="w-52">
+                <DropdownMenuItem @select="execute(false)">
+                  <GitCommitHorizontal :size="15" />
+                  <span>{{ $t("repo.smartCommit.commitAll") }}</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem @select="execute(true)">
+                  <RefreshCw :size="15" />
+                  <span>{{ $t("repo.smartCommit.commitSync") }}</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+
+  <!-- Re-draft confirmation: guards the style picker and Regenerate when the owner has hand edits.
+       Nested reka-ui dialogs both portal to <body> and stack by z-index, so this sits above the
+       plan editor. Closing via overlay/Esc counts as "keep edits". -->
+  <Dialog :open="confirmRedraft !== null" @update:open="(v) => { if (!v) confirmRedraftCancel(); }">
+    <DialogContent class="sm:max-w-sm">
+      <DialogHeader>
+        <DialogTitle>{{ $t("repo.smartCommit.redraftTitle") }}</DialogTitle>
+        <DialogDescription>{{ $t("repo.smartCommit.redraftBody") }}</DialogDescription>
+      </DialogHeader>
+      <DialogFooter class="gap-2 sm:gap-2">
+        <Button variant="secondary" @click="confirmRedraftCancel">
+          {{ $t("repo.smartCommit.redraftKeep") }}
+        </Button>
+        <Button variant="destructive" @click="confirmRedraftProceed">
+          {{ $t("repo.smartCommit.redraftDiscard") }}
+        </Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>

@@ -9,6 +9,7 @@ import type {
   AiSettings,
   BranchList,
   CommitStyle,
+  DiffDetail,
   ChangedFile,
   CommitPlanResponse,
   FetchAllResult,
@@ -589,6 +590,8 @@ export const api = {
     setCommitEnabled: (commitEnabled: boolean) => req<AiSettings>("PUT", "/api/ai/settings", { commitEnabled }),
     /** Set the AI commit-message style (conventional / concise / detailed). */
     setStyle: (style: CommitStyle) => req<AiSettings>("PUT", "/api/ai/settings", { style }),
+    /** Set how much of each file's diff the smart-commit planner reads (the token-cost dial). */
+    setDiffDetail: (diffDetail: DiffDetail) => req<AiSettings>("PUT", "/api/ai/settings", { diffDetail }),
     connect: (provider: AiProviderId, apiKey: string) =>
       req<{ ok: boolean; models: AiModel[]; settings: AiSettings }>(
         "POST",

@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { AiCatalogEntry, AiModel, AiProviderId, CommitStyle } from "../../types";
+import type { AiCatalogEntry, AiModel, AiProviderId, CommitStyle, DiffDetail } from "../../types";
 
 /** Whether the parent Settings sheet is open — drives the model-list prefetch below. */
 const props = defineProps<{ open: boolean }>();
@@ -169,6 +169,15 @@ async function onStyle(style: string): Promise<void> {
     await store.setStyle(style as CommitStyle);
   } catch {
     toast.error(t("settings.aiStyleFailed"));
+  }
+}
+
+// Set how much of each file's diff the smart-commit planner reads (lean / balanced / thorough).
+async function onDiffDetail(detail: string): Promise<void> {
+  try {
+    await store.setDiffDetail(detail as DiffDetail);
+  } catch {
+    toast.error(t("settings.aiDiffDetailFailed"));
   }
 }
 </script>
@@ -384,6 +393,25 @@ async function onStyle(style: string): Promise<void> {
                 <SelectItem value="conventional">{{ $t("settings.aiStyleConventional") }}</SelectItem>
                 <SelectItem value="concise">{{ $t("settings.aiStyleConcise") }}</SelectItem>
                 <SelectItem value="detailed">{{ $t("settings.aiStyleDetailed") }}</SelectItem>
+              </SelectContent>
+            </Select>
+          </template>
+        </SettingsRow>
+
+        <!-- The token-cost dial. Sits next to the style picker because together they're "what the
+             AI reads" + "what it writes". -->
+        <SettingsRow :label="$t('settings.aiDiffDetail')">
+          <template #info><InfoHint :text="$t('settings.aiDiffDetailHint')" /></template>
+          <template #control>
+            <Select
+              :model-value="settings.diffDetail"
+              @update:model-value="(v) => typeof v === 'string' && onDiffDetail(v)"
+            >
+              <SelectTrigger class="w-44" :aria-label="$t('settings.aiDiffDetail')"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="lean">{{ $t("settings.aiDiffDetailLean") }}</SelectItem>
+                <SelectItem value="balanced">{{ $t("settings.aiDiffDetailBalanced") }}</SelectItem>
+                <SelectItem value="thorough">{{ $t("settings.aiDiffDetailThorough") }}</SelectItem>
               </SelectContent>
             </Select>
           </template>

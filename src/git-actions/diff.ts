@@ -9,9 +9,9 @@ import { safeGitEnv } from "../git.ts";
 import { readChanges } from "../read/status.ts";
 import { normalizeRelPath } from "../paths.ts";
 import type { CommitPlanInput, PlanInputFile } from "../ai.ts";
+import type { DiffDetail } from "../config.ts";
 import { PATCH_CAP } from "../contract.ts";
 
-const DIFF_CAP = 24_000;
 const STATUS_CAP = 4_000;
 const DIFF_TIMEOUT_MS = 30_000;
 
@@ -87,13 +87,34 @@ async function boundedDiff(
   return withHead || (await run(["diff", ...extraArgs]));
 }
 
-export async function collectCommitDiff(absPath: string): Promise<string> {
-  const status = (await boundedGit(absPath, ["status", "--porcelain=v1"], STATUS_CAP)).trim();
-  const diff = await boundedDiff(absPath, null, [], DIFF_CAP);
+/**
+ * Shared tail of the two message collectors: read the diff generously, fold each file to the
+ * owner's diff-detail slice, THEN bound the result.
+ *
+ * The order is the whole point (same lesson as the planner): capping at READ time is
+ * first-come-first-served, so one big file eats the budget and every file behind it never reaches
+ * the model. Folding first means a runaway file costs its slice instead of everything — which also
+ * finally puts a ceiling on lockfiles here, since this path (unlike the planner) has no
+ * isNoisyPath filter and used to send a `package-lock.json` diff in full.
+ */
+async function statusPlusFoldedDiff(
+  absPath: string,
+  paths: string[] | null,
+  status: string,
+  detail: DiffDetail,
+): Promise<string> {
+  const caps = DIFF_DETAIL_CAPS[detail];
+  const raw = await boundedDiff(absPath, paths, [], MSG_RAW_CAP);
+  const folded = foldLargeFileDiffs(raw, caps.perFile).diff;
   let combined =
-    `# git status --porcelain\n${status || "(clean)"}\n\n# git diff\n${diff || "(no textual diff — new/untracked files only)"}`;
-  if (combined.length > DIFF_CAP) combined = `${combined.slice(0, DIFF_CAP)}\n…[truncated]`;
+    `# git status --porcelain\n${status || "(clean)"}\n\n# git diff\n${folded || "(no textual diff — new/untracked files only)"}`;
+  if (combined.length > caps.msgTotal) combined = `${combined.slice(0, caps.msgTotal)}\n…[truncated]`;
   return combined;
+}
+
+export async function collectCommitDiff(absPath: string, detail: DiffDetail = "balanced"): Promise<string> {
+  const status = (await boundedGit(absPath, ["status", "--porcelain=v1"], STATUS_CAP)).trim();
+  return statusPlusFoldedDiff(absPath, null, status, detail);
 }
 
 /**
@@ -101,7 +122,11 @@ export async function collectCommitDiff(absPath: string): Promise<string> {
  * proposed commit's message from just its files (`git status`/`git diff HEAD -- <paths>`).
  * Bounded + read-only; chunks the pathspec so a big group can't overflow the OS arg limit.
  */
-export async function collectPathsDiff(absPath: string, paths: string[]): Promise<string> {
+export async function collectPathsDiff(
+  absPath: string,
+  paths: string[],
+  detail: DiffDetail = "balanced",
+): Promise<string> {
   if (paths.length === 0) return "";
   const chunks = chunkByBytes(paths);
   let status = "";
@@ -109,18 +134,43 @@ export async function collectPathsDiff(absPath: string, paths: string[]): Promis
     if (status.length >= STATUS_CAP) break;
     status += await boundedGit(absPath, ["status", "--porcelain=v1", "--", ...chunk], STATUS_CAP);
   }
-  status = status.trim();
-  const diff = await boundedDiff(absPath, paths, [], DIFF_CAP);
-  let combined =
-    `# git status --porcelain\n${status || "(clean)"}\n\n# git diff\n${diff || "(no textual diff — new/untracked files only)"}`;
-  if (combined.length > DIFF_CAP) combined = `${combined.slice(0, DIFF_CAP)}\n…[truncated]`;
-  return combined;
+  return statusPlusFoldedDiff(absPath, paths, status.trim(), detail);
 }
 
-/** The smart-commit planner gets a larger diff budget than the message path — grouping needs
- *  more of the picture than a one-line summary does. Still bounded so a giant change-set can't
- *  balloon the provider payload; the per-file list (always complete) carries the rest. */
-const PLAN_DIFF_CAP = 40_000;
+/**
+ * What the AI reads, per the owner's "AI diff detail" dial (Settings → AI). Governs BOTH the
+ * ✨ Generate message path and the Auto planner. The point is fairness, not just size: without a per-file slice the diff is
+ * first-come-first-served, so one big file eats the whole budget and every file after it is
+ * invisible.
+ *
+ * Measured on a real repo before this existed: `data/car-embeddings.json` (generated) was 97% of
+ * a 40k diff — 106 other files shared the remaining 3%, so the planner was grouping essentially
+ * blind AND we paid ~10k tokens for a blob of numbers.
+ *
+ * `perFile` in ~changed lines at -U0 (~40 chars/line): lean ≈ 30, balanced ≈ 50, thorough ≈ 100.
+ * Even `lean` is enough to tell what a file's change is ABOUT, which is all GROUPING needs (the
+ * complete file list + real +/- stats ride along regardless) — the dial really trades how much of
+ * a LARGE file's body feeds its message against tokens spent per commit.
+ *
+ * BOTH bounds have to move together, or the dial silently does nothing on a repo with many
+ * similar-sized files: the total cap binds first, so every setting lands on the same payload.
+ * Measured before this was split out — ✨ Generate on a 20-file repo produced an identical 6,003
+ * tokens at lean, balanced AND thorough, because all three overran the flat total and got cut to
+ * it. `msgTotal`/`planTotal` at `balanced` are exactly the historical caps (24k / 40k), so the
+ * default preserves today's behavior and the dial only moves cheaper or richer from there.
+ */
+export const DIFF_DETAIL_CAPS: Record<DiffDetail, { perFile: number; msgTotal: number; planTotal: number }> = {
+  lean: { perFile: 1_200, msgTotal: 12_000, planTotal: 20_000 },
+  balanced: { perFile: 2_000, msgTotal: 24_000, planTotal: 40_000 },
+  thorough: { perFile: 4_000, msgTotal: 40_000, planTotal: 64_000 },
+};
+
+/** Raw diff read from git BEFORE folding. Only what survives folding is sent to the provider, so
+ *  this is just local memory — read generously so every file's head is available to fold from,
+ *  rather than losing late files to the send-cap before folding can even see them. */
+const PLAN_RAW_CAP = 400_000;
+/** Same idea as PLAN_RAW_CAP, for the message collectors (whose send cap is msgTotal). */
+const MSG_RAW_CAP = 400_000;
 
 /** Lockfile basenames whose DIFF BODY is high-noise / low-signal for commit GROUPING. */
 const NOISE_BASENAMES = new Set([
@@ -144,6 +194,38 @@ export function isNoisyPath(path: string): boolean {
 }
 
 /**
+ * SIZE-based diff folding — the other half of the idea isNoisyPath() implements by NAME.
+ *
+ * Name folding only catches files we thought to list (lockfiles, *.min.js). It cannot catch the
+ * general case: a generated `data/car-embeddings.json` is an ordinary .json by name, and it was
+ * measured eating 97% of a real 40k planner diff. Folding by SIZE needs no such list — any file
+ * that runs long is cut to its head plus a count of what was dropped.
+ *
+ * Keeping the HEAD is deliberate: at -U0 the first hunks are what characterize a change, and the
+ * always-complete file list still carries each file's true +/- stat, so grouping loses nothing.
+ * The marker is left in-band so the model knows it is reading a sample, not the whole file.
+ *
+ * Pure + unit-testable. Returns the folded diff and how many files were folded.
+ */
+export function foldLargeFileDiffs(diff: string, perFileCap: number): { diff: string; folded: number } {
+  if (!diff) return { diff, folded: 0 };
+  // Split BEFORE each "diff --git" so every chunk keeps its own header.
+  const chunks = diff.split(/(?=^diff --git )/m);
+  let folded = 0;
+  const out = chunks.map((chunk) => {
+    if (chunk.length <= perFileCap) return chunk;
+    folded++;
+    // Cut on a line boundary — half a diff line is worse than no line.
+    const head = chunk.slice(0, perFileCap);
+    const nl = head.lastIndexOf("\n");
+    const kept = nl > 0 ? head.slice(0, nl) : head;
+    const elided = chunk.slice(kept.length).split("\n").length - 1;
+    return `${kept}\n… [${elided} more diff lines folded — large file; its full +/- stat is in the file list]\n`;
+  });
+  return { diff: out.join(""), folded };
+}
+
+/**
  * Build the read-only input for the AI commit planner: the complete changed-file list (with
  * per-file +/- stats and rename sources) plus a bounded, TOKEN-TRIMMED diff. Never mutates the
  * index. The file list is authoritative (it drives validation + grouping); the diff is best-
@@ -157,7 +239,11 @@ export function isNoisyPath(path: string): boolean {
  * the UI is responsible for turning "nothing checked" into "no scope requested" (empty selection
  * = plan everything), never into an accidental empty plan.
  */
-export async function collectCommitPlanInput(absPath: string, onlyPaths?: string[]): Promise<CommitPlanInput> {
+export async function collectCommitPlanInput(
+  absPath: string,
+  onlyPaths?: string[],
+  detail: DiffDetail = "balanced",
+): Promise<CommitPlanInput> {
   const all = await readChanges(absPath, true); // withStats → per-file add/remove counts
   const scope = onlyPaths?.length ? new Set(onlyPaths) : null;
   const changed = scope ? all.filter((f) => scope.has(f.path)) : all;
@@ -165,12 +251,20 @@ export async function collectCommitPlanInput(absPath: string, onlyPaths?: string
   // Only diff the files worth reading; fold out lockfiles/generated/minified (their name + stat
   // in the file list is enough for grouping). `-U0` trims to just the changed lines.
   const diffPaths = changed.map((f) => f.path).filter((p) => !isNoisyPath(p));
-  // +1 on the cap so the truncation check below can tell "exactly at cap" from "overflowed".
-  let diff = diffPaths.length > 0
-    ? await boundedDiff(absPath, diffPaths, ["-U0", "--no-color", "-M"], PLAN_DIFF_CAP + 1)
+  // Read generously, THEN fold per-file, THEN apply the send cap. Order matters: capping at read
+  // time is first-come-first-served, so a single huge file would consume the budget and hide
+  // every file behind it — folding first gives each file a fair slice of what we actually send.
+  const raw = diffPaths.length > 0
+    ? await boundedDiff(absPath, diffPaths, ["-U0", "--no-color", "-M"], PLAN_RAW_CAP)
     : "";
-  const truncated = diff.length > PLAN_DIFF_CAP;
-  if (truncated) diff = `${diff.slice(0, PLAN_DIFF_CAP)}\n…[truncated]`;
+  const planCaps = DIFF_DETAIL_CAPS[detail];
+  let diff = foldLargeFileDiffs(raw, planCaps.perFile).diff;
+  // `truncated` means whole files fell off the end — the serious case the UI warns about. A
+  // FOLDED file isn't that: the planner still sees its head and its exact stat, and the in-band
+  // marker tells the model it's a sample, so folding stays quiet rather than crying wolf on
+  // every commit that happens to touch one big file.
+  const truncated = diff.length > planCaps.planTotal;
+  if (truncated) diff = `${diff.slice(0, planCaps.planTotal)}\n…[truncated]`;
 
   // Best-effort binary flag: git prints "Binary files <a> and b/<p> differ". Match the b-side
   // path so both modified ("a/x and b/x") and newly-added ("/dev/null and b/x") binaries flag.

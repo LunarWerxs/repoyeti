@@ -12,6 +12,7 @@ import { backendFor } from "../vcs/index.ts";
 import type { VcsBackend } from "../vcs/types.ts";
 import { collectCommitPlanInput } from "../git-actions.ts";
 import type { CommitPlanInput, PlanInputFile } from "../ai.ts";
+import type { DiffDetail } from "../config.ts";
 import { readTags, type BranchList, type LogResult, type StashList, type TagList, type CommitDetail, type MergeFilter, type RefScope } from "../read/inspect.ts";
 import { guardRepo } from "./guards.ts";
 
@@ -153,7 +154,7 @@ export interface DiffResult {
  * (so it can't race a fetch/pull/push/commit). Refuses a clean tree — there is nothing
  * to write a message about. Read-only; never mutates the index.
  */
-export async function collectRepoDiff(repoId: string): Promise<DiffResult> {
+export async function collectRepoDiff(repoId: string, detail: DiffDetail = "balanced"): Promise<DiffResult> {
   const g = guardRepo<"ERROR">(repoId, "ERROR");
   if (g.fail) return g.fail;
   const repo = g.repo;
@@ -165,7 +166,7 @@ export async function collectRepoDiff(repoId: string): Promise<DiffResult> {
     const st = await backend.readStatus(repo.absPath);
     if (st.error) return { ok: false, code: "ERROR" as const, message: st.error };
     if (st.dirty === 0) return { ok: false, code: "NOTHING_TO_COMMIT" as const, message: "nothing to commit" };
-    const diff = await backend.collectAiDiff(repo.absPath);
+    const diff = await backend.collectAiDiff(repo.absPath, undefined, detail);
     return { ok: true, code: "OK" as const, diff };
   });
 }
@@ -175,14 +176,18 @@ export async function collectRepoDiff(repoId: string): Promise<DiffResult> {
  * message from just its files. Behind the per-repo op-queue, read-only. Refuses a submodule
  * or an empty path set; an empty scoped diff still returns OK (the model gets the file list).
  */
-export async function collectRepoPathsDiff(repoId: string, paths: string[]): Promise<DiffResult> {
+export async function collectRepoPathsDiff(
+  repoId: string,
+  paths: string[],
+  detail: DiffDetail = "balanced",
+): Promise<DiffResult> {
   const g = guardRepo<"ERROR">(repoId, "ERROR");
   if (g.fail) return g.fail;
   const repo = g.repo;
   if (paths.length === 0) return { ok: false, code: "NOTHING_TO_COMMIT", message: "no files selected" };
   const backend = backendFor(repo.vcs);
   return enqueue(repoId, async () => {
-    const diff = await backend.collectAiDiff(repo.absPath, paths);
+    const diff = await backend.collectAiDiff(repo.absPath, paths, detail);
     return { ok: true, code: "OK" as const, diff };
   });
 }
@@ -207,7 +212,11 @@ export interface PlanInputResult {
  * route) is expected to pass `undefined`/omit rather than `[]` for "nothing checked", so this
  * never mistakes an empty checkbox state for an intentional empty scope.
  */
-export async function planCommitInput(repoId: string, onlyPaths?: string[]): Promise<PlanInputResult> {
+export async function planCommitInput(
+  repoId: string,
+  onlyPaths?: string[],
+  detail: DiffDetail = "balanced",
+): Promise<PlanInputResult> {
   const g = guardRepo<"ERROR">(repoId, "ERROR");
   if (g.fail) return g.fail;
   const repo = g.repo;
@@ -218,7 +227,7 @@ export async function planCommitInput(repoId: string, onlyPaths?: string[]): Pro
     const st = await backend.readStatus(repo.absPath);
     if (st.error) return { ok: false, code: "ERROR" as const, message: st.error };
     if (st.dirty === 0) return { ok: false, code: "NOTHING_TO_COMMIT" as const, message: "nothing to commit" };
-    const input = await planInputFor(backend, repo.absPath, onlyPaths);
+    const input = await planInputFor(backend, repo.absPath, onlyPaths, detail);
     return { ok: true, code: "OK" as const, input };
   });
 }
@@ -227,12 +236,19 @@ export async function planCommitInput(repoId: string, onlyPaths?: string[]): Pro
  *  detection); other backends (Lore) build it from the changed-file list + the backend's AI diff —
  *  the file list drives grouping, the diff carries the textual context. `onlyPaths` scopes both
  *  to a subset (see planCommitInput); undefined/empty means the whole tree. */
-async function planInputFor(backend: VcsBackend, absPath: string, onlyPaths?: string[]): Promise<CommitPlanInput> {
-  if (backend.kind === "git") return collectCommitPlanInput(absPath, onlyPaths);
+async function planInputFor(
+  backend: VcsBackend,
+  absPath: string,
+  onlyPaths?: string[],
+  detail: DiffDetail = "balanced",
+): Promise<CommitPlanInput> {
+  if (backend.kind === "git") return collectCommitPlanInput(absPath, onlyPaths, detail);
   const changedAll = await backend.readChanges(absPath, true);
   const scope = onlyPaths?.length ? new Set(onlyPaths) : null;
   const changed = scope ? changedAll.filter((f) => scope.has(f.path)) : changedAll;
-  const diff = onlyPaths?.length ? await backend.collectAiDiff(absPath, onlyPaths) : await backend.collectAiDiff(absPath);
+  const diff = onlyPaths?.length
+    ? await backend.collectAiDiff(absPath, onlyPaths, detail)
+    : await backend.collectAiDiff(absPath, undefined, detail);
   const files: PlanInputFile[] = changed.map((f) => ({
     path: f.path,
     status: f.status,

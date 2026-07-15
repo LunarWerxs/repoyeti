@@ -708,10 +708,10 @@ op-queue mutation vs. routes vs. store/UI).
                                         │
                  ┌── Review (full editor, client-side) ──────────────────────┐
                  │ ordered commit cards: edit subject/body, move files        │
-                 │ between groups, merge / split / reorder / collapse-to-one, │
-                 │ regenerate plan or one message. Nothing committed yet.     │
+                 │ between groups, merge / split / reorder, switch message    │
+                 │ style, regenerate plan or one message. Nothing committed.  │
                  └───────────────────────────────────────────────────────────┘
-                                        │  "Commit all N"  (+ optional sync)
+                                        │  "Commit all" (▾ picks sync)
                  ┌── Execute (one op-queue slot, atomic per commit) ─────────┐
                  │ re-validate plan vs CURRENT tree → for each group:         │
                  │   git add -- <paths> ; git -c user.* commit -m <msg>       │
@@ -900,10 +900,15 @@ for (const c of commits) {
   - per-card: type/scope badge + editable subject + expandable body + file chips;
   - **move a file** to another card (drag a chip, or a "move to…" menu);
   - **merge** two cards, **split** a card, **delete** a card (its files → Unassigned),
-    **collapse to one commit**, **regenerate** the whole plan or one card's message;
+    **regenerate** the whole plan or one card's message;
   - a live preview of each final `type(scope): subject` line;
-  - footer: **Commit all N** and **Commit all & sync**, plus **Cancel** (discards the plan,
-    no git change); a banner when `degraded`/`truncated`; an "Unassigned" group blocks commit.
+  - header: a **commit-message style** picker (conventional / concise / detailed) — the same
+    owner setting as Settings → AI, surfaced here because this is where its effect shows;
+    changing it saves and re-drafts the plan;
+  - footer: a split **Commit all** button whose **▾** picks plain vs. **& sync** (mirrors the
+    Commit/Auto split buttons on the card; the chevron is dropped when there's no remote), plus
+    **Cancel** (discards the plan, no git change); a banner when `degraded`/`truncated`; an
+    "Unassigned" group blocks commit.
 - **`locales/en.json`** — all new strings (i18n scaffolding is retained even though the app
   ships English-only).
 

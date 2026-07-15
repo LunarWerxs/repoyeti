@@ -112,6 +112,17 @@ export const AI_PROVIDERS: readonly AiProviderId[] = AI_CATALOG.map((e) => e.id)
 
 export type CommitStyle = "conventional" | "concise" | "detailed";
 
+/**
+ * How much of EACH changed file the smart-commit planner reads (see foldLargeFileDiffs in
+ * git-actions/diff.ts for the mechanism, and DIFF_DETAIL_CAPS for the chars each maps to).
+ *
+ * It's a cost dial, not a quality switch: the planner always gets the COMPLETE file list with
+ * every file's real +/- stat, so grouping is unaffected — this only decides how much of a large
+ * file's body it reads before the rest is folded away. Leaner = fewer tokens per commit, which on
+ * a rate-limited free tier is directly more commits per day.
+ */
+export type DiffDetail = "lean" | "balanced" | "thorough";
+
 export interface AiProviderCfg {
   /** Secret API key — kept in the OS keychain, hydrated into memory at boot, never on disk
    *  and never returned to a client. Optional because the on-disk shape omits it. */
@@ -131,9 +142,12 @@ export interface AiConfig {
    * entirely for owners who write their own messages.
    */
   commitEnabled?: boolean;
-  /** Commit-message style for the prompt (default "conventional"). Owners can override
-   *  here in config.json; the UI no longer exposes a picker (conventional is the norm). */
+  /** Commit-message style for the prompt (default "conventional"). Pickable from Settings → AI
+   *  and from the smart-commit plan header; settable here too. */
   style?: CommitStyle;
+  /** How much of each file's diff the smart-commit planner reads (default "balanced"). The cost
+   *  dial — see the DiffDetail docs. Pickable from Settings → AI. */
+  diffDetail?: DiffDetail;
   /**
    * Smart-commit "YOLO" mode (default off): when on, the Smart Commit button skips the
    * review editor — it generates the plan and commits it immediately (no review, no
@@ -435,6 +449,8 @@ export interface RedactedAiConfig {
   providers: Partial<Record<AiProviderId, { configured: true; model: string | null }>>;
   defaultProvider: AiProviderId | null;
   style: CommitStyle;
+  /** How much of each file's diff the smart-commit planner reads. Default "balanced". */
+  diffDetail: DiffDetail;
   /** Smart-commit YOLO mode (commit the AI plan without review). Default false. */
   yolo: boolean;
   /** Whether the AI commit buttons are shown (default true — visible even with no key). */
@@ -474,6 +490,7 @@ export function redactAi(cfg: RepoYetiConfig): RedactedAiConfig {
     providers: {},
     defaultProvider: null,
     style: cfg.ai?.style ?? "conventional",
+    diffDetail: cfg.ai?.diffDetail ?? "balanced",
     yolo: cfg.ai?.yolo ?? false,
     commitEnabled: cfg.ai?.commitEnabled !== false, // default ON
   };

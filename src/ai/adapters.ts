@@ -11,12 +11,28 @@ export interface AiModel {
   label: string;
 }
 
-/** The commit-plan call returns a JSON object listing files across groups, so it needs a
- *  higher ceiling than a one-line message — but NOT too high: a provider counts the full
- *  `max_tokens` reservation against its rate limit (the free Groq tier is 6000 tokens/min),
- *  so an oversized reservation gets the whole request rejected. 4096 is ample for the actual
- *  output (even 100 files is ~2k tokens of JSON) while staying within the free tier. */
+/** Hard ceiling for the commit-plan reply. A plan is a JSON object listing files across groups,
+ *  so it needs more room than a one-line message — but NOT too much: a provider counts the full
+ *  `max_tokens` RESERVATION against its rate limit, so an oversized reservation gets the whole
+ *  request rejected. Even ~100 files is only ~2k tokens of JSON, so this is the cap, not the
+ *  default — see planMaxTokens(). */
 const PLAN_MAX_TOKENS = 4096;
+
+/**
+ * Right-size the plan's `max_tokens` to the change-set instead of always reserving the ceiling.
+ *
+ * This matters because the reservation is BILLED, not just permitted: measured against Groq's
+ * free tier, an 11-file plan reserved 4096 tokens to produce a ~900-token reply — ~3.2k tokens
+ * per commit charged for nothing, on a 100k/day budget. Sizing it to the file count gives that
+ * back to the owner, who commits many times a day.
+ *
+ * ~60 tokens/file covers a path plus its share of type/scope/subject/body, and the 512 floor
+ * keeps a tiny change-set from being cut off mid-JSON (an unparseable reply costs a retry, which
+ * would cost far more than it saved).
+ */
+export function planMaxTokens(fileCount: number): number {
+  return Math.max(512, Math.min(PLAN_MAX_TOKENS, 256 + fileCount * 60));
+}
 
 // ── model-list parsing helpers (PURE) ────────────────────────────────────────────
 
@@ -112,7 +128,7 @@ interface AiAdapter {
    * than a one-line message). Falls back to `buildBody` when a provider has no JSON mode
    * (Anthropic) — there the strict-JSON instruction in the prompt carries it.
    */
-  jsonBody?: (model: string, system: string, user: string) => unknown;
+  jsonBody?: (model: string, system: string, user: string, maxTokens: number) => unknown;
   /** Pull the generated text out of this provider's response shape. */
   extractCompletion: (json: unknown) => string;
 }
@@ -132,10 +148,10 @@ function openAiCompatible(opts: {
     buildBody: chatBody,
     // JSON mode + a raised token ceiling. `response_format: json_object` makes the four
     // OpenAI-compatible providers emit a bare JSON object (no fences/preamble) reliably.
-    jsonBody: (model, system, user) => ({
+    jsonBody: (model, system, user, maxTokens) => ({
       ...(chatBody(model, system, user) as Record<string, unknown>),
       response_format: { type: "json_object" },
-      max_tokens: PLAN_MAX_TOKENS,
+      max_tokens: maxTokens,
     }),
     extractCompletion: chatExtract,
   };
@@ -162,9 +178,9 @@ export const AI_ADAPTERS: Record<AiProviderId, AiAdapter> = {
     }),
     // Anthropic has no JSON-mode flag; the strict-JSON prompt instruction carries it. We
     // only raise the token ceiling so a multi-group plan can't be truncated mid-object.
-    jsonBody: (model, system, user) => ({
+    jsonBody: (model, system, user, maxTokens) => ({
       model,
-      max_tokens: PLAN_MAX_TOKENS,
+      max_tokens: maxTokens,
       system,
       messages: [{ role: "user", content: user }],
     }),
@@ -200,10 +216,10 @@ export const AI_ADAPTERS: Record<AiProviderId, AiAdapter> = {
       generationConfig: { maxOutputTokens: 1024 },
     }),
     // `responseMimeType: application/json` is Gemini's JSON mode; raise the output ceiling.
-    jsonBody: (_model, system, user) => ({
+    jsonBody: (_model, system, user, maxTokens) => ({
       systemInstruction: { parts: [{ text: system }] },
       contents: [{ role: "user", parts: [{ text: user }] }],
-      generationConfig: { maxOutputTokens: PLAN_MAX_TOKENS, responseMimeType: "application/json" },
+      generationConfig: { maxOutputTokens: maxTokens, responseMimeType: "application/json" },
     }),
     extractCompletion: (json) => {
       const parts = (json as { candidates?: Array<{ content?: { parts?: unknown } }> })
