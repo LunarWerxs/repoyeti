@@ -16,7 +16,15 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createApp } from "../src/http/app.ts";
 import { sign } from "../src/auth.ts";
-import { initDb, createShare, revokeShare, listShareEvents, type Share } from "../src/db.ts";
+import {
+  initDb,
+  createShare,
+  revokeShare,
+  listShareEvents,
+  countShareEvents,
+  logShareEvent,
+  type Share,
+} from "../src/db.ts";
 import { hashToken, mintToken, GUEST_COOKIE } from "../src/share/index.ts";
 import { mkScratchDir } from "./helpers/scratch.ts";
 import { mustUpsertRepo } from "./helpers/upsert.ts";
@@ -409,6 +417,38 @@ test("GET /api/auth/status gives a guest no owner identity", async () => {
 });
 
 // ── audit ────────────────────────────────────────────────────────────────────────
+
+test("the audit trail is bounded — a guest can't grow it without limit", () => {
+  // The rows are written BY the guest's own requests, so without a cap the link-holder decides how
+  // big the table gets: sit in a loop hitting a forbidden route and it grows forever.
+  //
+  // This hammers in a tight loop ON PURPOSE: every row lands in the same millisecond, which is the
+  // case a naive `at < cutoff` prune gets wrong (all timestamps equal ⇒ nothing is older ⇒ nothing
+  // is deleted ⇒ no cap, precisely when it's needed). Pruning by rowid is what makes this pass.
+  const share = mkShare("view");
+  for (let i = 0; i < 640; i++) logShareEvent(share.id, `POST /api/spam/${i}`, null, "denied");
+
+  const rows = countShareEvents(share.id);
+  expect(rows).toBeLessThanOrEqual(500);
+  expect(rows).toBeGreaterThan(0);
+
+  // ...and it keeps the NEWEST, which is the half anyone would actually read.
+  const newest = listShareEvents(share.id, 1)[0]!;
+  expect(newest.action).toBe("POST /api/spam/639");
+});
+
+test("the cap is per-share — one noisy link can't evict another's history", () => {
+  const noisy = mkShare("view");
+  const quiet = mkShare("control");
+  logShareEvent(quiet.id, "POST /api/repos/x/commit", sharedRepoId, "allowed");
+  for (let i = 0; i < 600; i++) logShareEvent(noisy.id, `POST /api/spam/${i}`, null, "denied");
+
+  // The quiet link's single meaningful row survives the flood next door.
+  const quietRows = listShareEvents(quiet.id);
+  expect(quietRows).toHaveLength(1);
+  expect(quietRows[0]!.action).toBe("POST /api/repos/x/commit");
+  expect(quietRows[0]!.outcome).toBe("allowed");
+});
 
 test("a guest's refused mutation is recorded against their link", async () => {
   const app = createApp(enforcedCfg());

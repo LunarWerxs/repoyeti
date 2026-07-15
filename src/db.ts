@@ -948,10 +948,30 @@ interface ShareEventRow {
 }
 
 /**
+ * How many audit rows a single share link keeps. Older ones are dropped on write.
+ *
+ * The table is written by the guest's own requests, so without a cap the link-holder controls how
+ * big it grows — hammer a forbidden route (or a failing commit) in a loop and it grows forever.
+ * They're someone the owner deliberately chose, and it's a local SQLite file, so this is a
+ * housekeeping bound rather than a defence. 500 is far more than anyone will read and still
+ * bounded: worst case a link costs a few hundred KB, no matter who holds it or for how long.
+ */
+const SHARE_EVENT_CAP = 500;
+
+/**
  * Record what a guest tried. Called for mutations (allowed or denied) — reads are far too chatty
  * to be worth a row each, and "he looked at the diff" isn't the question this table answers.
  * The question it answers is "did my brother push this, or did I?", which git history cannot,
  * because a guest's commits are authored as the owner by design.
+ *
+ * Keeps only the newest SHARE_EVENT_CAP rows per share. The prune is a no-op below the cap: the
+ * subquery returns NULL when the share has fewer rows than the offset, and `rowid < NULL` matches
+ * nothing, so the common path deletes nothing.
+ *
+ * Pruned by `rowid`, NOT by `at`. `at` is Date.now() — millisecond resolution — so the rows a
+ * hammering client produces all share one timestamp, and a `at < cutoff` prune would match nothing
+ * and silently fail to cap in exactly the case the cap exists for. rowid is monotonic per insert,
+ * so "newest" is unambiguous and tie-free (and immune to a clock stepping backwards).
  */
 export function logShareEvent(
   shareId: string,
@@ -959,17 +979,40 @@ export function logShareEvent(
   repoId: string | null,
   outcome: "allowed" | "denied",
 ): void {
-  getDb()
+  const db2 = getDb();
+  db2
     .query(`INSERT INTO share_events (id, share_id, at, action, repo_id, outcome) VALUES (?, ?, ?, ?, ?, ?)`)
     .run(randomUUID(), shareId, Date.now(), action, repoId, outcome);
+  db2
+    .query(
+      // OFFSET cap-1 selects the CAP-th newest row; deleting everything strictly older than it
+      // leaves exactly CAP. (OFFSET cap would name the CAP+1-th and leave one row too many.)
+      `DELETE FROM share_events
+       WHERE share_id = ?1
+         AND rowid < (SELECT rowid FROM share_events WHERE share_id = ?1 ORDER BY rowid DESC LIMIT 1 OFFSET ?2)`,
+    )
+    .run(shareId, SHARE_EVENT_CAP - 1);
+}
+
+/** How many audit rows a share is holding. Exists so the cap can be asserted against the TABLE
+ *  rather than against a already-limited read, which would pass no matter how big it grew. */
+export function countShareEvents(shareId: string): number {
+  const r = getDb()
+    .query(`SELECT count(*) AS n FROM share_events WHERE share_id = ?`)
+    .get(shareId) as { n: number };
+  return r.n;
 }
 
 export function listShareEvents(shareId: string, limit = 100): ShareEvent[] {
   return (
     getDb()
       .query(
+        // `at DESC, rowid DESC`, not `at DESC` alone: `at` is millisecond-resolution, so a burst of
+        // events shares one timestamp and ordering by it alone leaves ties in arbitrary order —
+        // "newest first" would be a lie exactly when the trail is busiest. rowid breaks the tie in
+        // true insertion order.
         `SELECT id, share_id, at, action, repo_id, outcome FROM share_events
-         WHERE share_id = ? ORDER BY at DESC LIMIT ?`,
+         WHERE share_id = ? ORDER BY at DESC, rowid DESC LIMIT ?`,
       )
       .all(shareId, Math.max(1, Math.min(limit, 500))) as ShareEventRow[]
   ).map((r) => ({
