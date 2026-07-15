@@ -193,8 +193,10 @@ test("plan prompts mention the file-level rule and list every path", () => {
 // 40k planner diff (106 other files shared 3%), and every plan reserved 4096 output tokens to
 // produce ~900 — on a 100k/day budget that is ~7 commits/day.
 
-test("foldLargeFileDiffs condenses a big file and leaves small ones untouched", () => {
+test("foldLargeFileDiffs bounds a big file and leaves small ones untouched", () => {
   const small = "diff --git a/small.ts b/small.ts\n@@ -1 +1 @@\n-a\n+b\n";
+  // A generated data blob: no declarations for git to find, so this is the TRUNCATION path —
+  // condensing it would mean inventing structure that isn't there. Bounded either way.
   const huge = `diff --git a/data/blob.json b/data/blob.json\n@@ -1 +1 @@\n${"+x".repeat(5000)}\n`;
   const { diff, folded } = foldLargeFileDiffs(small + huge, 2000);
 
@@ -202,11 +204,9 @@ test("foldLargeFileDiffs condenses a big file and leaves small ones untouched", 
   expect(diff).toContain("small.ts"); // the small file survives verbatim
   expect(diff).toContain("-a\n+b"); //   ...body intact
   expect(diff).toContain("data/blob.json"); // the big file is still PRESENT (name/header kept)
-  expect(diff).toContain("# condensed:"); // ...but its body became a map
-  // Structureless data degrades to an honest line-range row rather than a wall of "+x".
-  expect(diff).not.toContain("+x+x+x");
-  // The map must be DRASTICALLY smaller than even the truncated head it replaced.
-  expect(diff.length).toBeLessThan(small.length + 400);
+  expect(diff).toContain("diff lines folded"); // ...bounded, and it says so
+  expect(diff).not.toContain("# condensed:"); // no map invented from a structureless blob
+  expect(diff.length).toBeLessThan(small.length + 2_200); // and it costs its slice, not the world
 });
 
 // The whole point over truncation: a big file reports EVERY symbol it touched, not an
@@ -225,6 +225,35 @@ test("condensed output names every changed symbol with its own counts", () => {
   expect(diff).toContain("export function omega()"); // <- truncation would have dropped this entirely
   expect(diff).toContain("+60/-0"); // per-symbol tallies, not a single lump
   expect(diff.length).toBeLessThan(chunk.length);
+});
+
+// Caught by a LIVE run, not by reasoning: fed a map of PowerShell `if` blocks (git's default
+// heuristic finds no .ps1 functions), llama-3.3-70b confidently wrote "simplify conditionals for
+// better readability" about what was actually a daemon-identity rewrite. A map is only worth
+// sending if its labels are real; otherwise real-but-partial lines beat invented specifics.
+test("a file whose hunk headers are control-flow noise is NOT condensed", () => {
+  const mk = (ctx: string, n: number) =>
+    `@@ -1,${n} +1,${n} @@ ${ctx}\n${Array.from({ length: n }, (_, i) => `+  stuff ${i}`).join("\n")}\n`;
+  const psish =
+    "diff --git a/misc/Restart-Daemon.ps1 b/misc/Restart-Daemon.ps1\n" +
+    mk("if (-not (Test-Path $pkgPath)) {", 60) +
+    mk("do {", 60);
+  const { diff } = foldLargeFileDiffs(psish, 900);
+  expect(diff).not.toContain("# condensed:"); // no map built from junk labels
+  expect(diff).toContain("+  stuff 0"); // real lines instead — partial, but true
+  expect(diff).toContain("diff lines folded"); // and it says it's partial
+});
+
+test("a file with REAL declarations still condenses", () => {
+  const mk = (ctx: string, n: number) =>
+    `@@ -1,${n} +1,${n} @@ ${ctx}\n${Array.from({ length: n }, (_, i) => `+  stuff ${i}`).join("\n")}\n`;
+  const tsish =
+    "diff --git a/src/a.ts b/src/a.ts\n" +
+    mk("export function alpha(x: string) {", 60) +
+    mk("const TIMEOUT_MS = 20_000;", 60);
+  const { diff } = foldLargeFileDiffs(tsish, 900);
+  expect(diff).toContain("# condensed:");
+  expect(diff).toContain("export function alpha");
 });
 
 test("foldLargeFileDiffs never cuts a diff line in half when it falls back to a head cut", () => {

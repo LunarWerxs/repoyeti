@@ -213,6 +213,32 @@ export function isNoisyPath(path: string): boolean {
  *
  * Pure + unit-testable.
  */
+/**
+ * Does a hunk-header context line actually name a DECLARATION?
+ *
+ * This guard exists because a symbol map is only worth sending if the symbols are real. git's
+ * default heuristic takes the last column-0 line that looks declaration-ish, which lands on real
+ * functions in .ts — but in .ps1 it happily returns `if (-not (Test-Path $pkgPath)) {`. Measured
+ * live: fed a map of `if` blocks, the model invented "simplify conditionals for better
+ * readability" for what was actually a rewrite of the daemon-identity logic. Confident fiction is
+ * worse than a truncated-but-real diff, so when the labels are junk we send real lines instead.
+ */
+function looksLikeDeclaration(sym: string): boolean {
+  const s = sym.trim();
+  if (!s) return false;
+  // Control flow / punctuation / comments are never declarations, however column-0 they sit.
+  if (/^(if|else|elseif|elif|for|foreach|while|switch|case|do|try|catch|finally|return|end|then|begin)\b/i.test(s)) {
+    return false;
+  }
+  if (/^[}\])#]|^\/\/|^<!--|^@ line\b/.test(s)) return false;
+  // A declaration keyword, or a name followed by an argument list (a signature).
+  return (
+    /\b(function|class|def|fn|func|interface|type|struct|impl|trait|enum|sub|proc|module|namespace|const|let|var|public|private|protected|static|async|export|default)\b/i.test(
+      s,
+    ) || /^[\w.$:<>[\]-]+\s*\(/.test(s)
+  );
+}
+
 function condenseFileChunk(chunk: string): string {
   const lines = chunk.split("\n");
   const fileHeader = lines[0] ?? "";
@@ -236,6 +262,13 @@ function condenseFileChunk(chunk: string): string {
     rows.set(sym, row);
   }
   if (rows.size === 0) return chunk;
+
+  // Only trade real lines for a map if the map says something TRUE. Where git couldn't find real
+  // declarations the rows are control-flow noise, and a model handed noise doesn't stay vague —
+  // it invents. Returning the chunk unchanged makes the caller fall back to a truncated head:
+  // partial, but every line of it is a fact.
+  const named = [...rows.keys()].filter(looksLikeDeclaration).length;
+  if (named * 2 < rows.size) return chunk;
 
   const body = [...rows.entries()]
     .map(([sym, r]) => `  ${sym.length > 90 ? `${sym.slice(0, 90)}…` : sym}  +${r.add}/-${r.del}`)

@@ -204,19 +204,27 @@ test("collectCommitDiff captures status + diff and never mutates the index", asy
   expect(staged).toBe("");
 });
 
-test("collectCommitDiff CONDENSES one huge file rather than spending the whole payload on it", async () => {
+test("collectCommitDiff BOUNDS one huge file rather than spending the whole payload on it", async () => {
   const dir = await seededRepo();
   writeFileSync(join(dir, "base.txt"), "x\n".repeat(40_000)); // ~80 KB modification
   const out = await collectCommitDiff(dir);
   expect(out.length).toBeLessThan(25_000); // bounded, as it always was...
-  // ...but now bounded by CONDENSING, not by lopping the tail off the payload. This used to ship
-  // ~24k of one file's diff ending in "…[truncated]". A 40k-line change is now a couple of
-  // hundred bytes — that class of file was 97% of a real repo's diff.
-  expect(out.length).toBeLessThan(1_000);
-  expect(out).toContain("# condensed:"); // says so in-band, so the model knows it's a summary
+  // ...but now bounded PER FILE, not by lopping the tail off the whole payload. This used to ship
+  // ~24k of one file's diff; a runaway file now costs only its slice — that class of file was 97%
+  // of a real repo's diff. Structureless "x" lines have no declarations to map, so this is the
+  // truncation path (see the condense tests in smart-commit.test.ts for the code-file path).
+  expect(out.length).toBeLessThan(4_000);
+  expect(out).toContain("diff lines folded"); // and it says what it dropped, in-band
   expect(out).toContain("base.txt"); // the file is still named + visible to the model
-  expect(out).toContain("+40000/-1"); // and the REAL magnitude survives, unlike a truncated head
 });
+
+// NOTE on where condensing actually pays off, learned by measuring rather than assuming:
+// symbol extraction needs SEPARATED hunks, because a hunk header only names a declaration when
+// the hunk starts inside one. The PLANNER diffs at -U0, so a busy file yields many small hunks,
+// each labelled → the map is rich. This MESSAGE path diffs with full context, so adjacent edits
+// merge into one big hunk starting at line 1 ("@@ -1,131 +1,131 @@", no label) → nothing to map,
+// and it correctly takes the truncation path. So condensing is tested at the foldLargeFileDiffs
+// level (smart-commit.test.ts), where the input can be controlled; here we only pin the bound.
 
 test("collectCommitDiff still truncates when the summed payload overruns the cap", async () => {
   const dir = await seededRepo();
