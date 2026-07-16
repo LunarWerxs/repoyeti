@@ -335,7 +335,18 @@ export async function handleComplete(
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body,
     });
-    if (!tr.ok) return c.html(errPage("Token exchange with Connections failed."), 502);
+    if (!tr.ok) {
+      // Log what the IdP actually SAID. The status + OAuth error code are the entire diagnosis and
+      // they are not interchangeable: invalid_client = we presented a client_secret for a public
+      // client (or a bad one for a confidential client) — note the IdP rejects this BEFORE spending
+      // the code, so it silently repeats forever; invalid_grant = the code expired/was replayed, or
+      // PKCE failed; redirect_uri_mismatch = allowlist drift. Swallowing the body collapsed all of
+      // them into one opaque page, and telling them apart meant querying the IdP's own database.
+      // The body is an OAuth error code, never a credential, so it is safe to log.
+      const detail = (await tr.text().catch(() => "")).slice(0, 200);
+      console.error(`[repoyeti] token exchange failed: HTTP ${tr.status} ${detail}`);
+      return c.html(errPage("Token exchange with Connections failed."), 502);
+    }
     const tok = (await tr.json()) as { id_token?: string } & OAuthTokens;
     if (!tok.id_token) return c.html(errPage("Connections returned no identity token."), 502);
 

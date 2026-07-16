@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { readFileSync, existsSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG_DIR, loadConfig, saveConfig, hydrateSecrets } from "../src/config.ts";
-import { getSecret, setSecret, deleteSecret, aiKeyName } from "../src/secrets.ts";
+import { getSecret, setSecret, deleteSecret, aiKeyName, OAUTH_CLIENT_SECRET } from "../src/secrets.ts";
 
 const CONFIG_PATH = join(CONFIG_DIR, "config.json");
 // An isolated keychain namespace so these tests never touch the user's real `repoyeti` entries.
@@ -146,6 +146,65 @@ test('getSecret re-homes a legacy "gitmob"-service secret under the new service'
       else process.env.REPOYETI_KEYCHAIN_SERVICE = prevSvc;
     }
   });
+});
+
+// ── the baked-in Connections client is PUBLIC: it must never present a client_secret ──────
+// Regression: the retired GitMob-era shim registered this SAME client_id as CONFIDENTIAL, so its
+// secret can still sit in the keychain (and getSecret re-homes it out of the old "gitmob" service).
+// Re-attaching it made AEGIS refuse every exchange with invalid_client BEFORE consuming the code —
+// so "Sign in with Connections" failed at /oauth/callback on every attempt, permanently.
+
+test("hydrateSecrets purges a stale client_secret rather than attach it to the PUBLIC Connections client", async () => {
+  const saved = snapshotConfig();
+  await withMemory(() =>
+    withService(async () => {
+      // No oauth block on disk ⇒ the baked-in public Connections client.
+      writeFileSync(CONFIG_PATH, JSON.stringify({ roots: [], port: 7171, maxDepth: 6, maxRepos: 200 }));
+      expect(await setSecret(OAUTH_CLIENT_SECRET, "stale-gitmob-era-secret")).toBe(true);
+
+      const cfg = loadConfig();
+      await hydrateSecrets(cfg);
+
+      // Never attached — this is the whole bug.
+      expect(cfg.oauth?.clientSecret).toBeUndefined();
+      // …and the dead credential is gone, so it cannot come back on the next boot.
+      expect(await getSecret(OAUTH_CLIENT_SECRET)).toBeNull();
+    }),
+  );
+  restoreConfig(saved);
+});
+
+test("hydrateSecrets still hydrates a client_secret for a user's OWN confidential OAuth client", async () => {
+  const saved = snapshotConfig();
+  await withMemory(() =>
+    withService(async () => {
+      // A full oauth block REPLACES the baked-in default (loadConfig shallow-merges), so this is
+      // someone pointing RepoYeti at their own IdP with a genuinely confidential client.
+      writeFileSync(
+        CONFIG_PATH,
+        JSON.stringify({
+          roots: [],
+          port: 7171,
+          maxDepth: 6,
+          maxRepos: 200,
+          oauth: {
+            issuer: "https://idp.example.com",
+            clientId: "my-own-confidential-client",
+            redirectUri: "https://app.example.com/oauth/callback",
+          },
+        }),
+      );
+      expect(await setSecret(OAUTH_CLIENT_SECRET, "byo-confidential-secret")).toBe(true);
+
+      const cfg = loadConfig();
+      await hydrateSecrets(cfg);
+
+      expect(cfg.oauth?.clientSecret).toBe("byo-confidential-secret");
+      expect(await getSecret(OAUTH_CLIENT_SECRET)).toBe("byo-confidential-secret");
+      await deleteSecret(OAUTH_CLIENT_SECRET);
+    }),
+  );
+  restoreConfig(saved);
 });
 
 test("hydrateSecrets migrates a plaintext key into the (in-memory) keychain + strips disk, headlessly", async () => {

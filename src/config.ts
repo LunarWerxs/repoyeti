@@ -13,6 +13,7 @@ import { mkdirSync, existsSync, readFileSync, writeFileSync, renameSync, rmSync 
 import {
   getSecret,
   setSecret,
+  deleteSecret,
   keychainAvailable,
   aiKeyName,
   OAUTH_CLIENT_SECRET,
@@ -750,7 +751,22 @@ export async function hydrateSecrets(cfg: RepoYetiConfig): Promise<void> {
   }
 
   if (cfg.oauth) {
-    if (cfg.oauth.clientSecret) {
+    // The baked-in Connections client is PUBLIC (PKCE is its only proof): AEGIS registers it with
+    // token_endpoint_auth_method "none" and no secret hash, and its token endpoint refuses any
+    // exchange that PRESENTS a client_secret — with invalid_client, BEFORE it consumes the code, so
+    // every sign-in dies at /oauth/callback while the code sits unspent. The retired GitMob-era shim
+    // registered this SAME client_id as confidential, so its secret can still be in the keychain —
+    // and getSecret() re-homes it out of the old "gitmob" service, which is how a dead credential
+    // reaches a client that must never send one. AEGIS kept no hash to verify it against: it is
+    // unusable by construction, so purge it rather than re-attach it. A user's OWN confidential
+    // client (their own issuer/clientId) is untouched and still hydrates below.
+    if (cfg.oauth.clientId === CONNECTIONS_OAUTH.clientId) {
+      delete cfg.oauth.clientSecret;
+      if (await getSecret(OAUTH_CLIENT_SECRET)) {
+        await deleteSecret(OAUTH_CLIENT_SECRET);
+        migrated = true;
+      }
+    } else if (cfg.oauth.clientSecret) {
       if (await setSecret(OAUTH_CLIENT_SECRET, cfg.oauth.clientSecret)) migrated = true;
     } else {
       const cs = await getSecret(OAUTH_CLIENT_SECRET);
