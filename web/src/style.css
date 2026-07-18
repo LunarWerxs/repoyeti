@@ -10,3 +10,20 @@
 .gm-line-level-diff .char-delete {
   background-color: transparent !important;
 }
+
+/* Repo drag-and-drop insertion line — the glowing bar showing exactly where a dragged card
+   will land (RepoList.vue). Global on purpose and NOT scoped: @formkit/drag-and-drop's
+   insert() plugin appends this element to <body>, out of any component's scope.
+   The plugin owns position/top/left/width inline — set only paint here, never geometry.
+   No transition: the plugin destroys and recreates this element on every dragover, so one
+   would never play. */
+.repo-insert-line {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--primary);
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--primary) 40%, transparent),
+    0 0 10px 1px color-mix(in oklab, var(--primary) 55%, transparent);
+  pointer-events: none; /* must never swallow the dragover it exists to visualise */
+  z-index: 50;
+}

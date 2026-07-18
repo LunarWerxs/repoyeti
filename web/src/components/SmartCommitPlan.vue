@@ -107,13 +107,19 @@ const nextKey = (): string => `g${keySeq++}`;
 
 // Drag-to-reorder the commit cards (handle = `.sc-drag`, so inputs/menus stay interactive).
 // The library keeps `groups` in sync with the DOM order; our menu Move up/down still work too.
+//
+// `nativeDrag: false` USED to be set here and made mouse reordering impossible: it aborts the
+// native path (handleDragstart bails on `!config.nativeDrag`), while the synthetic path meant to
+// replace it (handleRootPointermove) returns early for `pointerType === "mouse"` on a non-mobile
+// platform — so a desktop mouse had no code path left that could complete a drag. Native drag (the
+// library default) is the only one that handles desktop mouse; touch still routes to the synthetic
+// dragger behind longPress. Same finding, same fix as RepoList.vue — see its note.
 const groupsParent = ref<HTMLElement>();
 dragAndDrop({
   parent: groupsParent,
   values: groups,
   dragHandle: ".sc-drag",
   draggingClass: "opacity-60",
-  nativeDrag: false,
   longPress: true,
   longPressDuration: 250,
   plugins: [animations()],
