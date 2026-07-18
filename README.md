@@ -6,7 +6,7 @@
   <a href="https://repoyeti.com"><b>repoyeti.com</b></a>
   &nbsp;·&nbsp; <a href="#quick-start">Quick start</a>
   &nbsp;·&nbsp; <a href="#what-you-get">Features</a>
-  &nbsp;·&nbsp; <a href="https://github.com/LunarWerxs/repoyeti/releases">Download</a>
+  &nbsp;·&nbsp; <a href="https://github.com/LunarWerxs/RepoYeti/releases">Download</a>
   &nbsp;·&nbsp; <a href="CHANGELOG.md">Changelog</a>
 </p>
 
@@ -44,7 +44,7 @@ RepoYeti runs a small daemon on your machine, finds every git repo you have, and
 ## Quick start
 
 ```sh
-git clone https://github.com/LunarWerxs/repoyeti.git
+git clone https://github.com/LunarWerxs/RepoYeti.git
 cd repoyeti && bun install
 bun run src/index.ts add-root ~/code   # point it at where your repos live
 bun run src/index.ts start             # daemon on 127.0.0.1:7171
@@ -56,7 +56,7 @@ To reach it from your phone (opens a Cloudflare tunnel and prints a QR code):
 bun run src/index.ts start --tunnel
 ```
 
-Prefer a single binary? Grab one from [Releases](https://github.com/LunarWerxs/repoyeti/releases).
+Prefer a single binary? Grab one from [Releases](https://github.com/LunarWerxs/RepoYeti/releases).
 
 ## AI setup: a free Groq key in 3 clicks
 

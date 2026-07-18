@@ -7,11 +7,11 @@
   "author": "L0garithmic <2claude@lunarwerx.com>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/LunarWerxs/repoyeti.git"
+    "url": "git+https://github.com/LunarWerxs/RepoYeti.git"
   },
-  "homepage": "https://github.com/LunarWerxs/repoyeti#readme",
+  "homepage": "https://github.com/LunarWerxs/RepoYeti#readme",
   "bugs": {
-    "url": "https://github.com/LunarWerxs/repoyeti/issues"
+    "url": "https://github.com/LunarWerxs/RepoYeti/issues"
   },
   "keywords": [
     "git",
