@@ -11,6 +11,7 @@ import { toast } from "vue-sonner";
 import { useStore } from "../../store";
 import { useRepoFeedback } from "@/lib/repo-feedback";
 import StashPanel from "../StashPanel.vue";
+import PullPreview from "./PullPreview.vue";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { VCS_CAPABILITIES } from "../../types";
@@ -66,21 +67,36 @@ async function run(name: "fetch" | "pull" | "push" | "refresh"): Promise<void> {
       </TooltipTrigger>
       <TooltipContent>{{ $t("repo.actions.fetchTooltip") }}</TooltipContent>
     </Tooltip>
-    <Tooltip v-if="store.canControl">
-      <TooltipTrigger as-child>
-        <Button
-          :variant="st && st.behind > 0 ? 'default' : 'outline'"
-          size="sm"
-          :disabled="!hasUpstream || anyBusy"
-          @click="run('pull')"
-        >
-          <Loader2 v-if="busyAction === 'pull'" class="animate-spin" />
-          <ArrowDownToLine v-else />
-          {{ pullLabel }}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>{{ pullTooltip }}</TooltipContent>
-    </Tooltip>
+    <!-- Pull, with a caret beside it that previews the pull first. The two read as one split
+         button (the caret's left corners are squared off against Pull's right edge). -->
+    <div v-if="store.canControl" class="flex items-center">
+      <Tooltip>
+        <TooltipTrigger as-child>
+          <Button
+            :variant="st && st.behind > 0 ? 'default' : 'outline'"
+            size="sm"
+            :class="caps.fetch ? 'rounded-r-none' : ''"
+            :disabled="!hasUpstream || anyBusy"
+            @click="run('pull')"
+          >
+            <Loader2 v-if="busyAction === 'pull'" class="animate-spin" />
+            <ArrowDownToLine v-else />
+            {{ pullLabel }}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{{ pullTooltip }}</TooltipContent>
+      </Tooltip>
+      <!-- Git only: the preview is defined as a merge against an upstream ref, which a
+           centralized backend (Lore) has no local equivalent of. Owner-only too — the endpoint
+           is owner-gated (see src/share/policy.ts), so a share-link guest would just get a 403. -->
+      <PullPreview
+        v-if="caps.fetch && !store.isGuest"
+        class="-ml-px rounded-l-none"
+        :repo-id="repo.id"
+        :disabled="!hasUpstream || anyBusy"
+        @pull="run('pull')"
+      />
+    </div>
     <Tooltip v-if="store.canControl">
       <TooltipTrigger as-child>
         <Button

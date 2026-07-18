@@ -20,6 +20,7 @@ import type {
   DetectedIdentity,
   LogResult,
   CommitDetail,
+  IncomingResult,
   LoreServer,
   PendingApproval,
   Repo,
@@ -137,6 +138,9 @@ export interface RuntimeStatus {
   autoCommitAiFallback: "skip" | "basic";
   /** Whether the app silently auto-updates + restarts on a schedule (owner setting; opt-in). */
   autoUpdate: boolean;
+  /** Whether the daemon announces an available update (owner setting; on by default). Distinct
+   *  from `autoUpdate`: this only tells you, it never installs anything. */
+  updateNotify: boolean;
   /** Auto-update check cadence in seconds. */
   autoUpdateIntervalSecs: number;
   /** Whether the whole machine is auto-scanned for repos on every app start (owner setting). */
@@ -385,6 +389,10 @@ export const api = {
   /** Toggle silent auto-update + restart of the app on a schedule (owner setting; persisted). */
   setAutoUpdate: (enabled: boolean) =>
     req<{ ok: boolean; autoUpdate: boolean }>("PUT", "/api/settings", { autoUpdate: enabled }),
+  /** Toggle "tell me when an update is available" (owner setting; persisted). Announces only —
+   *  installing is the separate setAutoUpdate above, or a click in the prompt. */
+  setUpdateNotify: (enabled: boolean) =>
+    req<{ ok: boolean; updateNotify: boolean }>("PUT", "/api/settings", { updateNotify: enabled }),
   /** ⭐ Agent Safety Rail: toggle the MCP mutating-call approval gate (owner setting; persisted). */
   setMcpApprovalGate: (enabled: boolean) =>
     req<{ ok: boolean; mcpApprovalGate: boolean }>("PUT", "/api/settings", { mcpApprovalGate: enabled }),
@@ -551,6 +559,10 @@ export const api = {
     ),
   commitDetail: (id: string, hash: string) =>
     req<CommitDetail>("GET", `/api/repos/${id}/commit/${encodeURIComponent(hash)}`),
+  /** What a pull would bring in, without pulling. `fetch` refreshes the remote-tracking ref
+   *  first, so the answer isn't whatever the last background sync happened to see. */
+  incoming: (id: string, fetch = true) =>
+    req<IncomingResult>("GET", `/api/repos/${id}/incoming${fetch ? "?fetch=1" : ""}`),
   /** Both sides of a file's change AT a commit (first-parent ↔ commit) — powers opening a
    *  history file in the Monaco diff viewer. Same FileDiff shape as `fileDiff`. */
   commitFile: (id: string, hash: string, path: string) =>

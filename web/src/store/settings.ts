@@ -72,6 +72,7 @@ export function useSettings(deps: {
   autoCommitPush: Ref<boolean>;
   autoCommitAiFallback: Ref<"skip" | "basic">;
   autoUpdate: Ref<boolean>;
+  updateNotify: Ref<boolean>;
   autoScan: Ref<boolean>;
   portableMode: Ref<boolean>;
   hideTrayIcon: Ref<boolean>;
@@ -104,6 +105,7 @@ export function useSettings(deps: {
     autoCommitPush,
     autoCommitAiFallback,
     autoUpdate,
+    updateNotify,
     autoScan,
     portableMode,
     hideTrayIcon,
@@ -393,6 +395,17 @@ export function useSettings(deps: {
     }
   }
 
+  /** Toggle "tell me about updates" (optimistic; rolls back on failure). */
+  async function setUpdateNotify(enabled: boolean): Promise<void> {
+    updateNotify.value = enabled;
+    try {
+      await api.setUpdateNotify(enabled);
+    } catch (e) {
+      updateNotify.value = !enabled; // roll back
+      throw e;
+    }
+  }
+
   // ── ⭐ Agent Safety Rail (all optimistic; roll back on failure) ────────────────
   /** Toggle whether mutating MCP tool calls are gated behind owner approve/deny. */
   async function setMcpApprovalGate(enabled: boolean): Promise<void> {
@@ -595,6 +608,11 @@ export function useSettings(deps: {
     dismissNotification,
     clearNotifications,
     scanOpen,
+    updatePromptOpen,
+    updateBlockedReason,
+    notifyUpdateAvailable,
+    clearUpdateNotification,
+    pullBehind,
     notifyBehind,
     notifySynced,
     notifyAutoCommitted,
@@ -634,6 +652,7 @@ export function useSettings(deps: {
     setAutoCommitAiFallback,
     setAutoScan,
     setAutoUpdate,
+    setUpdateNotify,
     setPortableMode,
     openPortableWindow,
     setHideTrayIcon,
@@ -678,6 +697,11 @@ export function useSettings(deps: {
     dismissNotification,
     clearNotifications,
     scanOpen,
+    updatePromptOpen,
+    updateBlockedReason,
+    notifyUpdateAvailable,
+    clearUpdateNotification,
+    pullBehind,
     notifyBehind,
     notifySynced,
     notifyAutoCommitted,

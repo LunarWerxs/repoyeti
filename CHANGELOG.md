@@ -6,6 +6,47 @@ All notable changes to RepoYeti are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-18
+
+### Added
+
+- **Preview a pull before you take it.** The caret beside Pull opens a read-only view of what's
+  actually incoming: the commits, the files they touch, and, when git can tell in advance, the
+  paths that will conflict. Conflict detection uses `git merge-tree` against an in-memory tree, so
+  asking the question never touches your working copy. Nothing is fetched or merged by looking.
+- **Updates announce themselves instead of installing themselves.** RepoYeti now checks on a
+  schedule and *tells* you when a newer version is ready, with a prompt offering **Update now** or
+  **Later**. "Later" leaves an entry in the notification bell, so a deferred update is not a lost
+  one. If an update exists but cannot be installed yet, usually because the working tree is dirty,
+  the prompt says so and disables the button rather than failing silently.
+
+### Changed
+
+- **"Install updates automatically" is now separate from "Tell me about updates", and stays off.**
+  Being told you are out of date and having the daemon restart itself unattended are different
+  consents. Notification is on by default; the silent install is opt-in. Anyone who had the old
+  combined setting enabled keeps the installer on, since that was an explicit choice.
+- **Falling behind a remote raises a notification, not a banner over the page.** The warning used
+  to sit across the middle of the dashboard in a tint too close to the background to read. It is
+  now a persistent bell entry with a Pull button that resolves it in place, plus a compact
+  one-line toast bottom-right. One entry per batch, replaced rather than stacked.
+- **Auto-approve and auto-deny can no longer both be on.** They are opposite answers to the same
+  question. Turning one on now turns the other off, and deny wins if a stored config somehow
+  carries both.
+- **The changed-files list grows to fit its contents.** The height setting is now a ceiling rather
+  than a fixed size, so a repo with two changed files no longer renders in a tall mostly-empty
+  box. The setting is also named for what it controls, "Working tree height", and the per-repo
+  drag grip still caps an individual repo lower.
+- **Turning diff statistics off now turns them off everywhere,** including inside the changed-files
+  tree, where they previously stayed on. Where both are shown, lines and characters get distinct
+  icons instead of two identical-looking numbers.
+- **"Behind" and "changed" counts no longer share a colour,** which made a repo that was behind
+  read at a glance as a repo with local edits.
+- **Toasts moved to the bottom-right and stack vertically.** Stacked rather than collapsed behind
+  one another, because our toasts carry Undo, and an Undo you cannot click is worse than a taller
+  stack. While the bulk-action bar is up the stack lifts clear of it, so a toast can never land on
+  the very Undo button a mis-clicked bulk action depends on.
+
 ## [0.7.0] - 2026-07-18
 
 ### Added
@@ -447,7 +488,8 @@ Initial public tag of the daemon + dashboard, before the release-hardening pass.
   fetch / pull (fast-forward only) / push (no force) / commit.
 - cloudflared tunnel (+ QR) and the Vue 3 PWA dashboard.
 
-[Unreleased]: https://github.com/LunarWerxs/RepoYeti/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/LunarWerxs/RepoYeti/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/LunarWerxs/RepoYeti/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/LunarWerxs/RepoYeti/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/LunarWerxs/RepoYeti/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/LunarWerxs/RepoYeti/compare/v0.5.0...v0.6.0

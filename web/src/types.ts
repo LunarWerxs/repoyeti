@@ -254,6 +254,39 @@ export interface LogResult {
   hasMore: boolean;
 }
 
+/** One file a pull would change. Mirrors src/read/incoming.ts. */
+export interface IncomingFile {
+  path: string;
+  /** A / M / D, derived from the incoming diff. */
+  status: string;
+  addedLines: number;
+  removedLines: number;
+  binary: boolean;
+}
+
+/** What a pull would bring in, described without pulling. Mirrors src/read/incoming.ts. */
+export interface IncomingResult {
+  ok: boolean;
+  code: ApiCode;
+  message?: string;
+  /** Upstream ref being compared against, e.g. "origin/main". */
+  upstream: string;
+  /** True when the branch tracks nothing, so there is nothing to preview or pull. */
+  noUpstream: boolean;
+  commits: LogEntry[];
+  commitsTruncated: boolean;
+  files: IncomingFile[];
+  filesTruncated: boolean;
+  /** Aggregate totals, uncapped even when the lists above were truncated. */
+  stat: CommitStat;
+  /** Paths that would conflict, from a merge simulated in the object store. */
+  conflicts: string[];
+  /** False when this git couldn't simulate the merge, so `conflicts` proves nothing. */
+  conflictCheck: boolean;
+  /** True when the pull would fast-forward (nothing of yours to reconcile). */
+  fastForward: boolean;
+}
+
 /** One changed file in a commit. */
 export interface CommitFile {
   status: string; // A / M / D / R / C

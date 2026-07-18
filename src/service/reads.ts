@@ -14,6 +14,7 @@ import { collectCommitPlanInput } from "../git-actions.ts";
 import type { CommitPlanInput, PlanInputFile } from "../ai.ts";
 import { DEFAULT_DIFF_DETAIL, type DiffDetail } from "../config.ts";
 import { readTags, type BranchList, type LogResult, type StashList, type TagList, type CommitDetail, type MergeFilter, type RefScope } from "../read/inspect.ts";
+import { readIncoming, type IncomingResult } from "../read/incoming.ts";
 import { guardRepo } from "./guards.ts";
 
 // ── read-only inspection (branches / log / stashes) ───────────────────────────────
@@ -30,6 +31,35 @@ export function getLog(repoId: string, limit?: number, skip?: number, merges?: M
   const repo = getRepo(repoId);
   if (!repo) return Promise.resolve({ ok: false, code: "ERROR", message: "repo not found", commits: [], hasMore: false });
   return backendFor(repo.vcs).readLog(repo.absPath, limit, skip, merges, refScope);
+}
+
+const NO_INCOMING = (code: "OK" | "ERROR", message?: string): IncomingResult => ({
+  ok: code === "OK",
+  code,
+  message,
+  upstream: "",
+  noUpstream: true,
+  commits: [],
+  commitsTruncated: false,
+  files: [],
+  filesTruncated: false,
+  stat: { filesChanged: 0, addedLines: 0, removedLines: 0 },
+  conflicts: [],
+  conflictCheck: false,
+  fastForward: false,
+});
+
+/**
+ * What a pull would bring in, without pulling. Git-only on purpose: the preview is defined in
+ * terms of a merge against an upstream ref, and Lore is a centralized backend whose "sync" has
+ * no local merge to simulate. Non-git repos get the same shape with `noUpstream`, so the UI
+ * simply doesn't offer the preview rather than having to special-case an error.
+ */
+export function getIncoming(repoId: string): Promise<IncomingResult> {
+  const repo = getRepo(repoId);
+  if (!repo) return Promise.resolve(NO_INCOMING("ERROR", "repo not found"));
+  if (repo.vcs !== "git") return Promise.resolve(NO_INCOMING("OK"));
+  return readIncoming(repo.absPath);
 }
 
 export function getCommit(repoId: string, hash: string): Promise<CommitDetail> {

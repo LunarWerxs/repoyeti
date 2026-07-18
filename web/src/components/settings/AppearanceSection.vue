@@ -1,15 +1,16 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { useStore } from "../../store";
-import { changesViewSize } from "@/lib/changes-view";
+import { changesViewSize, changesOverrideCount, clearAllChangesOverrides } from "@/lib/changes-view";
 import { useTheme } from "@/lib/theme";
 import { useTooltipConfig } from "@/lib/tooltip-config";
 import SettingsGroup from "@/shell/SettingsGroup.vue";
 import SettingsRow from "@/shell/SettingsRow.vue";
 import InfoHint from "@/shell/InfoHint.vue";
 import ExpandTransition from "@/shell/ExpandTransition.vue";
+import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -21,6 +22,16 @@ import {
 
 const store = useStore();
 const { t } = useI18n();
+
+// How many cards pin their own changed-files height cap. Read into a ref (not a computed) so
+// the "reset" click updates it: the override map is module-level localStorage state, not a
+// reactive source this component tracks.
+const pinnedHeights = ref(changesOverrideCount());
+function resetPinnedHeights(): void {
+  clearAllChangesOverrides();
+  pinnedHeights.value = 0;
+  toast.success(t("settings.changesHeightResetDone"));
+}
 
 // Shared kit light/dark/system theme — writes to the same store App.vue reads.
 const { mode: theme } = useTheme();
@@ -155,6 +166,15 @@ async function onHideTrayIcon(enabled: boolean): Promise<void> {
           <SelectItem value="tall">{{ $t("settings.heightTall") }}</SelectItem>
         </SelectContent>
       </Select>
+      <!-- A per-repo cap (set by dragging a card's grip) beats this preset for that card, which
+           otherwise reads as "the setting does nothing". Say so, and offer one click to undo it —
+           the grip's own double-click reset is per-card and easy to miss. -->
+      <div v-if="pinnedHeights > 0" class="flex items-center gap-2 text-[11.5px] text-muted-foreground">
+        <span class="min-w-0 flex-1">{{ $t("settings.changesHeightPinned", { count: pinnedHeights }, pinnedHeights) }}</span>
+        <Button variant="ghost" size="sm" class="h-6 shrink-0 text-[11.5px]" @click="resetPinnedHeights">
+          {{ $t("settings.changesHeightReset") }}
+        </Button>
+      </div>
     </div>
   </SettingsGroup>
 

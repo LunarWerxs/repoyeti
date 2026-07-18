@@ -16,6 +16,16 @@ let returnFocusTo: HTMLElement | null = null;
 
 /** True while the dashboard is in multi-select mode (cards show checkboxes, rows don't expand). */
 export const selectionActive = computed(() => active.value);
+/**
+ * Measured height of the bulk bar while it's mounted (0 otherwise), published by RepoBulkBar.
+ *
+ * Toasts are bottom-RIGHT, and the bulk bar is bottom-anchored across the same content width, so
+ * at the default offset a toast lands squarely on top of the bar's right-hand buttons — Undo
+ * included, which is the one control a bulk action most needs to stay reachable. App.vue lifts the
+ * toaster by this much while select mode is on. Measured rather than hard-coded because the bar
+ * wraps to a second row on narrow viewports.
+ */
+export const bulkBarHeight = ref(0);
 /** How many repos are currently ticked. */
 export const selectionCount = computed(() => selected.value.size);
 /** The ticked repo ids, in no particular order. */

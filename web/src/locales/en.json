@@ -585,7 +585,26 @@
     "toastRenameFailed": "Could not rename that repository",
     "toastRemoved": "\"{name}\" removed from RepoYeti",
     "toastRemoveFailed": "Could not remove that repository",
-    "selectToggle": "Select {name}"
+    "selectToggle": "Select {name}",
+    "preview": {
+      "open": "Preview this pull",
+      "title": "Preview pull",
+      "checking": "Checking the remote…",
+      "noUpstream": "This branch isn't tracking a remote branch, so there's nothing to pull.",
+      "failed": "Couldn't read what's incoming.",
+      "upToDate": "Already up to date. Nothing to pull.",
+      "summary": "{commits} commits, {files} files from {upstream}.",
+      "commitsHeading": "{count} incoming commit | {count} incoming commits",
+      "filesHeading": "{count} file affected | {count} files affected",
+      "commitsTruncated": "Only the most recent commits are listed.",
+      "filesTruncated": "Only the first files are listed; the totals above cover all of them.",
+      "cleanFastForward": "Fast-forward. This applies cleanly.",
+      "cleanMerge": "Merges cleanly with your local commits.",
+      "willConflict": "Would conflict in {count} file | Would conflict in {count} files",
+      "moreConflicts": "and {count} more",
+      "conflictUnknown": "Couldn't test the merge on this version of git.",
+      "pullAnyway": "Pull anyway"
+    }
   },
   "remote": {
     "activeLabel": "Your remote link",
@@ -638,7 +657,17 @@
     "newProjectsView": "View",
     "aiKeyInvalidTitle": "AI key problem",
     "aiKeyInvalidBody": "{provider} rejected your API key. Update it in Settings → AI.",
-    "aiKeyInvalidProvider": "An AI provider"
+    "aiKeyInvalidProvider": "An AI provider",
+    "updateTitle": "Update available",
+    "updateBody": "A newer version of RepoYeti is ready to install.",
+    "updatePromptBody": "A newer version of RepoYeti is ready. Installing takes a few seconds and restarts the app.",
+    "updateBlockedBody": "A newer version is ready, but it can't be installed right now.",
+    "updateNow": "Update now",
+    "updateLater": "Later",
+    "updateReview": "Review update",
+    "updateApplied": "Update installed",
+    "updateRestarting": "Restarting to finish.",
+    "updateFailed": "Couldn't install the update"
   },
   "scan": {
     "title": "Scan for projects",
@@ -791,8 +820,8 @@
       "viewerSave": "Save the file you're editing",
       "treeResize": "Resize the changed-files list"
     },
-    "changesHeight": "Changes list height",
-    "changesHeightHint": "Default height for each repo's file list. Drag the grip below a list to pin its height; double-click the grip to reset it.",
+    "changesHeight": "Working tree height",
+    "changesHeightHint": "How tall each repo's changed-files list may grow before it scrolls. The list is only as tall as its contents, up to this. Drag the grip under a list to cap that repo lower; double-click the grip to reset it.",
     "showTooltips": "Show tooltips",
     "showTooltipsHint": "Hover help on buttons and controls. Info icons like this one always stay on so settings remain explained.",
     "portableWindow": "Portable window",
@@ -847,8 +876,8 @@
     "autoCommitNoReposYet": "No repos are opted in yet. Open a repo's ⋯ menu and choose Auto-commit to include it; this switch stays armed but idle until then.",
     "autoCommitReposOptedIn": "{n} repo is opted in (via its ⋯ menu). | {n} repos are opted in (via their ⋯ menus).",
     "cardUpdates": "Updates",
-    "autoUpdate": "Auto-update the app",
-    "autoUpdateHint": "When a newer version is available and your working tree is clean, RepoYeti quietly pulls, rebuilds, and restarts itself. Off by default; uncommitted changes are never touched.",
+    "autoUpdate": "Install updates automatically",
+    "autoUpdateHint": "Install updates as soon as they're found, then restart the app. Off by default: it restarts the daemon unattended. A repo with uncommitted changes is never updated.",
     "autoUpdateFailed": "Could not change auto-update",
     "autoCommitFailed": "Could not change auto-commit settings",
     "cardMcpApprovalGate": "Agent Safety Rail",
@@ -883,7 +912,13 @@
     "toastDefaultFailed": "Could not set default",
     "toastModelFailed": "Could not save model",
     "toastRemoveFailed": "Could not remove",
-    "toastRemoved": "{name} removed"
+    "toastRemoved": "{name} removed",
+    "changesHeightPinned": "{count} repo caps its own height | {count} repos cap their own height",
+    "changesHeightReset": "Reset all",
+    "changesHeightResetDone": "Pinned heights cleared",
+    "updateNotify": "Tell me about updates",
+    "updateNotifyHint": "Check periodically and let you know when a newer version is available. Nothing is installed without your say-so.",
+    "updateNotifyFailed": "Couldn't change the update-notification setting"
   },
   "shell": {
     "addRepository": "Add a repository",

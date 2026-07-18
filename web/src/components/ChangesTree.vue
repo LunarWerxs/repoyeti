@@ -21,12 +21,14 @@ import {
 
 const { t } = useI18n();
 
-// Tooltip for a file row's stat: lines breakdown · characters breakdown.
+// Tooltip for a file row's stat: lines breakdown · characters breakdown. Character counts come
+// from parsing patch text, which the read-only (pre-pull) tree has none of — it works off
+// `git diff --numstat`, and numstat reports lines only. So drop the chars half there rather
+// than render a confident "+0 −0 characters".
 function diffTitle(s: DiffStatT): string {
-  return (
-    `${t("repo.diffStat.lines", { added: s.addedLines, removed: s.removedLines })} · ` +
-    `${t("repo.diffStat.chars", { added: fmtCount(s.addedChars), removed: fmtCount(s.removedChars) })}`
-  );
+  const lines = t("repo.diffStat.lines", { added: s.addedLines, removed: s.removedLines });
+  if (props.readOnly) return lines;
+  return `${lines} · ${t("repo.diffStat.chars", { added: fmtCount(s.addedChars), removed: fmtCount(s.removedChars) })}`;
 }
 
 // Self-recursive component (renders <ChangesTree> for each subfolder). In `flat` (list-view)
@@ -44,8 +46,17 @@ const props = withDefaults(
     /** Share-link gating (see store.canControl/isGuest) — owner defaults keep every other call site as-is. */
     canControl?: boolean;
     isGuest?: boolean;
+    /** Render the tree as a pure listing: clicking a file opens nothing. Used by the pre-pull
+     *  preview, where the files describe commits you don't have yet — there is no local
+     *  working-tree version of them to show, so opening one would be a lie or an error. */
+    readOnly?: boolean;
+    /** Show per-file +/- stats. The caller passes the owner's "diff stats" setting: the daemon
+     *  already stops COMPUTING them when it's off, but a list fetched while it was on keeps its
+     *  stats in the client cache, so the tree would go on showing them until a reload. Gating
+     *  the render as well makes the toggle take effect the moment it's flipped. */
+    showStats?: boolean;
   }>(),
-  { canControl: true, isGuest: false },
+  { canControl: true, isGuest: false, readOnly: false, showStats: true },
 );
 
 // Directory of a flat-list row WITHOUT the trailing slash, e.g. "src/components". Empty for a
@@ -86,7 +97,7 @@ const rows = computed(() =>
 
 // Clicking a file opens it in the read-only viewer drawer/sheet.
 function open(n: TreeNode): void {
-  if (n.type !== "file") return;
+  if (props.readOnly || n.type !== "file") return;
   openFile({ repoId: props.repoId, path: n.path, status: n.status, staged: n.staged });
 }
 
@@ -287,7 +298,7 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
                real buttons are absolutely-positioned siblings anchored to the row's right edge,
                on top of this slot (see below), matching the checkbox's reserve-space convention. -->
           <span class="mono ml-auto flex shrink-0 items-center gap-1.5">
-            <DiffStat v-if="n.stat" :stat="n.stat" show="both" :title="diffTitle(n.stat)" />
+            <DiffStat v-if="n.stat && showStats" :stat="n.stat" :show="readOnly ? 'lines' : 'both'" :title="diffTitle(n.stat)" />
             <span class="w-[84px] shrink-0" aria-hidden="true" />
             <span class="pl-1 text-[11px] font-bold" :style="{ color: statusColor(n.status) }">{{
               n.status
@@ -377,7 +388,7 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent class="w-52">
-          <ContextMenuItem @select="open(n)">
+          <ContextMenuItem v-if="!readOnly" @select="open(n)">
             <Eye :size="15" />
             <span>{{ $t("repo.changes.ctxOpen") }}</span>
           </ContextMenuItem>
@@ -418,6 +429,8 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
           :force-expand="forceExpand"
           :can-control="canControl"
           :is-guest="isGuest"
+          :read-only="readOnly"
+          :show-stats="showStats"
           @discard="emit('discard', $event)"
           @stage="emit('stage', $event)"
           @reveal="emit('reveal', $event)"

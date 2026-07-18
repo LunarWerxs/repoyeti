@@ -73,10 +73,23 @@ export function useSettingsNotifications(pullRepo?: (repoId: string) => Promise<
   // raised alongside a toast; see notifyNewProjects() below for the one producer today.
   const NEW_PROJECTS_NOTIFICATION_ID = "scan-new-projects";
   const AI_KEY_INVALID_NOTIFICATION_PREFIX = "ai-key-invalid:";
+  // One rolling "you are behind" entry, replaced in place: a repo that keeps falling behind
+  // should not grow the list, and once pulled there is nothing left to act on.
+  const BEHIND_NOTIFICATION_ID = "repos-behind";
+  const UPDATE_NOTIFICATION_ID = "update-available";
   // `kind` tells the header bell where a click should go ("scan" → the scan modal, "ai-key" →
   // Settings → AI). Absent = a plain informational entry with no navigation.
   const notifications = ref<
-    { id: string; title: string; body?: string; ts: number; read: boolean; kind?: "scan" | "ai-key" }[]
+    {
+      id: string;
+      title: string;
+      body?: string;
+      ts: number;
+      read: boolean;
+      kind?: "scan" | "ai-key" | "behind" | "update";
+      /** For a "behind" entry: the repos it covers, so the bell can offer Pull right there. */
+      behind?: BehindRepo[];
+    }[]
   >([]);
   const unreadCount = computed(() => notifications.value.filter((n) => !n.read).length);
   function markNotificationsRead(): void {
@@ -109,12 +122,46 @@ export function useSettingsNotifications(pullRepo?: (repoId: string) => Promise<
     const failed = results.filter((r) => !r.res.ok);
     if (!failed.length) {
       toast.success(t("notify.behindPullDone", { count: behind.length }, behind.length));
+      dismissNotification(BEHIND_NOTIFICATION_ID);
     } else if (failed.length === 1 && behind.length === 1) {
       const f = failed[0]!;
       toast.error(f.res.message || t("notify.behindPullFailed", { name: f.repo.name }));
     } else {
       toast.error(t("notify.behindPullSomeFailed", { count: failed.length }, failed.length));
     }
+  }
+
+  // ── update available ──────────────────────────────────────────────────────────
+  // The daemon's scheduled check found a newer build. NOTHING is installed here: this raises a
+  // persistent bell entry and opens a prompt that offers the install. (Silently installing is
+  // the separate, opt-in `autoUpdate` setting, which never reaches this path.)
+  const updatePromptOpen = ref(false);
+  /** Why an available update can't be installed right now (dirty tree, detached HEAD…), or null. */
+  const updateBlockedReason = ref<string | null>(null);
+
+  function notifyUpdateAvailable(info: { canApply: boolean; reason: string | null }): void {
+    updateBlockedReason.value = info.canApply ? null : info.reason;
+    const id = UPDATE_NOTIFICATION_ID;
+    const entry = {
+      id,
+      title: t("notify.updateTitle"),
+      body: info.canApply ? t("notify.updateBody") : t("notify.updateBlockedBody"),
+      ts: Date.now(),
+      read: false,
+      kind: "update" as const,
+    };
+    const at = notifications.value.findIndex((n) => n.id === id);
+    if (at === -1) notifications.value.unshift(entry);
+    else notifications.value[at] = entry;
+    // Prompt once per announcement rather than on every scheduled re-check, so a build the owner
+    // chose to skip doesn't reopen a modal at them every few hours. The bell entry persists.
+    if (at === -1) updatePromptOpen.value = true;
+  }
+
+  /** Called once an update actually applies — the offer no longer describes reality. */
+  function clearUpdateNotification(): void {
+    dismissNotification(UPDATE_NOTIFICATION_ID);
+    updatePromptOpen.value = false;
   }
 
   /** Warn about repos that just fell behind: always a toast, plus a system notification when the
@@ -126,9 +173,20 @@ export function useSettingsNotifications(pullRepo?: (repoId: string) => Promise<
     const body = one
       ? t("notify.behindBody", { name: one.name, count: one.behind }, one.behind)
       : t("notify.behindManyBody", { count: behind.length }, behind.length);
-    toast.warning(title, {
-      description: body,
-      // Resolve it right from the toast: pull the repo(s) that fell behind.
+    // The bell is where this LIVES: a persistent entry the owner can come back to and resolve,
+    // rather than a wall of text over the middle of the page that expires on its own. One entry
+    // per batch, replaced (not stacked) so a repo that keeps falling behind can't pile up.
+    const id = BEHIND_NOTIFICATION_ID;
+    const entry = { id, title, body, ts: Date.now(), read: false, kind: "behind" as const, behind };
+    const at = notifications.value.findIndex((n) => n.id === id);
+    if (at === -1) notifications.value.unshift(entry);
+    else notifications.value[at] = entry;
+
+    // The toast is now only a nudge toward the bell: ONE line, no description block, with a
+    // small pull action. It sits bottom-right (see App.vue) instead of over the page centre,
+    // where its warning tint sat too close to the page background to read cleanly.
+    toast.warning(body, {
+      duration: 6000,
       action: pullRepo
         ? {
             label: one ? t("notify.behindPull") : t("notify.behindPullAll"),
@@ -294,6 +352,11 @@ export function useSettingsNotifications(pullRepo?: (repoId: string) => Promise<
     dismissNotification,
     clearNotifications,
     scanOpen,
+    updatePromptOpen,
+    updateBlockedReason,
+    notifyUpdateAvailable,
+    clearUpdateNotification,
+    pullBehind,
     notifyBehind,
     notifySynced,
     notifyAutoCommitted,

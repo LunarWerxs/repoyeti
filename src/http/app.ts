@@ -34,6 +34,7 @@ import {
 } from "../auto-commit.ts";
 import {
   setAutoUpdateEnabled,
+  setUpdateNotifyEnabled,
   setAutoUpdateIntervalSecs,
   AUTO_UPDATE_INTERVAL_DEFAULT_S,
 } from "../auto-update.ts";
@@ -105,16 +106,24 @@ export function createApp(cfg: RepoYetiConfig, hooks: AppHooks = {}): Hono {
   setAutoCommitPull(cfg.autoCommitPull !== false); // absent = on
   setAutoCommitPush(cfg.autoCommitPush !== false); // absent = on
   setAutoCommitAiFallback(normalizeAiFallback(cfg.autoCommitAiFallback)); // absent = "skip"
-  // Auto-update: opt-in (it restarts the daemon) → absent/false = off. The timer only STARTS after
-  // boot (startAutoUpdate in lifecycle.ts); this just primes the runtime flags.
+  // Auto-update. The timer only STARTS after boot (startAutoUpdate in lifecycle.ts); this just
+  // primes the runtime flags. Two halves, two defaults: silent apply is opt-IN (it restarts the daemon), announcing an
+  // update is opt-OUT (it only tells you). See src/auto-update.ts.
   setAutoUpdateEnabled(cfg.autoUpdate === true);
+  setUpdateNotifyEnabled(cfg.updateNotify !== false);
   setAutoUpdateIntervalSecs(cfg.autoUpdateIntervalSecs ?? AUTO_UPDATE_INTERVAL_DEFAULT_S);
   // ⭐ Agent Safety Rail: gate defaults ON (absent = gated); timeouts default to 120s. Auto-deny
   // defaults ON (absent = the historic always-times-out behavior); auto-approve is opt-in (off).
   setApprovalGateEnabled(cfg.mcpApprovalGate !== false);
   setApprovalTimeoutSecs(cfg.mcpApprovalTimeoutSecs ?? APPROVAL_TIMEOUT_DEFAULT_S);
-  setAutoDenyEnabled(cfg.mcpAutoDeny !== false);
-  setAutoApproveEnabled(cfg.mcpAutoApprove === true);
+  // Auto-deny and auto-approve are mutually exclusive (see routes/health.ts). A config written
+  // before that rule existed can still carry both, which would leave two timers racing to
+  // opposite verdicts on the same pending approval. Normalise on the safe side: deny wins, so a
+  // stale config can never silently start auto-APPROVING agent writes.
+  const autoDeny = cfg.mcpAutoDeny !== false;
+  const autoApprove = !autoDeny && cfg.mcpAutoApprove === true;
+  setAutoDenyEnabled(autoDeny);
+  setAutoApproveEnabled(autoApprove);
   setApproveTimeoutSecs(cfg.mcpAutoApproveTimeoutSecs ?? APPROVAL_TIMEOUT_DEFAULT_S);
   // ⭐ Identity Firewall: hand the module the live config so every preflight check
   // (runAction / smartCommitRepo / commitSelectedRepo) reads the current `identityRules`.

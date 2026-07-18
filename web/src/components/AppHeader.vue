@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef } from "vue";
-import { RefreshCw, Plus, Settings, Cloud, CloudOff, CircleUser, Check, DownloadCloud, FolderSearch, FolderX, ListChecks, Loader2, MoreVertical, Power, Bell } from "@lucide/vue";
+import { RefreshCw, Plus, Settings, Cloud, CloudOff, CircleUser, Check, DownloadCloud, FolderSearch, FolderX, ListChecks, Loader2, MoreVertical, Power, Bell, ArrowDownToLine, Download } from "@lucide/vue";
 import type { SortMode } from "../store/repo";
+import type { BehindRepo } from "../store/settings";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { Button } from "@/components/ui/button";
@@ -50,9 +51,30 @@ function toggleNotif(): void {
 }
 // A bell entry's click routes by its `kind`: "ai-key" → open Settings on the Automation tab (where
 // AI providers live), everything else (the scan "new projects" entry) → the scan modal.
-function onNotifClick(n: { kind?: "scan" | "ai-key" }): void {
+// Pull the repos a "behind" notification names, straight from the flyout. The store owns the
+// pulls and their toasts, and drops the entry once they all land.
+const pullingBehind = ref(false);
+async function pullFromNotification(n: { behind?: BehindRepo[] }): Promise<void> {
+  if (pullingBehind.value || !n.behind?.length) return;
+  pullingBehind.value = true;
+  try {
+    await store.pullBehind(n.behind);
+  } finally {
+    pullingBehind.value = false;
+  }
+}
+
+/** Re-open the update offer from its bell entry (the prompt owns the actual install). */
+function openUpdatePrompt(): void {
+  notifOpen.value = false;
+  store.updatePromptOpen = true;
+}
+
+function onNotifClick(n: { kind?: "scan" | "ai-key" | "behind" | "update" }): void {
   notifOpen.value = false;
   // Settings deep-link is owner-only — a guest tapping the "ai-key" entry gets no-op.
+  // Both of these carry their own action button below the entry, so the row itself is inert.
+  if (n.kind === "behind" || n.kind === "update") return;
   if (n.kind === "ai-key") {
     if (!store.isGuest) emit("settings", "open", "automation");
   } else store.scanOpen = true;
@@ -350,17 +372,40 @@ onBeforeUnmount(() => {
               {{ $t("header.notificationsEmpty") }}
             </div>
             <template v-else>
-              <button
-                v-for="n in store.notifications"
-                :key="n.id"
-                type="button"
-                role="menuitem"
-                class="flex w-full flex-col items-start gap-0.5 rounded-sm px-2 py-2 text-left outline-hidden transition-colors hover:bg-accent focus:bg-accent"
-                @click="onNotifClick(n)"
-              >
-                <span class="text-[13px] font-medium text-foreground">{{ n.title }}</span>
-                <span v-if="n.body" class="text-[12px] text-muted-foreground">{{ n.body }}</span>
-              </button>
+              <div v-for="n in store.notifications" :key="n.id" class="relative">
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="flex w-full flex-col items-start gap-0.5 rounded-sm px-2 py-2 text-left outline-hidden transition-colors hover:bg-accent focus:bg-accent"
+                  @click="onNotifClick(n)"
+                >
+                  <span class="text-[13px] font-medium text-foreground">{{ n.title }}</span>
+                  <span v-if="n.body" class="text-[12px] text-muted-foreground">{{ n.body }}</span>
+                </button>
+                <!-- A "behind" entry is actionable right here: pull the repos it names without
+                     leaving the flyout. A sibling button, not nested (button-in-button is
+                     invalid), and .stop so it doesn't also fire the entry's own click. -->
+                <div v-if="n.kind === 'behind' && n.behind?.length" class="px-2 pb-2">
+                  <Button
+                    size="sm"
+                    class="h-7 w-full gap-1.5"
+                    :disabled="pullingBehind"
+                    @click.stop="pullFromNotification(n)"
+                  >
+                    <Loader2 v-if="pullingBehind" class="animate-spin" />
+                    <ArrowDownToLine v-else />
+                    {{ n.behind.length === 1 ? $t("notify.behindPull") : $t("notify.behindPullAll") }}
+                  </Button>
+                </div>
+                <!-- An available update: re-open the offer. The prompt owns the install, so the
+                     bell entry stays a way back to it after a "Later". -->
+                <div v-else-if="n.kind === 'update'" class="px-2 pb-2">
+                  <Button size="sm" class="h-7 w-full gap-1.5" @click.stop="openUpdatePrompt">
+                    <Download />
+                    {{ $t("notify.updateReview") }}
+                  </Button>
+                </div>
+              </div>
               <div class="-mx-1 my-1 h-px bg-border" />
               <button
                 type="button"

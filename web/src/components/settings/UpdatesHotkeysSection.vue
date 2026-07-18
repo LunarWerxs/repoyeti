@@ -24,7 +24,16 @@ const shortcutDesc = computed<Record<string, string>>(() => ({
   treeResize: t("settings.hotkeysList.treeResize"),
 }));
 
-// Silent auto-update + restart of the app (opt-in; see src/auto-update.ts).
+// Two separate consents, deliberately two switches (see src/auto-update.ts):
+//   · "Tell me about updates" (on by default) — announce one, install nothing.
+//   · "Install them automatically" (opt-in) — apply + restart the daemon unattended.
+async function onUpdateNotify(enabled: boolean): Promise<void> {
+  try {
+    await store.setUpdateNotify(enabled);
+  } catch {
+    toast.error(t("settings.updateNotifyFailed"));
+  }
+}
 async function onAutoUpdate(enabled: boolean): Promise<void> {
   try {
     await store.setAutoUpdate(enabled);
@@ -37,6 +46,16 @@ async function onAutoUpdate(enabled: boolean): Promise<void> {
 <template>
   <!-- App updates ─────────────────────────────────────────────────── -->
   <SettingsGroup :label="$t('settings.cardUpdates')">
+    <SettingsRow :label="$t('settings.updateNotify')">
+      <template #info><InfoHint :text="$t('settings.updateNotifyHint')" /></template>
+      <template #control>
+        <Switch
+          :model-value="store.updateNotify"
+          :aria-label="$t('settings.updateNotify')"
+          @update:model-value="(v: boolean) => onUpdateNotify(v)"
+        />
+      </template>
+    </SettingsRow>
     <SettingsRow :label="$t('settings.autoUpdate')">
       <template #info><InfoHint :text="$t('settings.autoUpdateHint')" /></template>
       <template #control>

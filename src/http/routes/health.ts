@@ -47,6 +47,8 @@ import {
 } from "../../auto-commit.ts";
 import {
   autoUpdateEnabled,
+  updateNotifyEnabled,
+  setUpdateNotifyEnabled,
   getAutoUpdateIntervalSecs,
   setAutoUpdateEnabled,
   setAutoUpdateIntervalSecs,
@@ -175,6 +177,7 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       // Auto-update: whether the daemon self-updates + restarts on a schedule, and the check
       // cadence (seconds), so Settings reflects the live state on first load.
       autoUpdate: autoUpdateEnabled(),
+      updateNotify: updateNotifyEnabled(),
       autoUpdateIntervalSecs: getAutoUpdateIntervalSecs(),
       // Auto-scan the whole machine on every app start (owner setting; off by default). A pure
       // stored flag — the web client acts on it at boot; the daemon has no runtime side effect.
@@ -319,6 +322,12 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       saveConfig(cfg);
       broadcast("settings_changed", { autoUpdate: cfg.autoUpdate });
     }
+    if (typeof b.updateNotify === "boolean") {
+      cfg.updateNotify = b.updateNotify;
+      setUpdateNotifyEnabled(b.updateNotify);
+      saveConfig(cfg);
+      broadcast("settings_changed", { updateNotify: cfg.updateNotify });
+    }
     if (typeof b.autoUpdateIntervalSecs === "number" && Number.isFinite(b.autoUpdateIntervalSecs)) {
       // setAutoUpdateIntervalSecs clamps to [900, 604800] → persist the clamped value.
       cfg.autoUpdateIntervalSecs = setAutoUpdateIntervalSecs(b.autoUpdateIntervalSecs);
@@ -366,17 +375,40 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       saveConfig(cfg);
       broadcast("settings_changed", { mcpApprovalTimeoutSecs: cfg.mcpApprovalTimeoutSecs });
     }
+    // Auto-deny and auto-approve are MUTUALLY EXCLUSIVE. With both armed, a pending approval
+    // has two timers racing to opposite verdicts and the outcome is decided by whichever
+    // timeout happens to be shorter — i.e. "deny after 120s" and "approve after 120s" set
+    // together is not a policy, it's a coin flip on a security gate. Turning one on therefore
+    // turns the other off here, in the daemon, so the invariant holds no matter which client
+    // (web UI, curl, a future one) flipped it.
+    // Turning one ON unconditionally turns the other OFF. Unconditionally, rather than "only if
+    // the other is currently on", because the config field is absent until it's first written
+    // while the EFFECTIVE value comes from a default (auto-deny is on by default) — testing
+    // `cfg.mcpAutoDeny` would therefore read undefined and skip the very case that matters.
+    // Writing false when it's already false is a no-op; the broadcast just confirms it.
     if (typeof b.mcpAutoDeny === "boolean") {
       cfg.mcpAutoDeny = b.mcpAutoDeny;
       setAutoDenyEnabled(b.mcpAutoDeny);
+      const patch: Record<string, boolean> = { mcpAutoDeny: cfg.mcpAutoDeny };
+      if (b.mcpAutoDeny) {
+        cfg.mcpAutoApprove = false;
+        setAutoApproveEnabled(false);
+        patch.mcpAutoApprove = false;
+      }
       saveConfig(cfg);
-      broadcast("settings_changed", { mcpAutoDeny: cfg.mcpAutoDeny });
+      broadcast("settings_changed", patch);
     }
     if (typeof b.mcpAutoApprove === "boolean") {
       cfg.mcpAutoApprove = b.mcpAutoApprove;
       setAutoApproveEnabled(b.mcpAutoApprove);
+      const patch: Record<string, boolean> = { mcpAutoApprove: cfg.mcpAutoApprove };
+      if (b.mcpAutoApprove) {
+        cfg.mcpAutoDeny = false;
+        setAutoDenyEnabled(false);
+        patch.mcpAutoDeny = false;
+      }
       saveConfig(cfg);
-      broadcast("settings_changed", { mcpAutoApprove: cfg.mcpAutoApprove });
+      broadcast("settings_changed", patch);
     }
     if (typeof b.mcpAutoApproveTimeoutSecs === "number" && Number.isFinite(b.mcpAutoApproveTimeoutSecs)) {
       // setApproveTimeoutSecs clamps to [10, 3600] → persist the clamped value.
@@ -411,6 +443,7 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       autoCommitPush: autoCommitPushEnabled(),
       autoCommitAiFallback: getAutoCommitAiFallback(),
       autoUpdate: autoUpdateEnabled(),
+      updateNotify: updateNotifyEnabled(),
       autoUpdateIntervalSecs: getAutoUpdateIntervalSecs(),
       autoScan: cfg.autoScan === true,
       loreServersEnabled: resolveLoreServersEnabled(cfg),

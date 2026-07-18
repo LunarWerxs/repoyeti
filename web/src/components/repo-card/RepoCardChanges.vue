@@ -213,10 +213,11 @@ const flatFiles = computed(() =>
 // it (or press Delete) to fall back to the global Settings preset. See @/lib/changes-view.
 const treeScroll = useTemplateRef<HTMLElement>("treeScroll");
 // Live px while a drag is in flight; persisted once on release so we don't thrash
-// localStorage (the deep useLocalStorage watcher serialises on every mutation).
+// localStorage (the deep useLocalStorage watcher serialises on every mutation). This is a CAP
+// like the stored value, not a fixed height — see @/lib/changes-view.
 const dragHeight = ref<number | null>(null);
 const treeStyle = computed(() =>
-  dragHeight.value != null ? { height: `${dragHeight.value}px` } : changesTreeStyle(props.repo.id),
+  dragHeight.value != null ? { maxHeight: `${dragHeight.value}px` } : changesTreeStyle(props.repo.id),
 );
 const resized = computed(() => hasChangesOverride(props.repo.id));
 const clampPx = (px: number): number =>
@@ -233,7 +234,12 @@ const onGripDown = useGripDrag({
     dragStartH = treeScroll.value.clientHeight;
   },
   onMove: (e) => {
-    dragHeight.value = clampPx(dragStartH + (e.clientY - dragStartY));
+    // Since the value is a CAP, dragging past the content's own height would look frozen (the
+    // box can't grow beyond what's in it). Stop at the content height so the grip always tracks
+    // the pointer while it's doing something, and visibly stops when there's nothing left to
+    // reveal. `scrollHeight` is the full content height even while the box is capped shorter.
+    const contentH = treeScroll.value?.scrollHeight ?? MAX_CHANGES_PX;
+    dragHeight.value = Math.min(clampPx(dragStartH + (e.clientY - dragStartY)), Math.max(MIN_CHANGES_PX, contentH));
   },
   onEnd: () => {
     if (dragHeight.value != null) {
@@ -520,6 +526,7 @@ async function onCopyPath(path: string): Promise<void> {
         :force-expand="searching && !isList"
         :can-control="store.canControl"
         :is-guest="store.isGuest"
+        :show-stats="store.diffStatsEnabled"
         @discard="askDiscard"
         @stage="onStage"
         @reveal="onReveal"

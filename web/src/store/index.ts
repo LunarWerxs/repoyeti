@@ -87,6 +87,10 @@ export const useStore = defineStore("repoyeti", () => {
   // Owner setting: silently auto-update + restart the app on a schedule (opt-in). From /api/status,
   // kept live via `settings_changed`; off until status loads.
   const autoUpdate = ref(false);
+  // Owner setting: announce an available update (a bell entry + a prompt offering to install).
+  // ON by default — it only tells you; installing still takes a click, or the opt-in `autoUpdate`
+  // above. From /api/status, kept live via `settings_changed`.
+  const updateNotify = ref(true);
   // Owner setting: sweep the whole machine for repos on every app start. From /api/status,
   // kept live via `settings_changed`; off until status loads (opt-in) — see AppShell.vue's
   // scheduleIdle(() => autoScan && startScan()) on mount.
@@ -206,6 +210,9 @@ export const useStore = defineStore("repoyeti", () => {
     loadStashes,
     tagsByRepo,
     loadTags,
+    incomingByRepo,
+    incomingLoading,
+    loadIncoming,
     createTag,
     setRemote,
     removeRemote,
@@ -299,6 +306,7 @@ export const useStore = defineStore("repoyeti", () => {
     setKeepInSync,
     setAutoCommit,
     setAutoUpdate,
+    setUpdateNotify,
     setAutoCommitMode,
     setAutoCommitInterval,
     setAutoCommitAt,
@@ -349,6 +357,11 @@ export const useStore = defineStore("repoyeti", () => {
     dismissNotification,
     clearNotifications,
     scanOpen,
+    updatePromptOpen,
+    updateBlockedReason,
+    notifyUpdateAvailable,
+    clearUpdateNotification,
+    pullBehind,
     notifyBehind,
     notifySynced,
     notifyAutoCommitted,
@@ -375,6 +388,7 @@ export const useStore = defineStore("repoyeti", () => {
     autoCommitPush,
     autoCommitAiFallback,
     autoUpdate,
+    updateNotify,
     autoScan,
     portableMode,
     hideTrayIcon,
@@ -474,6 +488,7 @@ export const useStore = defineStore("repoyeti", () => {
       autoCommitPush.value = s.autoCommitPush ?? true;
       autoCommitAiFallback.value = s.autoCommitAiFallback ?? "skip";
       autoUpdate.value = s.autoUpdate ?? false;
+      updateNotify.value = s.updateNotify ?? true;
       autoScan.value = s.autoScan ?? false;
       loreServersEnabled.value = s.loreServersEnabled ?? true;
       portableMode.value = s.portableMode ?? false;
@@ -522,6 +537,7 @@ export const useStore = defineStore("repoyeti", () => {
         "scan_progress",
         "scan_done",
         "scan_cancelled",
+        "update_available",
         "approval_pending",
         "approval_resolved",
       ],
@@ -578,6 +594,14 @@ export const useStore = defineStore("repoyeti", () => {
         } else if (event.value === "repo_auto_commit_blocked") {
           // The auto-commit timer skipped these (conflict / mid-operation / failed sync) → warn.
           notifyAutoCommitBlocked((payload.repos as AutoCommitBlockedRepo[] | undefined) ?? []);
+        } else if (event.value === "update_available") {
+          // The scheduled check found a newer build. This NEVER installs anything on its own
+          // (that's the separate, opt-in `autoUpdate`) — it surfaces the offer and lets the
+          // owner decide, which is the whole point of the notify/apply split.
+          notifyUpdateAvailable({
+            canApply: payload.canApply !== false,
+            reason: typeof payload.reason === "string" ? payload.reason : null,
+          });
         } else if (event.value === "daemon_status") {
           tunnelUrl.value = typeof payload.tunnelUrl === "string" ? payload.tunnelUrl : null;
           if (typeof payload.tunnelActive === "boolean") tunnelActive.value = payload.tunnelActive;
@@ -591,6 +615,7 @@ export const useStore = defineStore("repoyeti", () => {
           if (typeof payload.keepInSync === "boolean") keepInSync.value = payload.keepInSync;
           if (typeof payload.autoCommit === "boolean") autoCommit.value = payload.autoCommit;
           if (typeof payload.autoUpdate === "boolean") autoUpdate.value = payload.autoUpdate;
+          if (typeof payload.updateNotify === "boolean") updateNotify.value = payload.updateNotify;
           if (payload.autoCommitMode === "interval" || payload.autoCommitMode === "daily")
             autoCommitMode.value = payload.autoCommitMode;
           if (typeof payload.autoCommitIntervalSecs === "number")
@@ -695,6 +720,9 @@ export const useStore = defineStore("repoyeti", () => {
     loadStashes,
     tagsByRepo,
     loadTags,
+    incomingByRepo,
+    incomingLoading,
+    loadIncoming,
     createTag,
     setRemote,
     removeRemote,
@@ -791,8 +819,10 @@ export const useStore = defineStore("repoyeti", () => {
     autoCommitPush,
     autoCommitAiFallback,
     autoUpdate,
+    updateNotify,
     setAutoCommit,
     setAutoUpdate,
+    setUpdateNotify,
     setAutoCommitMode,
     setAutoCommitInterval,
     setAutoCommitAt,
@@ -846,6 +876,11 @@ export const useStore = defineStore("repoyeti", () => {
     markNotificationsRead,
     dismissNotification,
     clearNotifications,
+    updatePromptOpen,
+    updateBlockedReason,
+    notifyUpdateAvailable,
+    clearUpdateNotification,
+    pullBehind,
     desktopNotify,
     notifyPermission,
     enableDesktopNotify,

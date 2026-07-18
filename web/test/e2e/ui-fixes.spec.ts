@@ -142,6 +142,126 @@ test("the bulk bar stays clear of the file viewer drawer", async ({ page }) => {
   await exit.click();
 });
 
+test("a toast never lands on top of the bulk bar", async ({ page, request }) => {
+  await page.setViewportSize({ width: 1400, height: 1000 });
+  await page.goto("/");
+  await page.locator('[id^="repo-card-"]').first().waitFor({ state: "visible" });
+
+  // This test needs a real toast, so it performs a real bulk action and undoes it. If it dies
+  // between the two, the stars it set would leak into whatever runs next — so clear them
+  // afterwards over the API regardless of how this test ends.
+  const unstarAll = async (): Promise<void> => {
+    const listed = await (await request.get("/api/repos")).json();
+    for (const r of (listed.repos ?? []) as { id: string; starred?: boolean }[]) {
+      if (r.starred) await request.post(`/api/repos/${r.id}/starred`, { data: { starred: false } });
+    }
+  };
+
+  // Toasts moved to bottom-RIGHT, which is where the bulk bar's buttons live. The bar is
+  // bottom-anchored across the whole content width, so at the default inset a toast covers its
+  // right-hand end — and the toast carrying Undo would be the thing burying the previous
+  // action's Undo. App.vue lifts the toaster by the bar's measured height while select mode is on.
+  await page.getByRole("banner").getByRole("button", { name: "More actions" }).click();
+  await page.getByRole("menuitem", { name: "Select multiple" }).click();
+  await page.getByRole("button", { name: "Select all" }).click();
+  await page.getByRole("button", { name: "Star", exact: true }).click();
+
+  const toast = page.locator("[data-sonner-toast]").first();
+  await expect(toast).toBeVisible();
+  // Sonner slides the toast UP into place, so mid-animation it genuinely is over the bar for a
+  // frame or two. Let it land before measuring, or this reads the entrance, not the resting spot.
+  await toast.evaluate(async (el) => {
+    await Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => {})));
+  });
+
+  const boxes = await toast.evaluate((el) => {
+    // The bar is the fixed container holding the "Done selecting" control.
+    const exit = [...document.querySelectorAll("button")].find(
+      (b) => b.getAttribute("aria-label") === "Done selecting" || b.title === "Done selecting",
+    );
+    const bar = exit?.closest("div.fixed");
+    if (!bar) return null;
+    const t = el.getBoundingClientRect();
+    const b = bar.getBoundingClientRect();
+    return {
+      overlaps: !(t.right <= b.left || t.left >= b.right || t.bottom <= b.top || t.top >= b.bottom),
+      toastBottom: t.bottom,
+      barTop: b.top,
+      toastRight: t.right,
+      viewportWidth: window.innerWidth,
+    };
+  });
+
+  expect(boxes, "expected to find the bulk bar").not.toBeNull();
+  expect(boxes!.overlaps).toBe(false);
+  // …and it's above the bar, not off-screen somewhere.
+  expect(boxes!.toastBottom).toBeLessThanOrEqual(boxes!.barTop);
+  // Only the BOTTOM inset may change. Sonner's `offset` sets all four edges from a single
+  // number, so an unwary fix lifts the stack and shoves it left at the same time — the toasts
+  // visibly slide sideways on entering select mode. The right edge must stay put.
+  expect(boxes!.viewportWidth - boxes!.toastRight).toBeLessThanOrEqual(24);
+
+  await page.getByRole("button", { name: "Undo" }).click();
+  await page.getByRole("button", { name: "Done selecting" }).click();
+  await unstarAll();
+});
+
+test("a second toast stacks above the first instead of burying its Undo", async ({ page, request }) => {
+  await page.setViewportSize({ width: 1400, height: 1000 });
+  await page.goto("/");
+  await page.locator('[id^="repo-card-"]').first().waitFor({ state: "visible" });
+
+  const reset = async (): Promise<void> => {
+    const listed = await (await request.get("/api/repos")).json();
+    for (const r of (listed.repos ?? []) as { id: string; starred?: boolean; pinned?: boolean }[]) {
+      if (r.starred) await request.post(`/api/repos/${r.id}/starred`, { data: { starred: false } });
+      if (r.pinned) await request.post(`/api/repos/${r.id}/pinned`, { data: { pinned: false } });
+    }
+  };
+  await reset();
+
+  await page.getByRole("banner").getByRole("button", { name: "More actions" }).click();
+  await page.getByRole("menuitem", { name: "Select multiple" }).click();
+  await page.getByRole("button", { name: "Select all" }).click();
+
+  // Two undoable actions back to back — the first toast is still up when the second arrives.
+  await page.getByRole("button", { name: "Star", exact: true }).click();
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(1);
+  await page.getByRole("button", { name: "Pin", exact: true }).click();
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(2);
+
+  const toasts = page.locator("[data-sonner-toast]");
+  await toasts.first().evaluate(async (el) => {
+    await Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => {})));
+  });
+
+  // Sonner's DEFAULT would park the older toast behind the newer one at nearly the same
+  // coordinates, leaving its Undo unclickable. Expanded, they occupy separate rows.
+  const layout = await page.evaluate(() => {
+    const els = [...document.querySelectorAll("[data-sonner-toast]")] as HTMLElement[];
+    if (els.length < 2) return null;
+    const boxes = els.map((e) => e.getBoundingClientRect()).sort((a, b) => a.top - b.top);
+    const [upper, lower] = boxes;
+    // Every toast's Undo must be the top-most thing at its own centre — that's the property
+    // that actually matters; "not overlapping" is just how it's achieved.
+    const undoReachable = els.every((e) => {
+      const btn = [...e.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Undo");
+      if (!btn) return false;
+      const r = btn.getBoundingClientRect();
+      return btn.contains(document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2));
+    });
+    return { overlap: upper!.bottom > lower!.top, verticalGap: lower!.top - upper!.bottom, undoReachable };
+  });
+
+  expect(layout, "expected two toasts on screen").not.toBeNull();
+  expect(layout!.overlap).toBe(false);
+  expect(layout!.verticalGap).toBeGreaterThan(0);
+  expect(layout!.undoReachable).toBe(true);
+
+  await page.getByRole("button", { name: "Done selecting" }).click();
+  await reset();
+});
+
 test("a bulk hide can be undone from its toast", async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 1000 });
   await page.goto("/");
@@ -169,8 +289,18 @@ test("a bulk hide can be undone from its toast", async ({ page }) => {
   await page.getByRole("button", { name: "Done selecting" }).click();
 });
 
-test("undoing a bulk pin leaves already-pinned repos pinned", async ({ page }) => {
+test("undoing a bulk pin leaves already-pinned repos pinned", async ({ page, request }) => {
   await page.setViewportSize({ width: 1400, height: 1000 });
+
+  // Start from a known pin state instead of inheriting one. This test pins repos, and an
+  // earlier run that died mid-way (or any other spec here) can leave some pinned — which
+  // silently changes what "undo restored the prior value" is even asserting. Reset over the
+  // API rather than the UI: it's setup, not the behaviour under test.
+  const listed = await (await request.get("/api/repos")).json();
+  for (const r of (listed.repos ?? []) as { id: string; pinned?: boolean }[]) {
+    if (r.pinned) await request.post(`/api/repos/${r.id}/pinned`, { data: { pinned: false } });
+  }
+
   await page.goto("/");
   const cards = page.locator('[id^="repo-card-"]');
   await cards.first().waitFor({ state: "visible" });
@@ -179,15 +309,27 @@ test("undoing a bulk pin leaves already-pinned repos pinned", async ({ page }) =
   await cards.first().getByRole("button").first().click(); // expand for its ⋮
   const preId = await cards.first().getAttribute("id");
   await cards.first().getByRole("button", { name: "More actions" }).click();
-  await page.getByRole("menuitem", { name: "Pin", exact: true }).click();
+  // Tolerate a repo left pinned by an earlier (or aborted) run — the menu item reads "Unpin"
+  // then, and insisting on "Pin" would hang on a state this test is about to create anyway.
+  const pinItem = page.getByRole("menuitem", { name: "Pin", exact: true });
+  if (await pinItem.isVisible().catch(() => false)) await pinItem.click();
+  else await page.keyboard.press("Escape");
   await expect(page.locator("section").first().locator(`[id="${preId}"]`)).toBeVisible();
 
-  // Now bulk-pin everything, then undo.
+  // Now bulk-pin everything, then undo. The individual pin's toast may still be on screen —
+  // in `expand` mode it takes its own row rather than burying this one, which means BOTH Undos
+  // are live at once. So scope to the toast that reports the bulk pin; an unscoped "Undo" would
+  // resolve to whichever came first and quietly undo the wrong action.
   await page.getByRole("banner").getByRole("button", { name: "More actions" }).click();
   await page.getByRole("menuitem", { name: "Select multiple" }).click();
   await page.getByRole("button", { name: "Select all" }).click();
   await page.getByRole("button", { name: "Pin", exact: true }).click();
-  await page.getByRole("button", { name: "Undo" }).click();
+  const bulkToast = page
+    .locator("[data-sonner-toast]")
+    .filter({ hasText: /Pinned \d+ repositor/ })
+    .first();
+  await expect(bulkToast).toBeVisible();
+  await bulkToast.getByRole("button", { name: "Undo" }).click();
 
   // The pre-pinned repo is STILL pinned — undo restored each repo's own prior value, it did
   // not blanket-unpin. A naive "set them all false" would have dropped this one.

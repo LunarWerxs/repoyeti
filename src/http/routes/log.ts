@@ -1,6 +1,6 @@
 import type { Hono } from "hono";
 import type { Deps } from "../deps.ts";
-import { getLog, getCommit } from "../../service/index.ts";
+import { getLog, getCommit, getIncoming, fetchRepo } from "../../service/index.ts";
 import { withRepo } from "../respond.ts";
 
 export function register(app: Hono, _deps: Deps): void {
@@ -31,5 +31,26 @@ export function register(app: Hono, _deps: Deps): void {
   // One commit's detail (changed files + bounded diff) — the History "tap a commit" view.
   app.get("/api/repos/:id/commit/:hash", (c) =>
     withRepo(c, async (id) => c.json(await getCommit(id, c.req.param("hash")))),
+  );
+
+  // ── "what would a pull do?" (read-only) ──────────────────────────────────────
+  // Everything this reports comes from objects a fetch has already downloaded, so with
+  // ?fetch=1 (what the Preview Pull button sends) we fetch FIRST and then describe. Without
+  // that the answer would silently reflect whenever the last background sync happened, which
+  // for a preview is worse than useless: it would show "nothing incoming" on a stale ref.
+  // The fetch is the only side effect, and fetch never touches the working tree.
+  app.get("/api/repos/:id/incoming", (c) =>
+    withRepo(c, async (id) => {
+      if (c.req.query("fetch") === "1") {
+        // A failed fetch (offline, auth) is not fatal: fall through and describe what we
+        // already have, so the preview degrades to "as of the last sync" instead of erroring.
+        try {
+          await fetchRepo(id);
+        } catch {
+          /* best-effort */
+        }
+      }
+      return c.json(await getIncoming(id));
+    }),
   );
 }

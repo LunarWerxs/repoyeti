@@ -181,6 +181,12 @@ export const OWNER_ONLY: readonly string[] = [
   "POST /api/repos/:id/auto-commit",
   // working-tree mutation beyond the sync loop
   "PUT /api/repos/:id/file",
+  // Pre-pull preview. Read-only in substance, but ?fetch=1 makes the daemon reach out to the
+  // remote, and it reports the upstream ref name and every incoming path. Kept owner-only so
+  // the guest surface stays exactly the size the owner sized it (see the tripwire in
+  // tests/share-policy.test.ts) — a control guest can already pull, they just don't get the
+  // preview. Move it to GUEST_ROUTES at `control` if that's ever wanted.
+  "GET /api/repos/:id/incoming",
   "POST /api/repos/:id/discard",
   "POST /api/repos/:id/move",
   "POST /api/repos/:id/gitignore",

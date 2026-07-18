@@ -7,12 +7,13 @@
 // Bulk ops run SEQUENTIALLY, not via Promise.all: each one is a daemon write against the shared
 // repo index, and firing 40 concurrent writes is how you get partial-apply races. The bar reports
 // how many actually succeeded rather than assuming.
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch, useTemplateRef } from "vue";
 import { useI18n } from "vue-i18n";
 import { EyeOff, Loader2, Pin, Star, Trash2, X } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { useStore } from "../store";
 import {
+  bulkBarHeight,
   clearSelection,
   pruneSelection,
   selectAll,
@@ -37,6 +38,25 @@ const { t } = useI18n();
 
 const busy = ref(false);
 const removeOpen = ref(false);
+
+// Publish our height so App.vue can lift the bottom-right toasts clear of this bar — otherwise a
+// toast covers the right-hand buttons, Undo included. Observed rather than measured once: the bar
+// wraps to a second row on narrow viewports, and an action can widen it mid-selection.
+const barRef = useTemplateRef<HTMLElement>("bar");
+let ro: ResizeObserver | null = null;
+onMounted(() => {
+  const el = barRef.value;
+  if (!el) return;
+  bulkBarHeight.value = el.offsetHeight;
+  if (typeof ResizeObserver === "undefined") return;
+  ro = new ResizeObserver(() => (bulkBarHeight.value = el.offsetHeight));
+  ro.observe(el);
+});
+onBeforeUnmount(() => {
+  ro?.disconnect();
+  ro = null;
+  bulkBarHeight.value = 0; // back to the plain bottom-right resting position
+});
 
 /**
  * Every repo the dashboard is currently SHOWING — the target of "select all".
@@ -198,6 +218,7 @@ async function bulkRemove(): Promise<void> {
     :style="{ right: 'var(--content-inset-right, 0px)' }"
   >
     <div
+      ref="bar"
       class="pointer-events-auto mx-auto flex max-w-(--container-max) flex-wrap items-center gap-2 rounded-xl border border-border bg-popover/95 px-3 py-2 shadow-xl shadow-black/40 backdrop-blur"
     >
       <span class="text-[13px] font-medium">

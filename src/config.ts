@@ -21,7 +21,7 @@ import {
   API_TOKEN,
 } from "./secrets.ts";
 
-export const VERSION = "0.7.0";
+export const VERSION = "0.8.0";
 
 /** Local state dir. Override with REPOYETI_HOME (used by tests; also handy for relocating state). */
 export const CONFIG_DIR = process.env.REPOYETI_HOME ?? join(homedir(), ".repoyeti");
@@ -347,12 +347,20 @@ export interface RepoYetiConfig {
    */
   autoCommitAiFallback?: "skip" | "basic";
   /**
-   * Auto-update the app on a schedule: check the update remote, and when a newer commit is
-   * available AND the working tree is clean (canApply), pull + reinstall + rebuild, then
-   * self-relaunch so the new code takes over — see src/auto-update.ts. Absent/false = OFF
-   * (opt-in): it restarts the daemon unattended. A dirty tree is never updated.
+   * SILENTLY apply updates on a schedule: pull + reinstall + rebuild, then self-relaunch so the
+   * new code takes over — see src/auto-update.ts. Absent/false = OFF (opt-in), because it
+   * restarts the daemon out from under whoever is using it. A dirty tree is never updated.
+   *
+   * This is NOT "tell me about updates" — that's `updateNotify` below, which is on by default.
+   * Being told an update exists and having it installed unannounced are different consents.
    */
   autoUpdate?: boolean;
+  /**
+   * Check for updates on a schedule and TELL the owner when one lands (a notification plus a
+   * prompt offering to install it). Absent = ON: knowing you're out of date costs nothing and
+   * nothing happens without a click. Applying is still gated on `autoUpdate` (or that click).
+   */
+  updateNotify?: boolean;
   /** Auto-update check cadence in seconds. Clamped to [900, 604800]; absent = 21600 (6 h). */
   autoUpdateIntervalSecs?: number;
   /**

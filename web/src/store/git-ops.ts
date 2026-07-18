@@ -1,6 +1,6 @@
 import { reactive } from "vue";
 import { api } from "../api";
-import type { ActionResult, BranchList, LogResult, StashList, TagList } from "../types";
+import type { ActionResult, BranchList, IncomingResult, LogResult, StashList, TagList } from "../types";
 
 /** Branches / history / stash / tags / remotes / discard — lazily loaded per repo when the
  *  relevant card section opens. `loadChanges` and `asResult` are shared with the rest of the
@@ -15,6 +15,9 @@ export function useGitOps(
   const logByRepo = reactive<Record<string, LogResult>>({});
   const stashesByRepo = reactive<Record<string, StashList>>({});
   const tagsByRepo = reactive<Record<string, TagList>>({});
+  /** repoId → the last Preview Pull result, and whether one is in flight. */
+  const incomingByRepo = reactive<Record<string, IncomingResult>>({});
+  const incomingLoading = reactive<Record<string, boolean>>({});
   /** repoId → a secondary git op in flight (branch switch / stash / discard …), for spinners
    *  and to disable the relevant control. Distinct from `busy` (the primary fetch/pull/push). */
   const gitOpBusy = reactive<Record<string, string | undefined>>({});
@@ -90,6 +93,35 @@ export function useGitOps(
       // can retry. Only surface the error/empty state on a first-page load.
       if (skip > 0 && logByRepo[repoId]?.commits.length) return;
       logByRepo[repoId] = { ...asResult(e), commits: [], hasMore: false };
+    }
+  }
+
+  /**
+   * Load "what would a pull do?" for the Preview Pull dialog. Fetches first by default so the
+   * preview reflects the remote as of NOW, not as of the last background sync (a stale answer
+   * would read as "nothing incoming", which is the one wrong answer that matters here).
+   * Deliberately not cached: a preview you opened five minutes ago is not a preview.
+   */
+  async function loadIncoming(repoId: string, fetchFirst = true): Promise<void> {
+    incomingLoading[repoId] = true;
+    try {
+      incomingByRepo[repoId] = await api.incoming(repoId, fetchFirst);
+    } catch (e) {
+      incomingByRepo[repoId] = {
+        ...asResult(e),
+        upstream: "",
+        noUpstream: false,
+        commits: [],
+        commitsTruncated: false,
+        files: [],
+        filesTruncated: false,
+        stat: { filesChanged: 0, addedLines: 0, removedLines: 0 },
+        conflicts: [],
+        conflictCheck: false,
+        fastForward: false,
+      };
+    } finally {
+      incomingLoading[repoId] = false;
     }
   }
 
@@ -255,6 +287,9 @@ export function useGitOps(
     loadStashes,
     tagsByRepo,
     loadTags,
+    incomingByRepo,
+    incomingLoading,
+    loadIncoming,
     createTag,
     setRemote,
     removeRemote,

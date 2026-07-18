@@ -273,7 +273,11 @@ function onAccount(a: { host: string; login: string } | null): void {
     <div class="flex shrink-0 items-center gap-1.5 text-[12px] font-medium">
       <Tooltip v-if="st && st.behind > 0">
         <TooltipTrigger as-child>
-          <span :class="statusChip('warning')" :aria-label="$t('repo.badge.behindLabel', { count: st.behind })">
+          <!-- `info` (blue), NOT warning: "behind" was previously the same amber as "changed",
+               so two unrelated numbers sitting side by side read as one thing. Blue also matches
+               the remote-presence cloud, so incoming-from-remote shares a colour language:
+               blue = comes from the remote, green = goes to it, amber = uncommitted here. -->
+          <span :class="statusChip('info')" :aria-label="$t('repo.badge.behindLabel', { count: st.behind })">
             <ArrowDown :size="12" /><span class="ml-0.5">{{ st.behind }}</span>
           </span>
         </TooltipTrigger>

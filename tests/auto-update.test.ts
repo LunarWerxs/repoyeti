@@ -3,6 +3,7 @@ import {
   runAutoUpdateOnce,
   setAutoUpdateHooks,
   setAutoUpdateEnabled,
+  setUpdateNotifyEnabled,
   stopAutoUpdate,
   clampAutoUpdateInterval,
   AUTO_UPDATE_INTERVAL_MIN_S,
@@ -11,12 +12,18 @@ import {
 } from "../src/auto-update.ts";
 
 // The auto-update orchestrator's decision logic, driven through injected hooks so nothing actually
-// pulls git / spawns / exits. Gates applying strictly on updateAvailable && canApply, and only
-// relaunches after a successful apply that reports restartRequired.
+// pulls git / spawns / exits.
+//
+// Two settings share this pass and they are NOT the same consent:
+//   · updateNotify (on by default) — announce an available update; install nothing.
+//   · autoUpdate   (opt-in)        — additionally apply it and relaunch, unattended.
+// So the apply-path cases below explicitly enable autoUpdate: without it, "nothing was applied"
+// would pass for the wrong reason (the setting was off) rather than the reason under test.
 
 // Reset the module's hooks + timer state after each case so they don't bleed across tests.
 afterEach(() => {
   setAutoUpdateEnabled(false);
+  setUpdateNotifyEnabled(true); // module default
   stopAutoUpdate();
   setAutoUpdateHooks({}); // restore the real hooks
 });
@@ -49,6 +56,7 @@ function applyResult(over: Record<string, unknown>): any {
 test("applies + relaunches when an update is available and applicable", async () => {
   let applied = 0;
   let relaunched = 0;
+  setAutoUpdateEnabled(true); // testing the apply path
   setAutoUpdateHooks({
     check: async () => status({ updateAvailable: true, canApply: true }),
     apply: async () => {
@@ -85,6 +93,7 @@ test("does nothing when already up to date", async () => {
 test("never applies on a dirty tree (canApply false)", async () => {
   let applied = 0;
   let relaunched = 0;
+  setAutoUpdateEnabled(true); // testing the apply path
   setAutoUpdateHooks({
     check: async () =>
       status({ updateAvailable: true, canApply: false, dirty: true, reason: "local changes must be committed or stashed before updating" }),
@@ -104,6 +113,7 @@ test("never applies on a dirty tree (canApply false)", async () => {
 
 test("does not relaunch when the apply fails", async () => {
   let relaunched = 0;
+  setAutoUpdateEnabled(true); // testing the apply path
   setAutoUpdateHooks({
     check: async () => status({ updateAvailable: true, canApply: true }),
     apply: async () => applyResult({ ok: false, message: "build failed" }),
@@ -133,4 +143,71 @@ test("clampAutoUpdateInterval bounds the cadence", () => {
   expect(clampAutoUpdateInterval(9_999_999)).toBe(AUTO_UPDATE_INTERVAL_MAX_S);
   expect(clampAutoUpdateInterval(Number.NaN)).toBe(AUTO_UPDATE_INTERVAL_DEFAULT_S);
   expect(clampAutoUpdateInterval(3600)).toBe(3600);
+});
+
+// ── notify half: an update is announced, never installed ──────────────────────────────────
+
+test("with auto-apply OFF it announces instead of installing", async () => {
+  let applied = 0;
+  let relaunched = 0;
+  setUpdateNotifyEnabled(true);
+  setAutoUpdateHooks({
+    check: async () => status({ updateAvailable: true, canApply: true }),
+    apply: async () => {
+      applied++;
+      return applyResult({});
+    },
+    relaunch: () => {
+      relaunched++;
+    },
+  });
+  const r = await runAutoUpdateOnce();
+  expect(r.reason).toBe("notified");
+  expect(r.applied).toBe(false);
+  expect(r.relaunched).toBe(false);
+  // The whole point: being told costs nothing and touches nothing.
+  expect(applied).toBe(0);
+  expect(relaunched).toBe(0);
+});
+
+test("announces even when the update cannot be applied (dirty tree)", async () => {
+  // "An update is waiting, commit your work to take it" is exactly the useful thing to know.
+  setUpdateNotifyEnabled(true);
+  setAutoUpdateHooks({
+    check: async () => status({ updateAvailable: true, canApply: false, dirty: true, reason: "local changes" }),
+    apply: async () => applyResult({}),
+    relaunch: () => {},
+  });
+  const r = await runAutoUpdateOnce();
+  expect(r.applied).toBe(false);
+  expect(r.reason).toBe("notified");
+});
+
+test("with both halves off it does nothing at all", async () => {
+  let applied = 0;
+  setAutoUpdateEnabled(false);
+  setUpdateNotifyEnabled(false);
+  setAutoUpdateHooks({
+    check: async () => status({ updateAvailable: true, canApply: true }),
+    apply: async () => {
+      applied++;
+      return applyResult({});
+    },
+    relaunch: () => {},
+  });
+  const r = await runAutoUpdateOnce();
+  expect(r.reason).toBe("notify-off");
+  expect(r.applied).toBe(false);
+  expect(applied).toBe(0);
+});
+
+test("nothing is announced or applied when already up to date", async () => {
+  setUpdateNotifyEnabled(true);
+  setAutoUpdateHooks({
+    check: async () => status({ updateAvailable: false }),
+    apply: async () => applyResult({}),
+    relaunch: () => {},
+  });
+  const r = await runAutoUpdateOnce();
+  expect(r.reason).toBe("up-to-date");
 });

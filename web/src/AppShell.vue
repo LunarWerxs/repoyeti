@@ -9,6 +9,7 @@ import ConflictConcierge from "./components/ConflictConcierge.vue";
 import AgentApprovalCard from "./components/AgentApprovalCard.vue";
 import RepoList from "./components/RepoList.vue";
 import RepoBulkBar from "./components/RepoBulkBar.vue";
+import UpdatePrompt from "./components/UpdatePrompt.vue";
 import RepoCard from "./components/RepoCard.vue";
 import RepoFilters from "./components/RepoFilters.vue";
 import AddRepo from "./components/AddRepo.vue";
@@ -182,6 +183,9 @@ onMounted(async () => {
     <!-- bulk action bar — only while the dashboard is in multi-select mode (started from the
          header's ⋮ menu; see @/lib/repo-selection) -->
     <RepoBulkBar v-if="selectionActive && !store.isGuest" />
+
+    <!-- "an update is available, want it?" — never installs on its own; see UpdatePrompt.vue -->
+    <UpdatePrompt v-if="!store.isGuest" />
 
     <AddRepo v-model:open="showAdd" />
     <ScanProjects v-model:open="store.scanOpen" />
