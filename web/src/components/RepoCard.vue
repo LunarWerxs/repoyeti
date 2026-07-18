@@ -13,9 +13,16 @@ import RepoCardActions from "./repo-card/RepoCardActions.vue";
 import LogPanel from "./LogPanel.vue";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
 
-const props = withDefaults(defineProps<{ repo: Repo; draggable?: boolean }>(), {
-  draggable: true,
-});
+const props = withDefaults(
+  defineProps<{
+    repo: Repo;
+    draggable?: boolean;
+    /** Which dashboard section this card sits in (see RepoList.vue) — forwarded to the header,
+     *  which drops the Pinned/Starred badge the section heading already states. */
+    section?: "pinned" | "starred" | "other";
+  }>(),
+  { draggable: true, section: "other" },
+);
 const store = useStore();
 
 const st = computed(() => props.repo.status);
@@ -105,7 +112,13 @@ watch(
     "
   >
     <!-- collapsed header row — see repo-card/RepoCardHeader.vue -->
-    <RepoCardHeader :repo="repo" :draggable="draggable" :expanded="expanded" @toggle="toggle" />
+    <RepoCardHeader
+      :repo="repo"
+      :draggable="draggable"
+      :expanded="expanded"
+      :section="section"
+      @toggle="toggle"
+    />
 
     <!-- ── expanded body ───────────────────────────────────────────────────── -->
     <CollapsibleContent>

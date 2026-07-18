@@ -28,6 +28,7 @@ import { useGripDrag } from "@/lib/grip-drag";
 import { useTooltipConfig } from "@/lib/tooltip-config";
 import ChangesTree from "../ChangesTree.vue";
 import BranchPanel from "../BranchPanel.vue";
+import RepoCardMenu from "./RepoCardMenu.vue";
 import ExpandTransition from "@/shell/ExpandTransition.vue";
 import { Button } from "@/components/ui/button";
 import {
@@ -82,7 +83,12 @@ const dirPaths = computed(() => collectDirPaths(changeTree.value));
 const allCollapsed = computed(
   () => dirPaths.value.length > 0 && dirPaths.value.every((p) => treeCollapse.collapsed.has(p)),
 );
+// Collapse-all has nothing to act on in list view (no folders rendered), while a search is
+// running (the tree is force-expanded), or in a repo whose changes are all at the root. The
+// button stays in place and greys out in those states rather than unmounting — see the toolbar.
+const collapseAllDisabled = computed(() => isList.value || searching.value || !dirPaths.value.length);
 function toggleCollapseAll(): void {
+  if (collapseAllDisabled.value) return;
   if (allCollapsed.value) treeCollapse.expandAll();
   else treeCollapse.collapseAll(dirPaths.value);
 }
@@ -361,6 +367,9 @@ async function onCopyPath(path: string): Promise<void> {
       </TooltipTrigger>
       <TooltipContent>{{ hasRemote ? st?.remote : $t("repo.badge.noRemote") }}</TooltipContent>
     </Tooltip>
+    <!-- overflow (⋮) menu — moved here from the fetch/pull/push row so the card's per-repo
+         management actions sit with refresh + the remote indicator. Owner-only. -->
+    <RepoCardMenu v-if="!store.isGuest" :repo="repo" />
   </div>
 
   <!-- branch switcher + inline create form — see BranchPanel.vue -->
@@ -453,11 +462,21 @@ async function onCopyPath(path: string): Promise<void> {
         </TooltipTrigger>
         <TooltipContent>{{ isList ? $t("repo.changes.viewAsTree") : $t("repo.changes.viewAsList") }}</TooltipContent>
       </Tooltip>
-      <Tooltip v-if="dirPaths.length && !searching && !isList">
+      <!-- Collapse-all is ALWAYS rendered, just disabled when it can't do anything (list view has
+           no folders; a search force-expands the tree; a flat repo has no folders to collapse).
+           It used to be v-if'd away, which changed the toolbar's button count and shifted the
+           other controls around under the pointer. -->
+      <Tooltip>
         <TooltipTrigger as-child>
           <button
             type="button"
-            class="flex size-7 shrink-0 items-center justify-center rounded text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+            class="flex size-7 shrink-0 items-center justify-center rounded text-muted-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/40"
+            :class="
+              collapseAllDisabled
+                ? 'cursor-default opacity-40'
+                : 'hover:bg-accent hover:text-foreground'
+            "
+            :aria-disabled="collapseAllDisabled"
             :aria-label="allCollapsed ? $t('repo.changes.expandAll') : $t('repo.changes.collapseAll')"
             :title="tooltipsEnabled ? undefined : (allCollapsed ? $t('repo.changes.expandAll') : $t('repo.changes.collapseAll'))"
             @click="toggleCollapseAll"
@@ -465,10 +484,18 @@ async function onCopyPath(path: string): Promise<void> {
             <component :is="allCollapsed ? ChevronsUpDown : ChevronsDownUp" :size="14" />
           </button>
         </TooltipTrigger>
-        <TooltipContent>{{ allCollapsed ? $t("repo.changes.expandAll") : $t("repo.changes.collapseAll") }}</TooltipContent>
+        <TooltipContent>
+          {{
+            collapseAllDisabled
+              ? $t("repo.changes.collapseAllUnavailable")
+              : allCollapsed
+                ? $t("repo.changes.expandAll")
+                : $t("repo.changes.collapseAll")
+          }}
+        </TooltipContent>
       </Tooltip>
     </div>
-    <div ref="treeScroll" class="scroll-slim overflow-y-auto p-1" :style="treeStyle">
+    <div ref="treeScroll" class="scroll-slim overflow-y-auto px-1 py-0.5" :style="treeStyle">
       <!-- Spinner only before the FIRST load: changesLoading also flips on every background
            refresh, and swapping the whole (possibly huge) tree for a spinner and back would
            unmount/remount thousands of rows on each refresh. Once data exists, the old tree

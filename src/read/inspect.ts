@@ -119,6 +119,18 @@ export type MergeFilter = "only" | "exclude";
  */
 export type RefScope = "head" | "local" | "all";
 
+/**
+ * What one commit changed, totalled across its files (`git log --numstat`).
+ * Line counts only — `--numstat` reports lines, never characters, so this is deliberately
+ * narrower than the working-tree `DiffStat` in ./diffstat.ts (which parses patch text).
+ * Binary files count toward `filesChanged` but contribute no lines (git reports "-").
+ */
+export interface CommitStat {
+  filesChanged: number;
+  addedLines: number;
+  removedLines: number;
+}
+
 export interface LogEntry {
   /** Full 40-char commit hash. */
   hash: string;
@@ -137,6 +149,12 @@ export interface LogEntry {
   /** True when this commit has 2+ parents (a merge). Lets callers detect/flag merges
    *  without re-deriving from `parents`. */
   isMerge: boolean;
+  /**
+   * Files/lines this commit touched. Always present for git; all-zero on a merge, because
+   * `git log --numstat` deliberately prints no diff for one (its change is the union of its
+   * parents, not an edit of its own). Optional so non-git backends can omit it entirely.
+   */
+  stat?: CommitStat;
 }
 
 export interface LogResult {
@@ -186,28 +204,49 @@ export async function readLog(
           ...mergeFlag,
           `--max-count=${cap}`,
           `--skip=${off}`,
+          // Per-commit file/line totals for the history table's "changes" column. This makes the
+          // output MULTI-line per commit (a numstat line per changed file follows each record),
+          // which the parser below handles by shape — see the US test.
+          "--numstat",
           `--pretty=format:${fmt}`,
         ]);
       } catch {
         return { ok: true, code: "OK" as const, commits: [], hasMore: false }; // unborn HEAD
       }
-      const lines = raw.split("\n").filter((l) => l.trim() !== "");
-      const commits: LogEntry[] = lines.map((line) => {
-        const [hash = "", shortHash = "", authorName = "", authorEmail = "", at = "0", parentsRaw = "", refs = "", subject = ""] =
-          line.split(US);
-        const parents = parentsRaw.trim() ? parentsRaw.trim().split(" ") : [];
-        return {
-          hash,
-          shortHash,
-          subject,
-          authorName,
-          authorEmail,
-          date: Number(at) * 1000,
-          refs: refs.trim(),
-          parents,
-          isMerge: parents.length > 1,
-        };
-      });
+      // With --numstat the output is no longer one line per commit: each commit record is followed
+      // by "<added>\t<removed>\t<path>" lines (and blank separators). Commit records are the only
+      // lines carrying the unit separator, so that's the discriminator — a numstat path could
+      // otherwise contain anything, but never US. Stat lines fold into the commit above them.
+      const commits: LogEntry[] = [];
+      for (const line of raw.split("\n")) {
+        if (line.trim() === "") continue;
+        if (line.includes(US)) {
+          const [hash = "", shortHash = "", authorName = "", authorEmail = "", at = "0", parentsRaw = "", refs = "", subject = ""] =
+            line.split(US);
+          const parents = parentsRaw.trim() ? parentsRaw.trim().split(" ") : [];
+          commits.push({
+            hash,
+            shortHash,
+            subject,
+            authorName,
+            authorEmail,
+            date: Number(at) * 1000,
+            refs: refs.trim(),
+            parents,
+            isMerge: parents.length > 1,
+            stat: { filesChanged: 0, addedLines: 0, removedLines: 0 },
+          });
+          continue;
+        }
+        const current = commits.at(-1);
+        if (!current?.stat) continue;
+        // "12\t3\tsrc/foo.ts" — or "-\t-\tlogo.png" for a binary file (counted, but no lines).
+        const [addedRaw = "", removedRaw = "", ...pathParts] = line.split("\t");
+        if (pathParts.length === 0) continue; // not a numstat row
+        current.stat.filesChanged += 1;
+        if (addedRaw !== "-") current.stat.addedLines += Number(addedRaw) || 0;
+        if (removedRaw !== "-") current.stat.removedLines += Number(removedRaw) || 0;
+      }
       return { ok: true, code: "OK" as const, commits, hasMore: commits.length === cap };
     });
   } catch (e) {

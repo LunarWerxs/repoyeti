@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 import { fromNow } from "@/lib/util";
 import { identityInitials, identityTint } from "@/lib/identity-display";
 import { repoViolatesIdentityRule } from "@/lib/identity-firewall";
+import { isSelected, selectionActive, toggleSelected } from "@/lib/repo-selection";
 import DiffStat from "../DiffStat.vue";
 import {
   DropdownMenu,
@@ -41,15 +42,37 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip
 import { useTooltipConfig } from "@/lib/tooltip-config";
 import type { Repo } from "../../types";
 
-const props = withDefaults(defineProps<{ repo: Repo; draggable?: boolean; expanded: boolean }>(), {
-  draggable: true,
-});
+const props = withDefaults(
+  defineProps<{
+    repo: Repo;
+    draggable?: boolean;
+    expanded: boolean;
+    /** Which dashboard section this card is rendered in — see RepoList.vue. Lets the header drop
+     *  the badge the section heading already states. */
+    section?: "pinned" | "starred" | "other";
+  }>(),
+  { draggable: true, section: "other" },
+);
 const emit = defineEmits<{ toggle: [] }>();
 const store = useStore();
 const { t } = useI18n();
 // Dropdown triggers can't take the reka Tooltip wrapper (stacked as-child triggers break the
 // popper anchor), so their native :title is gated on the same "show tooltips" setting instead.
 const { enabled: tooltipsEnabled } = useTooltipConfig();
+
+// ── multi-select mode ─────────────────────────────────────────────────────────
+// While the dashboard is selecting, the row picks/unpicks this repo instead of expanding it,
+// and the identity dropdown + expand chevron step aside (they'd act on a card you can't see).
+const selecting = selectionActive;
+const picked = computed(() => isSelected(props.repo.id));
+const rowLabel = computed(() => {
+  if (selecting.value) return t("repo.selectToggle", { name: props.repo.displayName || props.repo.name });
+  return props.expanded ? t("repo.collapse") : t("repo.expand");
+});
+function onRowActivate(): void {
+  if (selecting.value) toggleSelected(props.repo.id);
+  else emit("toggle");
+}
 
 const st = computed(() => props.repo.status);
 const isClean = computed(
@@ -134,18 +157,34 @@ function onAccount(a: { host: string; login: string } | null): void {
   <div
     role="button"
     tabindex="0"
-    :aria-expanded="expanded"
-    :aria-label="expanded ? $t('repo.collapse') : $t('repo.expand')"
+    :aria-expanded="selecting ? undefined : expanded"
+    :aria-pressed="selecting ? picked : undefined"
+    :aria-label="rowLabel"
     class="group flex cursor-pointer items-center gap-1.5 rounded-md p-2 outline-none transition-colors hover:bg-accent/30 focus-visible:ring-2 focus-visible:ring-ring/40 sm:gap-2 sm:p-2.5"
-    @click="emit('toggle')"
-    @keydown.enter.prevent="emit('toggle')"
-    @keydown.space.prevent="emit('toggle')"
+    :class="selecting && picked && 'bg-primary/10'"
+    @click="onRowActivate"
+    @keydown.enter.prevent="onRowActivate"
+    @keydown.space.prevent="onRowActivate"
   >
+    <!-- In multi-select mode the drag handle's slot becomes the selection checkbox — same
+         position, so rows don't reflow when the mode flips. See @/lib/repo-selection. -->
+    <span
+      v-if="selecting"
+      class="flex size-7 shrink-0 items-center justify-center"
+      aria-hidden="true"
+    >
+      <span
+        class="flex size-4 items-center justify-center rounded-[4px] border transition-colors"
+        :class="picked ? 'border-primary bg-primary text-primary-foreground' : 'border-border/70 bg-card/70'"
+      >
+        <Check v-if="picked" :size="12" />
+      </span>
+    </span>
     <!-- drag handle: hidden entirely when a preset sort is active (draggable=false, since
          dragging is meaningless then; see RepoList.vue); otherwise rendered but only
          revealed on row hover/focus, so it doesn't clutter the row at rest. -->
     <button
-      v-if="draggable"
+      v-else-if="draggable"
       class="drag-handle flex size-7 shrink-0 cursor-grab touch-none items-center justify-center rounded-md text-muted-foreground/60 opacity-0 outline-none transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 hover:bg-accent hover:text-muted-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/40 active:bg-accent/70 active:cursor-grabbing"
       :aria-label="$t('repo.dragToReorder')"
       @click.stop
@@ -180,8 +219,11 @@ function onAccount(a: { host: string; login: string } | null): void {
       >
         {{ repo.vcs }}
       </span>
+      <!-- Pinned/Starred badges are suppressed inside their OWN section: the section heading
+           right above the card already says "Pinned" / "Starred", so the icon is pure noise
+           there. They still show anywhere the card appears outside that section. -->
       <span
-        v-if="repo.pinned"
+        v-if="repo.pinned && section !== 'pinned'"
         class="flex shrink-0 items-center rounded-md bg-primary/15 px-1.5 py-0.5 text-primary"
         :title="$t('repo.badge.pinned')"
         :aria-label="$t('repo.badge.pinned')"
@@ -189,7 +231,7 @@ function onAccount(a: { host: string; login: string } | null): void {
         <Pin :size="11" />
       </span>
       <span
-        v-if="repo.starred"
+        v-if="repo.starred && section !== 'starred'"
         class="flex shrink-0 items-center rounded-md bg-warning/15 px-1.5 py-0.5 text-warning"
         :title="$t('repo.badge.starred')"
         :aria-label="$t('repo.badge.starred')"
@@ -229,18 +271,6 @@ function onAccount(a: { host: string; login: string } | null): void {
          (collapsed) and filled pills with a trailing word (expanded); see statusChip
          / statusWord. Order mirrors the pull→push flow: behind, ahead, dirty, clean. -->
     <div class="flex shrink-0 items-center gap-1.5 text-[12px] font-medium">
-      <!-- aggregate line delta (left of ahead/changed); chars + breakdown on hover.
-           Shown only when the diff-stats setting is on and the tree is dirty. -->
-      <Tooltip v-if="store.diffStatsEnabled && st?.diff && st.dirty > 0">
-        <TooltipTrigger as-child>
-          <span class="inline-flex items-center"><DiffStat :stat="st?.diff" show="lines" /></span>
-        </TooltipTrigger>
-        <TooltipContent>
-          {{ $t("repo.diffStat.lines", { added: st?.diff?.addedLines ?? 0, removed: st?.diff?.removedLines ?? 0 }) }}
-          ·
-          {{ $t("repo.diffStat.chars", { added: (st?.diff?.addedChars ?? 0).toLocaleString(), removed: (st?.diff?.removedChars ?? 0).toLocaleString() }) }}
-        </TooltipContent>
-      </Tooltip>
       <Tooltip v-if="st && st.behind > 0">
         <TooltipTrigger as-child>
           <span :class="statusChip('warning')" :aria-label="$t('repo.badge.behindLabel', { count: st.behind })">
@@ -260,14 +290,32 @@ function onAccount(a: { host: string; login: string } | null): void {
         </TooltipTrigger>
         <TooltipContent>{{ $t("repo.badge.aheadLabel", { count: st.ahead }) }}</TooltipContent>
       </Tooltip>
+      <!-- Dirty-tree stats read as a pair: how many FILES, then how many LINES. Collapsed they
+           are bare coloured numbers; expanded each fills into a pill and reveals its noun
+           ("12 files changed" · "+340 −87 lines"), via the same statusChip/statusWord morph as
+           every other indicator here. -->
       <Tooltip v-if="st && st.dirty > 0">
         <TooltipTrigger as-child>
           <span :class="statusChip('warning')" :aria-label="$t('repo.badge.changedLabel', { count: st.dirty })">
             <Pencil :size="12" /><span class="ml-0.5">{{ st.dirty }}</span
-            ><span :class="statusWord">&nbsp;{{ $t("repo.badge.changed") }}</span>
+            ><span :class="statusWord">&nbsp;{{ $t("repo.badge.filesChanged") }}</span>
           </span>
         </TooltipTrigger>
         <TooltipContent>{{ $t("repo.badge.changedLabel", { count: st.dirty }) }}</TooltipContent>
+      </Tooltip>
+      <!-- Aggregate line delta. Present only when the daemon actually computed it (the
+           "diff stats" setting drives that — with it off there is no `st.diff` to show). -->
+      <Tooltip v-if="st?.diff && st.dirty > 0">
+        <TooltipTrigger as-child>
+          <span :class="statusChip('muted')" :aria-label="$t('repo.diffStat.lines', { added: st.diff.addedLines, removed: st.diff.removedLines })">
+            <DiffStat :stat="st.diff" show="lines" /><span :class="statusWord">&nbsp;{{ $t("repo.badge.lines") }}</span>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>
+          {{ $t("repo.diffStat.lines", { added: st.diff.addedLines, removed: st.diff.removedLines }) }}
+          ·
+          {{ $t("repo.diffStat.chars", { added: (st.diff.addedChars ?? 0).toLocaleString(), removed: (st.diff.removedChars ?? 0).toLocaleString() }) }}
+        </TooltipContent>
       </Tooltip>
       <Tooltip v-if="isClean">
         <TooltipTrigger as-child>
@@ -283,7 +331,7 @@ function onAccount(a: { host: string; login: string } | null): void {
     <!-- identity avatar → dropdown picker (stops row toggle; no Tooltip wrapper —
          stacking two as-child triggers on one element breaks reka's popper anchor, so the
          hover hint is a native :title, gated on the "show tooltips" setting) -->
-    <DropdownMenu v-if="!store.isGuest && (store.ghAccounts.length > 0 || store.identitiesRelevant)">
+    <DropdownMenu v-if="!selecting && !store.isGuest && (store.ghAccounts.length > 0 || store.identitiesRelevant)">
       <DropdownMenuTrigger
         :title="tooltipsEnabled ? ([
           repo.syncAccountLogin ? `Syncs as ${repo.syncAccountLogin}` : null,
@@ -364,8 +412,10 @@ function onAccount(a: { host: string; login: string } | null): void {
       </DropdownMenuContent>
     </DropdownMenu>
 
-    <!-- expand chevron (keyboard/AT toggle; .stop so the row handler doesn't double-fire) -->
+    <!-- expand chevron (keyboard/AT toggle; .stop so the row handler doesn't double-fire).
+         Hidden while selecting — the row means "pick this one" then, not "open it". -->
     <button
+      v-if="!selecting"
       class="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-all hover:bg-accent hover:text-foreground active:scale-90 active:bg-accent/70 focus-visible:ring-2 focus-visible:ring-ring/40"
       :aria-label="expanded ? $t('repo.collapse') : $t('repo.expand')"
       :aria-expanded="expanded"

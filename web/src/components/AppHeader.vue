@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef } from "vue";
-import { RefreshCw, Plus, Settings, Cloud, CloudOff, CircleUser, Check, DownloadCloud, FolderSearch, FolderX, Loader2, MoreVertical, Power, Bell } from "@lucide/vue";
+import { RefreshCw, Plus, Settings, Cloud, CloudOff, CircleUser, Check, DownloadCloud, FolderSearch, FolderX, ListChecks, Loader2, MoreVertical, Power, Bell } from "@lucide/vue";
 import type { SortMode } from "../store/repo";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { useStore } from "../store";
 import { useRepoFeedback } from "@/lib/repo-feedback";
+import { startSelecting } from "@/lib/repo-selection";
 
 defineProps<{ connected: boolean; repoCount: number }>();
 const emit = defineEmits<{
@@ -219,6 +220,14 @@ function reload(): void {
 function openScan(): void {
   actionsOpen.value = false;
   store.scanOpen = true;
+}
+
+// Enter dashboard-wide multi-select (see @/lib/repo-selection). The bulk bar owns leaving it —
+// and hands focus back to this ⋮ trigger when it does, since exiting unmounts the bar's own
+// exit button out from under the user.
+function beginSelectMultiple(): void {
+  actionsOpen.value = false;
+  startSelecting(actionsMenuRef.value?.querySelector("button") ?? null);
 }
 
 // Sort-order submenu (Y7): a client-only display preference, so no toast/await needed; it
@@ -479,6 +488,18 @@ onBeforeUnmount(() => {
             >
               <FolderSearch />
               <span>{{ $t("header.scanProjects") }}</span>
+            </button>
+            <!-- Multi-select: turns every card into a checkbox row and raises the bulk action
+                 bar (see RepoBulkBar.vue). Owner-only — every bulk action is a daemon write. -->
+            <button
+              v-if="!store.isGuest"
+              type="button"
+              role="menuitem"
+              class="relative flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-hidden transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground [&_svg]:size-4 [&_svg]:shrink-0"
+              @click="beginSelectMultiple"
+            >
+              <ListChecks />
+              <span>{{ $t("header.selectMultiple") }}</span>
             </button>
             <div class="-mx-1 my-1 h-px bg-border" />
             <!-- sort order (Y7): a client-only display preference, applied instantly -->

@@ -8,7 +8,7 @@
 // the graph's toggle. Detail (files + bounded diff) is fetched per-commit on tap, cached by hash.
 import { ref, computed, watch, onMounted, onBeforeUnmount, useTemplateRef } from "vue";
 import { useI18n } from "vue-i18n";
-import { History, ChevronDown, Loader2, RefreshCw, GitMerge, Copy, CornerDownRight, Tag, FileEdit, Eye, SquarePen, FolderOpen } from "@lucide/vue";
+import { History, ChevronDown, Loader2, RefreshCw, GitMerge, Copy, CornerDownRight, Tag, FileEdit, Files, Eye, SquarePen, FolderOpen } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { useStore } from "../store";
 import { api, ApiError } from "../api";
@@ -54,7 +54,11 @@ onMounted(() => {
   if (typeof ResizeObserver === "undefined" || !rootEl.value) return;
   ro = new ResizeObserver((entries) => {
     const w = entries[0]?.contentRect.width ?? 0;
-    if (w > 0) compact.value = w < 560;
+    // 640, not the old 560: the wide table gained a fifth column (Changes), so its fixed tracks
+    // now total 380px. At 560 the flexible Description track was squeezed to ~144px and every
+    // subject truncated after a couple of words. 640 keeps Description at ~224px or better, and
+    // anything narrower gets the two-line compact rows, which read better at that size anyway.
+    if (w > 0) compact.value = w < 640;
   });
   ro.observe(rootEl.value);
 });
@@ -96,8 +100,12 @@ const graph = computed(() => {
   return { items, laneCount: layout.laneCount };
 });
 const gutterW = computed(() => Math.min(graph.value.laneCount, LANE_CAP) * lanePx.value || lanePx.value);
-// Shared grid template so the wide-mode header + rows keep their columns aligned.
-const gridCols = computed(() => `${gutterW.value}px minmax(0,1fr) minmax(72px,132px) auto auto`);
+// ONE column template, shared verbatim by the wide-mode header and every commit row. The header
+// and each row are SEPARATE grids, so content-sized tracks (auto / minmax) resolve independently
+// per grid — the header sizing to the word "AUTHOR", each row to its own author name — which is
+// why the titles never lined up with the columns under them. Fixed tracks keep the two in
+// lockstep. Order: description · changes · date · author · commit.
+const COLS = "minmax(0,1fr) 112px 88px 116px 64px";
 
 // ── ref-decoration chips (parse the `refs` string git hands us) ──────────────────────
 interface RefChip { kind: "current" | "head" | "branch" | "remote" | "tag"; label: string }
@@ -117,6 +125,23 @@ function refChips(refs: string): RefChip[] {
   return chips.sort((a, b) => rank[a.kind] - rank[b.kind]);
 }
 const CHIP_CAP = 4;
+
+// ── per-commit change totals (the "Changes" column) ──────────────────────────────────
+/** True when the commit reports any change. A merge reports none — git prints no diff for one. */
+function hasStat(c: LogEntry): boolean {
+  const s = c.stat;
+  return !!s && (s.filesChanged > 0 || s.addedLines > 0 || s.removedLines > 0);
+}
+/** Compact count so the narrow column can't blow out: 1234 → "1.2k", 20500 → "21k". */
+function compactN(n: number): string {
+  return n < 1000 ? String(n) : `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
+}
+/** Exact figures for the hover title, since the cell itself abbreviates. */
+function statTitle(c: LogEntry): string {
+  const s = c.stat;
+  if (!s) return "";
+  return `${t("repo.history.filesChanged", { count: s.filesChanged }, s.filesChanged)} · ${t("repo.diffStat.lines", { added: s.addedLines, removed: s.removedLines })}`;
+}
 
 // ── data loading + scope switching ───────────────────────────────────────────────────
 async function reload(): Promise<void> {
@@ -378,17 +403,21 @@ watch(
       </div>
 
       <template v-else-if="logResult">
-        <!-- column header (wide cards only) -->
-        <div
-          v-if="!compact"
-          class="grid items-center border-b border-border/40 pb-1 pr-1 text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground/70"
-          :style="{ gridTemplateColumns: gridCols }"
-        >
-          <span aria-hidden="true" />
-          <span>{{ $t("repo.history.colDescription") }}</span>
-          <span class="text-right">{{ $t("repo.history.colDate") }}</span>
-          <span class="pl-2">{{ $t("repo.history.colAuthor") }}</span>
-          <span class="pl-3 text-right">{{ $t("repo.history.colCommit") }}</span>
+        <!-- column header (wide cards only). Mirrors a commit row's own structure exactly — a
+             gutter-width spacer, then the SAME grid template with the SAME per-cell padding and
+             alignment — so every title sits over the column it names. -->
+        <div v-if="!compact" class="flex items-stretch border-b border-border/40 pb-1">
+          <span :style="{ width: `${gutterW}px` }" class="shrink-0" aria-hidden="true" />
+          <div
+            class="grid min-w-0 flex-1 items-center pr-1 text-[10.5px] font-medium tracking-wide uppercase text-muted-foreground/70"
+            :style="{ gridTemplateColumns: COLS }"
+          >
+            <span class="truncate">{{ $t("repo.history.colDescription") }}</span>
+            <span class="truncate pl-2 text-right">{{ $t("repo.history.colChanges") }}</span>
+            <span class="truncate pl-2 text-right">{{ $t("repo.history.colDate") }}</span>
+            <span class="truncate pl-2">{{ $t("repo.history.colAuthor") }}</span>
+            <span class="truncate pl-2 text-right">{{ $t("repo.history.colCommit") }}</span>
+          </div>
         </div>
 
         <div ref="scrollEl" class="scroll-slim max-h-104 overflow-y-auto">
@@ -525,11 +554,11 @@ watch(
                   />
                 </svg>
 
-                <!-- WIDE: aligned columns -->
+                <!-- WIDE: aligned columns (same COLS template as the header above) -->
                 <div
                   v-if="!compact"
                   class="grid min-w-0 flex-1 items-center py-1 pr-1"
-                  :style="{ gridTemplateColumns: 'minmax(0,1fr) minmax(72px,132px) auto auto' }"
+                  :style="{ gridTemplateColumns: COLS }"
                 >
                   <div class="flex min-w-0 items-center gap-1.5">
                     <GitMerge
@@ -557,11 +586,26 @@ watch(
                     </span>
                     <span class="truncate text-[12.5px] text-foreground" :title="item.commit!.subject">{{ item.commit!.subject }}</span>
                   </div>
-                  <span class="whitespace-nowrap pl-2 text-right text-[11px] text-muted-foreground">{{ fromNow(item.commit!.date) }}</span>
+                  <!-- total change: +added / −removed / files touched. Abbreviated (1.2k) so a
+                       huge commit can't widen the column; exact figures ride on the title. -->
+                  <span
+                    class="mono flex items-center justify-end gap-1 overflow-hidden pl-2 text-[10.5px] whitespace-nowrap"
+                    :title="statTitle(item.commit!)"
+                  >
+                    <template v-if="hasStat(item.commit!)">
+                      <span class="text-success">+{{ compactN(item.commit!.stat!.addedLines) }}</span>
+                      <span class="text-destructive">−{{ compactN(item.commit!.stat!.removedLines) }}</span>
+                      <span class="inline-flex items-center gap-0.5 text-muted-foreground/70">
+                        <Files :size="9" />{{ compactN(item.commit!.stat!.filesChanged) }}
+                      </span>
+                    </template>
+                    <span v-else class="text-muted-foreground/35">·</span>
+                  </span>
+                  <span class="pl-2 text-right text-[11px] whitespace-nowrap text-muted-foreground">{{ fromNow(item.commit!.date) }}</span>
                   <span class="truncate pl-2 text-[11.5px] text-muted-foreground" :title="item.commit!.authorEmail">{{ item.commit!.authorName }}</span>
                   <button
                     type="button"
-                    class="mono pl-3 text-right text-[11px] text-info/80 outline-none hover:underline focus-visible:underline"
+                    class="mono pl-2 text-right text-[11px] text-info/80 outline-none hover:underline focus-visible:underline"
                     :title="$t('repo.history.copyHash')"
                     @click.stop="copyHash(item.commit!.hash)"
                   >
@@ -592,6 +636,15 @@ watch(
                   <div class="truncate text-[10.5px] text-muted-foreground">
                     {{ item.commit!.authorName }} · {{ fromNow(item.commit!.date) }} ·
                     <span class="mono text-info/70">{{ item.commit!.shortHash }}</span>
+                    <!-- no room for a column here, so the totals ride on the meta line instead -->
+                    <template v-if="hasStat(item.commit!)">
+                      ·
+                      <span class="mono text-success">+{{ compactN(item.commit!.stat!.addedLines) }}</span>
+                      <span class="mono text-destructive">−{{ compactN(item.commit!.stat!.removedLines) }}</span>
+                      <span class="mono inline-flex items-center gap-0.5 text-muted-foreground/70">
+                        <Files :size="9" />{{ compactN(item.commit!.stat!.filesChanged) }}
+                      </span>
+                    </template>
                   </div>
                 </div>
               </div>

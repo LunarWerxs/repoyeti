@@ -125,7 +125,7 @@ onBeforeUnmount(() => {
         <span class="text-muted-foreground/60">{{ pinnedList.length }}</span>
       </div>
       <div ref="pinnedParent" class="flex flex-col gap-2.5">
-        <RepoCard v-for="repo in pinnedList" :key="repo.id" :repo="repo" :draggable="store.sortMode === 'manual' && !store.isGuest" />
+        <RepoCard v-for="repo in pinnedList" :key="repo.id" :repo="repo" section="pinned" :draggable="store.sortMode === 'manual' && !store.isGuest" />
       </div>
     </section>
 
@@ -139,7 +139,7 @@ onBeforeUnmount(() => {
         <span class="text-muted-foreground/60">{{ starredList.length }}</span>
       </div>
       <div ref="starredParent" class="flex flex-col gap-2.5">
-        <RepoCard v-for="repo in starredList" :key="repo.id" :repo="repo" :draggable="store.sortMode === 'manual' && !store.isGuest" />
+        <RepoCard v-for="repo in starredList" :key="repo.id" :repo="repo" section="starred" :draggable="store.sortMode === 'manual' && !store.isGuest" />
       </div>
     </section>
 
@@ -154,7 +154,7 @@ onBeforeUnmount(() => {
         <span class="text-muted-foreground/60">{{ otherList.length }}</span>
       </div>
       <div ref="otherParent" class="flex flex-col gap-2.5">
-        <RepoCard v-for="repo in otherList" :key="repo.id" :repo="repo" :draggable="store.sortMode === 'manual' && !store.isGuest" />
+        <RepoCard v-for="repo in otherList" :key="repo.id" :repo="repo" section="other" :draggable="store.sortMode === 'manual' && !store.isGuest" />
       </div>
     </section>
   </div>

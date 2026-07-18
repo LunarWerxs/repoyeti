@@ -6,6 +6,86 @@ All notable changes to RepoYeti are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-18
+
+### Added
+
+- **Select multiple repositories, then act on all of them.** The dashboard's ⋮ menu has a new
+  **Select multiple**: every card turns into a checkbox row and a bar rises from the bottom with
+  Pin, Star, Hide and Remove across the whole selection. "Select all" honours whatever filter is
+  active, so it ticks what you can actually see and never a repo the search bar was hiding. Every
+  bulk action offers Undo, and undo restores each repo's *own* previous state rather than blanket
+  clearing the flag, so a repo you had already pinned stays pinned. Bulk Remove is still
+  index-only and confirm-gated: no folder on disk is ever touched.
+- **Per-commit change totals in the history table.** A new **Changes** column shows what each
+  commit did (lines added, lines removed, files touched), sourced from `git log --numstat`.
+  Big commits abbreviate (`+1.2k`) so the column can't blow out; the exact figures are on hover.
+  Merge commits report nothing, because git prints no diff for one.
+- **Files *and* lines on the collapsed repo card.** The header used to say only "40 changed". It
+  now reads as a pair: how many files, and the line delta beside it. Collapsed you get bare
+  numbers; expanding the card fills them into pills that name themselves ("40 files changed",
+  "+1,439 −368 lines").
+
+### Changed
+
+- **AI providers are no longer all listed at once.** Settings showed the entire catalogue whether
+  or not you used any of it. Now you see only the providers you have connected, plus an **Add
+  provider** picker for the rest; pick one and its key form opens right there. The commit-style
+  and diff-detail pickers also narrowed, so their labels stop wrapping.
+- **The repo card's ⋮ menu moved** from the end of the fetch/pull/push row up to the card's
+  identity line, immediately right of Refresh and the remote-presence cloud. Its contents are
+  unchanged.
+- **The changed-files tree is tighter and no longer crowds its right edge.** Rows lost a couple of
+  pixels of height, and the status letter (M / D / A) gained the padding it was missing.
+- **Pinned and Starred cards drop their own badge inside their own section.** The section heading
+  above the card already says it; the icon only restated it. The badges still appear anywhere else
+  the card shows up.
+- **Collapse all stays put.** It used to vanish in list view or while searching, which changed the
+  toolbar's button count and slid the other controls around under the pointer. It now stays in
+  place and greys out when there is nothing to collapse.
+
+### Fixed
+
+- **The history table's column titles now sit over their columns.** The header row and each commit
+  row are separate CSS grids, and both used content-sized tracks, so the header sized itself to
+  the word "AUTHOR" while every row sized to its own author name and the two drifted apart by up
+  to 23px. They now share one fixed template.
+- **The Settings tab indicator no longer sits off-centre on its tab.** The sliding highlight was
+  anchored with the tab strip's padding *and* translated by an offset that already included that
+  padding, so it double-counted and rendered ~4px right of the tab it marks: dead space on the
+  right of a wide tab, none on the left. (Fixed in the shared UI kit, so the other LunarWerx apps
+  get it too.)
+- **The Remove-repo dialog no longer scrolls sideways.** A long repo path forced the whole modal
+  wider than the screen. The path now lives in its own scrolling box with a copy button.
+- **Smart Commit falls back predictably when the AI planner is unavailable.** You choose what
+  happens instead of it silently doing nothing.
+- **Windows: the daemon no longer keeps its port pinned after exit.** Child processes are detached
+  via WMI, so a restart doesn't hop to the next port.
+- **Drag-to-reorder works for mouse users again**, and tall dialogs scroll instead of overflowing
+  off-screen.
+
+## [0.6.1] - 2026-07-16
+
+### Fixed
+
+- Shipped the portable-window type declarations that 0.6.0's release build left behind.
+
+## [0.6.0] - 2026-07-16
+
+### Security
+
+- **A loopback CSRF-to-RCE hole on the local `/api` path is closed.** Any page you visited in a
+  browser on the same machine could reach the daemon's local API. It now consumes the shared kit's
+  loopback-guard primitive, so the check is one implementation across every LunarWerx app rather
+  than a per-app copy.
+
+### Fixed
+
+- **Sign-in was broken for everyone, permanently.** A dead GitMob `client_secret` meant every
+  attempt failed; there was no combination of retries that would have worked.
+- **Portable-window sizing.** Forwarded launches now honour the `?window-size` hint, and a window
+  that has never been opened before starts at a measured 840×760 instead of an arbitrary default.
+
 ## [0.5.0] - 2026-07-15
 
 ### Added

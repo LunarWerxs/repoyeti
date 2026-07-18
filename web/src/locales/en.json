@@ -99,6 +99,22 @@
   "app": {
     "name": "RepoYeti"
   },
+  "bulk": {
+    "selected": "{count} selected | {count} selected",
+    "selectAll": "Select all",
+    "selectNone": "Clear",
+    "exit": "Done selecting",
+    "pinTooltip": "Pin every selected repository",
+    "starTooltip": "Star every selected repository",
+    "hideTooltip": "Hide every selected repository from the dashboard",
+    "removeTooltip": "Remove every selected repository from RepoYeti",
+    "pinned": "Pinned {count} repository | Pinned {count} repositories",
+    "starred": "Starred {count} repository | Starred {count} repositories",
+    "hidden": "Hid {count} repository | Hid {count} repositories",
+    "removed": "Removed {count} repository | Removed {count} repositories",
+    "partial": "{ok} done, {failed} failed",
+    "removeTitle": "Remove {count} repository?| Remove {count} repositories?"
+  },
   "common": {
     "cancel": "Cancel",
     "close": "Close",
@@ -174,7 +190,8 @@
     "shutdownBody": "Stop the local daemon and background checks. Launch RepoYeti again to start it.",
     "shutdownConfirm": "Confirm shutdown",
     "shutdownStarted": "RepoYeti is shutting down",
-    "shutdownFailed": "Couldn't shut down"
+    "shutdownFailed": "Couldn't shut down",
+    "selectMultiple": "Select multiple"
   },
   "identity": {
     "action": {
@@ -285,8 +302,9 @@
       "autoCommit": "Auto-commit on",
       "behindLabel": "Behind by {count}",
       "behindTooltip": "Behind by {count} as of last fetch",
-      "changed": "changed",
       "changedLabel": "{count} changed",
+      "filesChanged": "files changed",
+      "lines": "lines",
       "clean": "clean",
       "hidden": "Hidden",
       "identityViolation": "Identity Firewall: this repo requires \"{name}\" to commit/push, but the resolved identity doesn't match",
@@ -297,6 +315,7 @@
     "changes": {
       "collapseAll": "Collapse all",
       "expandAll": "Expand all",
+      "collapseAllUnavailable": "Nothing to collapse here",
       "gripAria": "Resize changes list",
       "gripAriaResized": "Resize changes list: custom height, press Delete to reset",
       "gripTitle": "Drag or ↑/↓ to resize",
@@ -477,6 +496,8 @@
       "colAuthor": "Author",
       "colDate": "Date",
       "colCommit": "Commit",
+      "colChanges": "Changes",
+      "filesChanged": "{count} file changed | {count} files changed",
       "uncommitted": "Uncommitted changes ({count})",
       "noUncommitted": "Uncommitted changes",
       "moreFiles": "…and {count} more file | …and {count} more files",
@@ -563,7 +584,8 @@
     "toastRenameCleared": "Label cleared: showing the folder name",
     "toastRenameFailed": "Could not rename that repository",
     "toastRemoved": "\"{name}\" removed from RepoYeti",
-    "toastRemoveFailed": "Could not remove that repository"
+    "toastRemoveFailed": "Could not remove that repository",
+    "selectToggle": "Select {name}"
   },
   "remote": {
     "activeLabel": "Your remote link",
@@ -847,6 +869,9 @@
     "heightSmall": "Small",
     "heightTall": "Tall",
     "providers": "Providers",
+    "providersEmpty": "No providers connected yet.",
+    "addProvider": "Add provider",
+    "addProviderLabel": "Supported providers",
     "selectModelPlaceholder": "Select a model",
     "theme": "Theme",
     "themeDark": "Dark",

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { reactive, computed, watch } from "vue";
+import { reactive, computed, nextTick, ref, useTemplateRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { Check, Link2, Trash2, RefreshCw, X, ChevronDown } from "@lucide/vue";
+import { Check, Link2, Plus, Trash2, RefreshCw, X, ChevronDown } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { useStore } from "../../store";
 import { ApiError } from "../../api";
@@ -13,6 +13,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+} from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -56,6 +63,42 @@ function rowFor(id: AiProviderId): Row {
 
 const settings = computed(() => store.aiSettings);
 const isConfigured = (id: AiProviderId): boolean => !!settings.value.providers[id];
+
+// ── which providers actually get a row ────────────────────────────────────────
+// Listing the whole catalogue meant permanently staring at providers you don't use. Now the
+// list is only what you've CONNECTED, plus anything you've explicitly opened via "Add provider"
+// this session (`adding`). A provider leaves `adding` once it's connected (it's in the
+// configured list from then on) or when you dismiss its card.
+const adding = ref<AiProviderId[]>([]);
+/** The "Add provider" trigger — focus lands back here when an added card is dismissed. */
+const addProviderBtn = useTemplateRef<{ $el?: HTMLElement }>("addProviderBtn");
+const shownProviders = computed<AiCatalogEntry[]>(() =>
+  PROVIDERS.value.filter((p) => isConfigured(p.id) || adding.value.includes(p.id)),
+);
+/** Catalogue entries not connected and not already staged for adding — the picker's contents. */
+const addableProviders = computed<AiCatalogEntry[]>(() =>
+  PROVIDERS.value.filter((p) => !isConfigured(p.id) && !adding.value.includes(p.id)),
+);
+function beginAdd(id: AiProviderId): void {
+  if (!adding.value.includes(id)) adding.value.push(id);
+  rowFor(id).open = true; // drop straight into the key form — that's the whole point of picking it
+}
+function cancelAdd(id: AiProviderId): void {
+  adding.value = adding.value.filter((x) => x !== id);
+  rows[id] = blank();
+  // Dismissing drops the whole card out of `shownProviders`, unmounting the Cancel button the
+  // user just pressed — without this, focus would fall to <body>. Hand it back to the picker,
+  // which is where they'd want to go next anyway.
+  void nextTick(() => addProviderBtn.value?.$el?.focus?.());
+}
+// Once a provider is connected it no longer needs its "adding" slot; keeping it there would
+// leave a stray Cancel button on a live provider's card.
+watch(
+  () => Object.keys(settings.value.providers).join(","),
+  () => {
+    adding.value = adding.value.filter((id) => !isConfigured(id));
+  },
+);
 // Y5: the YOLO/style rows below act on AI-generated commit messages, moot with zero
 // providers connected, so collapse them away entirely rather than show dead controls.
 const anyProviderConfigured = computed(() => Object.keys(settings.value.providers).length > 0);
@@ -197,12 +240,15 @@ async function onDiffDetail(detail: string): Promise<void> {
       </template>
     </SettingsRow>
 
-    <!-- Providers -->
+    <!-- Providers — only the ones you've connected (plus any you're adding right now). -->
     <div class="flex flex-col gap-1.5 px-3.5 py-3">
       <span class="text-[12px] text-muted-foreground">{{ $t("settings.providers") }}</span>
+      <p v-if="!shownProviders.length" class="text-[12px] text-muted-foreground/70">
+        {{ $t("settings.providersEmpty") }}
+      </p>
       <div v-auto-animate class="flex flex-col gap-2">
         <Collapsible
-          v-for="p in PROVIDERS"
+          v-for="p in shownProviders"
           :key="p.id"
           v-model:open="rowFor(p.id).open"
           class="overflow-hidden rounded-lg border border-border bg-secondary/45"
@@ -291,6 +337,16 @@ async function onDiffDetail(detail: string): Promise<void> {
                     <Link2 />
                     {{ $t("settings.btnConnect") }}
                   </Button>
+                  <!-- only a provider you just added via the picker can be dismissed again;
+                       a connected one is removed with the trash button instead -->
+                  <Button
+                    v-if="adding.includes(p.id)"
+                    variant="ghost"
+                    size="sm"
+                    @click="cancelAdd(p.id)"
+                  >
+                    {{ $t("common.cancel") }}
+                  </Button>
                 </div>
               </div>
 
@@ -364,6 +420,29 @@ async function onDiffDetail(detail: string): Promise<void> {
           </CollapsibleContent>
         </Collapsible>
       </div>
+
+      <!-- Add provider: a picker over everything in the catalogue you haven't connected. Picking
+           one drops its card into the list above, already open on its key form. -->
+      <DropdownMenu v-if="addableProviders.length">
+        <DropdownMenuTrigger as-child>
+          <Button ref="addProviderBtn" variant="secondary" size="sm" class="mt-0.5 self-start">
+            <Plus />
+            {{ $t("settings.addProvider") }}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" class="w-60">
+          <DropdownMenuLabel>{{ $t("settings.addProviderLabel") }}</DropdownMenuLabel>
+          <DropdownMenuItem v-for="p in addableProviders" :key="p.id" @select="beginAdd(p.id)">
+            <span class="min-w-0 flex-1 truncate">{{ p.label }}</span>
+            <Badge v-if="p.suggested" variant="info" class="shrink-0 px-1.5 py-0 text-[10px]">
+              {{ $t("settings.badgeSuggested") }}
+            </Badge>
+            <Badge v-else-if="p.free" variant="success" class="shrink-0 px-1.5 py-0 text-[10px]">
+              {{ $t("settings.badgeFreeTier") }}
+            </Badge>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
 
     <!-- Both rows below act on AI-generated commit messages, moot with no provider
@@ -388,7 +467,7 @@ async function onDiffDetail(detail: string): Promise<void> {
           <template #info><InfoHint :text="$t('settings.aiStyleHint')" /></template>
           <template #control>
             <Select :model-value="settings.style" @update:model-value="(v) => typeof v === 'string' && onStyle(v)">
-              <SelectTrigger class="w-44" :aria-label="$t('settings.aiStyle')"><SelectValue /></SelectTrigger>
+              <SelectTrigger class="w-36" :aria-label="$t('settings.aiStyle')"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="conventional">{{ $t("settings.aiStyleConventional") }}</SelectItem>
                 <SelectItem value="concise">{{ $t("settings.aiStyleConcise") }}</SelectItem>
@@ -407,7 +486,7 @@ async function onDiffDetail(detail: string): Promise<void> {
               :model-value="settings.diffDetail"
               @update:model-value="(v) => typeof v === 'string' && onDiffDetail(v)"
             >
-              <SelectTrigger class="w-44" :aria-label="$t('settings.aiDiffDetail')"><SelectValue /></SelectTrigger>
+              <SelectTrigger class="w-36" :aria-label="$t('settings.aiDiffDetail')"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="lean">{{ $t("settings.aiDiffDetailLean") }}</SelectItem>
                 <SelectItem value="balanced">{{ $t("settings.aiDiffDetailBalanced") }}</SelectItem>

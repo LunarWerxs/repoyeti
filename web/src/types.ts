@@ -219,6 +219,14 @@ export interface BranchList {
   truncated?: boolean;
 }
 
+/** What one commit changed, totalled across its files. Lines only (git --numstat gives no
+ *  character counts), so this is narrower than the working-tree `DiffStat` above. */
+export interface CommitStat {
+  filesChanged: number;
+  addedLines: number;
+  removedLines: number;
+}
+
 export interface LogEntry {
   hash: string;
   shortHash: string;
@@ -233,6 +241,9 @@ export interface LogEntry {
   parents: string[];
   /** True when this commit has 2+ parents (a merge). */
   isMerge: boolean;
+  /** Files/lines touched. All-zero on a merge (git prints no diff for one); absent on
+   *  backends that don't report it. */
+  stat?: CommitStat;
 }
 
 export interface LogResult {

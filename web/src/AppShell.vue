@@ -8,6 +8,7 @@ import GuestBanner from "./components/GuestBanner.vue";
 import ConflictConcierge from "./components/ConflictConcierge.vue";
 import AgentApprovalCard from "./components/AgentApprovalCard.vue";
 import RepoList from "./components/RepoList.vue";
+import RepoBulkBar from "./components/RepoBulkBar.vue";
 import RepoCard from "./components/RepoCard.vue";
 import RepoFilters from "./components/RepoFilters.vue";
 import AddRepo from "./components/AddRepo.vue";
@@ -17,6 +18,7 @@ import SignIn from "./components/SignIn.vue";
 import RemoteAccess from "./components/RemoteAccess.vue";
 import FileViewer from "./components/FileViewer.vue";
 import { pageShiftPx, fileViewer, closeFile } from "@/lib/file-viewer";
+import { selectionActive } from "@/lib/repo-selection";
 import { usePushPanel } from "@/shell/usePushPanel";
 import AppContainer from "@/shell/AppContainer.vue";
 import AppFooter from "@/shell/AppFooter.vue";
@@ -124,7 +126,8 @@ onMounted(async () => {
       @remote="showRemote = true"
     />
 
-    <main class="pt-3 pb-10">
+    <!-- extra bottom room while the bulk bar is up, so it can't sit on top of the last card -->
+    <main class="pt-3" :class="selectionActive ? 'pb-28' : 'pb-10'">
       <AppContainer>
       <AgentApprovalCard />
       <template v-if="store.loading">
@@ -175,6 +178,10 @@ onMounted(async () => {
     </main>
 
     <AppFooter />
+
+    <!-- bulk action bar — only while the dashboard is in multi-select mode (started from the
+         header's ⋮ menu; see @/lib/repo-selection) -->
+    <RepoBulkBar v-if="selectionActive && !store.isGuest" />
 
     <AddRepo v-model:open="showAdd" />
     <ScanProjects v-model:open="store.scanOpen" />

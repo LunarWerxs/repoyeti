@@ -228,7 +228,7 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
       <button
         v-if="n.type === 'dir'"
         type="button"
-        class="tree-row-cv group flex h-[26px] w-full items-center gap-1.5 rounded-md pr-2 text-left text-[12.5px] outline-none transition-colors hover:bg-accent/60 focus-visible:bg-accent/60"
+        class="tree-row-cv group flex h-[24px] w-full items-center gap-1.5 rounded-md pr-3 text-left text-[12.5px] outline-none transition-colors hover:bg-accent/60 focus-visible:bg-accent/60"
         :class="dragOverPath === n.path && 'bg-primary/15 ring-1 ring-primary/40'"
         :style="{ paddingLeft: (depth ?? 0) * 14 + 8 + 'px' }"
         :title="n.path"
@@ -261,7 +261,7 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
         <button
           type="button"
           :draggable="!isGuest"
-          class="group flex h-[26px] w-full items-center gap-1.5 rounded-md pr-2 text-left text-[12.5px] outline-none transition-colors hover:bg-accent/60 focus-visible:bg-accent/60"
+          class="group flex h-[24px] w-full items-center gap-1.5 rounded-md pr-3 text-left text-[12.5px] outline-none transition-colors hover:bg-accent/60 focus-visible:bg-accent/60"
           :class="[isViewing(repoId, n.path) && 'bg-accent/80 ring-1 ring-primary/30', draggingPath === n.path && 'opacity-40']"
           :style="{ paddingLeft: (depth ?? 0) * 14 + 8 + 'px' }"
           :title="n.path"
@@ -335,7 +335,7 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
              Hidden-until-hover on pointer devices, but always visible on touch (pointer-coarse) —
              phones have no :hover, so hover-only reveal would make them unreachable there. -->
         <div
-          class="absolute top-1/2 right-7 flex -translate-y-1/2 items-center gap-0.5 opacity-0 pointer-coarse:opacity-70 group-hover/file:opacity-100 focus-within:opacity-100"
+          class="absolute top-1/2 right-8 flex -translate-y-1/2 items-center gap-0.5 opacity-0 pointer-coarse:opacity-70 group-hover/file:opacity-100 focus-within:opacity-100"
         >
           <!-- reveal this file's repo in the OS file manager (same convention as "Open with…" → File Explorer/Finder). -->
           <button
@@ -433,12 +433,12 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
 
 <style scoped>
 /* Rows outside the scroll viewport skip layout + paint entirely (a tree can hold up to the
-   server's MAX_CHANGED_FILES = 2000 files). The fixed 26px placeholder keeps the scrollbar
-   exact (every row is h-[26px]). This is what keeps huge trees smooth while the card's
-   collapse/expand height animation runs: each animation frame lays out only the ~20 visible
-   rows instead of thousands. */
+   server's MAX_CHANGED_FILES = 2000 files). The fixed 24px placeholder keeps the scrollbar
+   exact (every row is h-[24px] — keep these two in lockstep or the scrollbar drifts). This is
+   what keeps huge trees smooth while the card's collapse/expand height animation runs: each
+   animation frame lays out only the ~20 visible rows instead of thousands. */
 .tree-row-cv {
   content-visibility: auto;
-  contain-intrinsic-size: auto 26px;
+  contain-intrinsic-size: auto 24px;
 }
 </style>
