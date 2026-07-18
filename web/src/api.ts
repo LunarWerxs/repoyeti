@@ -132,6 +132,9 @@ export interface RuntimeStatus {
   autoCommitPull: boolean;
   /** Whether auto-commit pushes after committing (owner setting; false = commit locally only). */
   autoCommitPush: boolean;
+  /** What auto-commit does when a configured AI provider fails: "skip" the repo that round
+   *  (default) or commit with the "basic" heuristic grouping (owner setting). */
+  autoCommitAiFallback: "skip" | "basic";
   /** Whether the app silently auto-updates + restarts on a schedule (owner setting; opt-in). */
   autoUpdate: boolean;
   /** Auto-update check cadence in seconds. */
@@ -357,6 +360,11 @@ export const api = {
   /** Toggle whether auto-commit pushes after committing (persisted). */
   setAutoCommitPush: (enabled: boolean) =>
     req<{ ok: boolean; autoCommitPush: boolean }>("PUT", "/api/settings", { autoCommitPush: enabled }),
+  /** Set what auto-commit does when a configured AI provider fails (persisted). */
+  setAutoCommitAiFallback: (mode: "skip" | "basic") =>
+    req<{ ok: boolean; autoCommitAiFallback: "skip" | "basic" }>("PUT", "/api/settings", {
+      autoCommitAiFallback: mode,
+    }),
   /** Toggle auto-scanning the whole machine on every app start (owner setting; persisted). */
   setAutoScan: (enabled: boolean) =>
     req<{ ok: boolean; autoScan: boolean }>("PUT", "/api/settings", { autoScan: enabled }),

@@ -14,6 +14,7 @@ import {
   msUntilDailyAt,
   isAutoCommitActionable,
   planToCommits,
+  normalizeAiFallback,
   AUTO_COMMIT_INTERVAL_MIN_S,
   AUTO_COMMIT_INTERVAL_MAX_S,
   AUTO_COMMIT_INTERVAL_DEFAULT_S,
@@ -96,6 +97,14 @@ test("planToCommits with no groups and no leftovers yields nothing", () => {
   expect(planToCommits({ groups: [], leftovers: [], degraded: false, truncated: false })).toEqual([]);
 });
 
+test("normalizeAiFallback defaults to skip and only accepts the two known modes", () => {
+  expect(normalizeAiFallback("skip")).toBe("skip");
+  expect(normalizeAiFallback("basic")).toBe("basic");
+  expect(normalizeAiFallback(undefined)).toBe("skip"); // absent config → the safe default
+  expect(normalizeAiFallback("yolo")).toBe("skip"); // garbage → the safe default
+  expect(normalizeAiFallback(true)).toBe("skip");
+});
+
 test("GET /api/status defaults auto-commit off; PUT /api/settings updates + clamps + normalises", async () => {
   const app = createApp(localCfg());
 
@@ -106,6 +115,7 @@ test("GET /api/status defaults auto-commit off; PUT /api/settings updates + clam
   expect(before.autoCommitAt).toBe(AUTO_COMMIT_AT_DEFAULT);
   expect(before.autoCommitPull).toBe(true);
   expect(before.autoCommitPush).toBe(true);
+  expect(before.autoCommitAiFallback).toBe("skip"); // safe default: no unattended generic commits
 
   const put = await app.request("/api/settings", {
     method: "PUT",
@@ -117,6 +127,7 @@ test("GET /api/status defaults auto-commit off; PUT /api/settings updates + clam
       autoCommitAt: "9:30", // → normalised/padded
       autoCommitPull: false,
       autoCommitPush: false,
+      autoCommitAiFallback: "basic",
     }),
   });
   expect(put.status).toBe(200);
@@ -127,6 +138,16 @@ test("GET /api/status defaults auto-commit off; PUT /api/settings updates + clam
   expect(body.autoCommitAt).toBe("09:30");
   expect(body.autoCommitPull).toBe(false);
   expect(body.autoCommitPush).toBe(false);
+  expect(body.autoCommitAiFallback).toBe("basic");
+
+  // A garbage fallback value is ignored (stays at the last valid setting).
+  const bad = await app.request("/api/settings", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ autoCommitAiFallback: "yolo" }),
+  });
+  expect(bad.status).toBe(200);
+  expect((await bad.json()).autoCommitAiFallback).toBe("basic");
 
   // Reset the process-global runtime flags so they can't leak into other test files.
   await app.request("/api/settings", {
@@ -139,6 +160,7 @@ test("GET /api/status defaults auto-commit off; PUT /api/settings updates + clam
       autoCommitAt: AUTO_COMMIT_AT_DEFAULT,
       autoCommitPull: true,
       autoCommitPush: true,
+      autoCommitAiFallback: "skip",
     }),
   });
 });

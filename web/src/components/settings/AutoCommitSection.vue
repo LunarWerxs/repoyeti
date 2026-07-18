@@ -35,6 +35,10 @@ const modeChoice = computed<"interval" | "daily">({
   get: () => store.autoCommitMode,
   set: (v) => void onMode(v),
 });
+const aiFallbackChoice = computed<"skip" | "basic">({
+  get: () => store.autoCommitAiFallback,
+  set: (v) => void onAiFallback(v),
+});
 
 async function onToggle(enabled: boolean): Promise<void> {
   try {
@@ -72,6 +76,13 @@ async function onPull(enabled: boolean): Promise<void> {
     toast.error(t("settings.autoCommitFailed"));
   }
 }
+async function onAiFallback(mode: "skip" | "basic"): Promise<void> {
+  try {
+    await store.setAutoCommitAiFallback(mode);
+  } catch {
+    toast.error(t("settings.autoCommitFailed"));
+  }
+}
 async function onPush(enabled: boolean): Promise<void> {
   try {
     await store.setAutoCommitPush(enabled);
@@ -83,6 +94,11 @@ async function onPush(enabled: boolean): Promise<void> {
 // Everything below the master switch is moot while auto-commit is off → collapse it away
 // entirely (ExpandTransition) rather than just dim/disable it.
 const on = computed(() => store.autoCommit);
+
+// The master switch only ARMS the feature — repos are opted in one-by-one from each card's ⋯
+// menu. Surface how many are opted in right here so "I flipped it on, why is nothing happening?"
+// answers itself (the answer is almost always "no repo is opted in yet").
+const optedInCount = computed(() => store.repos.filter((r) => r.autoCommit).length);
 </script>
 
 <template>
@@ -103,6 +119,21 @@ const on = computed(() => store.autoCommit);
          entirely (rather than just dim/disable) via the kit's ExpandTransition. -->
     <ExpandTransition :open="on">
       <div class="flex flex-col">
+        <!-- two-step reminder: the switch above is armed, but nothing runs until repos are
+             opted in per-card. Show the current opt-in count (or a nudge when it's zero). -->
+        <p
+          :class="[
+            'px-3.5 pt-3 text-[12px] leading-relaxed',
+            optedInCount === 0 ? 'text-warning' : 'text-muted-foreground',
+          ]"
+        >
+          {{
+            optedInCount === 0
+              ? $t("settings.autoCommitNoReposYet")
+              : $t("settings.autoCommitReposOptedIn", { n: optedInCount }, optedInCount)
+          }}
+        </p>
+
         <!-- schedule mode: every N vs daily at a set time -->
         <div class="flex flex-col gap-1.5 px-3.5 py-3">
           <span class="text-[12px] text-muted-foreground">{{ $t("settings.autoCommitSchedule") }}</span>
@@ -161,6 +192,23 @@ const on = computed(() => store.autoCommit);
             />
           </template>
         </SettingsRow>
+
+        <!-- what an unattended run does when a CONFIGURED AI provider fails -->
+        <div class="flex flex-col gap-1.5 px-3.5 py-3">
+          <span class="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+            {{ $t("settings.autoCommitAiFallback") }}
+            <InfoHint :text="$t('settings.autoCommitAiFallbackHint')" />
+          </span>
+          <Select v-model="aiFallbackChoice">
+            <SelectTrigger class="w-full" :aria-label="$t('settings.autoCommitAiFallback')">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="skip">{{ $t("settings.autoCommitAiFallbackSkip") }}</SelectItem>
+              <SelectItem value="basic">{{ $t("settings.autoCommitAiFallbackBasic") }}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
     </ExpandTransition>
   </SettingsGroup>

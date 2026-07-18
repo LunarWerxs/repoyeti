@@ -15,7 +15,8 @@
  * (and skipping the push if the pull fails) mirrors the "commit & sync" order so an unattended
  * run can't publish over a diverged remote.
  *
- * Enable + cadence + pull/push are owner settings (cfg.autoCommit*). Timer shape mirrors
+ * Enable + cadence + pull/push + the AI-unavailable policy are owner settings (cfg.autoCommit*).
+ * Timer shape mirrors
  * remote-sync.ts: a self-rescheduling setTimeout (never setInterval) so a slow round can't stack.
  * Wired in src/cli/lifecycle.ts (startAutoCommit after boot; stopAutoCommit on shutdown) and
  * primed + toggled live from src/http/app.ts + PUT /api/settings. Git-only for now (a Lore repo
@@ -42,6 +43,20 @@ export const AUTO_COMMIT_INTERVAL_MAX_S = 86_400;
 export const AUTO_COMMIT_INTERVAL_DEFAULT_S = 900;
 /** Default daily-mode fire time (local wall clock). */
 export const AUTO_COMMIT_AT_DEFAULT = "18:00";
+
+/**
+ * What an unattended run does when the owner's AI provider is CONFIGURED but fails (quota, outage,
+ * unparseable reply): "skip" leaves that repo untouched this round (blocked event, retried next
+ * tick — nothing is lost, the tree just stays uncommitted a little longer); "basic" commits anyway
+ * with the deterministic heuristic grouping. Default "skip": the owner opted into AI-split commits,
+ * and an unattended run quietly publishing `chore: update N files` instead is exactly the surprise
+ * they asked not to have. Deliberately NOT consulted when no provider is configured at all — there
+ * the heuristic is the expected planner, not a degradation.
+ */
+export type AutoCommitAiFallback = "skip" | "basic";
+export function normalizeAiFallback(v: unknown): AutoCommitAiFallback {
+  return v === "basic" ? "basic" : "skip";
+}
 
 /** Clamp a requested interval into [MIN, MAX]; a non-finite value falls back to the default. */
 export function clampAutoCommitInterval(secs: number): number {
@@ -84,6 +99,7 @@ let intervalSecs = AUTO_COMMIT_INTERVAL_DEFAULT_S;
 let dailyAt = AUTO_COMMIT_AT_DEFAULT;
 let pullFirst = true; // pull --ff-only before pushing
 let pushAfter = true; // push after committing
+let aiFallback: AutoCommitAiFallback = "skip"; // AI configured but failing → skip the repo
 let started = false; // true only after the daemon finishes booting (startAutoCommit)
 let timer: ReturnType<typeof setTimeout> | null = null;
 let ticking = false; // a round is in flight — don't let a reschedule double-arm the timer
@@ -107,6 +123,9 @@ export function autoCommitPullEnabled(): boolean {
 export function autoCommitPushEnabled(): boolean {
   return pushAfter;
 }
+export function getAutoCommitAiFallback(): AutoCommitAiFallback {
+  return aiFallback;
+}
 
 /** One repo the timer just auto-committed (payload of the `repo_auto_committed` SSE event). */
 export interface AutoCommittedRepo {
@@ -118,6 +137,10 @@ export interface AutoCommittedRepo {
   pushed: boolean;
   /** A non-fatal sync note (e.g. NON_FAST_FORWARD) when pull/push couldn't complete. */
   note?: string;
+  /** True when a CONFIGURED AI provider failed and the owner's "basic" fallback committed with the
+   *  heuristic grouping instead — so a generic message is never a silent surprise. Absent when no
+   *  provider is configured (there the heuristic is the expected planner, not a degradation). */
+  degraded?: boolean;
 }
 
 /** One repo the timer refused to touch (payload of the `repo_auto_commit_blocked` SSE event). */
@@ -172,14 +195,16 @@ async function hasConflict(repo: RepoView): Promise<boolean> {
 
 // ── build the auto plan for one repo ────────────────────────────────────────────────────────
 type BuiltPlan =
-  | { ok: true; commits: Array<{ message: string; paths: string[] }> }
+  | { ok: true; commits: Array<{ message: string; paths: string[] }>; degraded: boolean }
   | { ok: false; reason: string };
 
 /**
  * Produce the commit groups for a repo's current working tree. Prefers the AI planner (the
- * owner's configured provider, else the built-in key); on no provider OR any AI failure it falls
- * back to the deterministic `heuristicPlan`, so auto-commit works even with no AI key and never
- * dead-ends on a provider hiccup (mirrors the /commit-plan route's fallback).
+ * owner's configured provider); with no provider configured the deterministic `heuristicPlan`
+ * is the expected planner, so auto-commit works with no AI key at all. When a provider IS
+ * configured but fails, the owner's `aiFallback` decides: "skip" (default) refuses the repo this
+ * round (AI_UNAVAILABLE, retried next tick), "basic" commits with the heuristic split — flagged
+ * `degraded` so the done event can say so.
  */
 async function buildPlan(repoId: string): Promise<BuiltPlan> {
   // Honor the owner's diff-detail dial here too — auto-commit runs unattended on a timer, so it's
@@ -190,6 +215,7 @@ async function buildPlan(repoId: string): Promise<BuiltPlan> {
   const cfg = cfgRef;
   const provider = cfg ? effectiveDefaultProvider(cfg) : null;
   let plan: CommitPlan;
+  let degraded = false;
   if (cfg && provider) {
     const apiKey = resolveApiKey(cfg, provider);
     const model = resolveModel(cfg, provider);
@@ -200,14 +226,18 @@ async function buildPlan(repoId: string): Promise<BuiltPlan> {
           ? await generateCommitPlan(provider, apiKey, model, input, style)
           : heuristicPlan(input);
     } catch {
-      plan = heuristicPlan(input); // provider down / unparseable → deterministic split
+      // Provider down / quota / unparseable. The owner asked for AI-split commits — "skip"
+      // (default) refuses to publish generic ones unattended; "basic" commits anyway, flagged.
+      if (aiFallback === "skip") return { ok: false, reason: "AI_UNAVAILABLE" };
+      plan = heuristicPlan(input);
+      degraded = true;
     }
   } else {
-    plan = heuristicPlan(input);
+    plan = heuristicPlan(input); // no provider configured — heuristic IS the expected planner
   }
   const commits = planToCommits(plan);
   if (commits.length === 0) return { ok: false, reason: "EMPTY_PLAN" };
-  return { ok: true, commits };
+  return { ok: true, commits, degraded };
 }
 
 // ── process one repo ────────────────────────────────────────────────────────────────────────
@@ -230,12 +260,14 @@ async function processRepo(
   }
 
   let commits = 0;
+  let degraded = false;
   if (s.dirty > 0) {
     const built = await buildPlan(repo.id);
     if (!built.ok) return { blocked: { id: repo.id, name: repo.name, reason: built.reason } };
     const res = await smartCommitRepo(repo.id, built.commits, false);
     if (!res.ok) return { blocked: { id: repo.id, name: repo.name, reason: res.code } };
     commits = res.committed?.filter((c) => c.ok && c.message !== "skipped (no changes)").length ?? 0;
+    degraded = built.degraded;
   }
 
   // Sync — pull first (ff-only, self-guarding), then push. A failed pull BLOCKS the push, exactly
@@ -263,7 +295,17 @@ async function processRepo(
   }
 
   if (commits === 0 && !pulled && !pushed && !note) return {}; // nothing observable happened
-  return { done: { id: repo.id, name: repo.name, commits, pulled, pushed, ...(note ? { note } : {}) } };
+  return {
+    done: {
+      id: repo.id,
+      name: repo.name,
+      commits,
+      pulled,
+      pushed,
+      ...(note ? { note } : {}),
+      ...(degraded ? { degraded: true } : {}),
+    },
+  };
 }
 
 async function tick(): Promise<{ done: AutoCommittedRepo[]; blocked: AutoCommitBlockedRepo[] }> {
@@ -379,4 +421,9 @@ export function setAutoCommitPull(value: boolean): void {
 /** Enable/disable the post-commit push. Takes effect next tick (no timer change). */
 export function setAutoCommitPush(value: boolean): void {
   pushAfter = value;
+}
+
+/** Set the AI-unavailable policy ("skip" | "basic"). Takes effect next tick (no timer change). */
+export function setAutoCommitAiFallback(value: AutoCommitAiFallback): void {
+  aiFallback = normalizeAiFallback(value);
 }

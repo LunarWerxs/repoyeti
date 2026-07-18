@@ -34,6 +34,9 @@ export interface AutoCommittedRepo {
   pulled: boolean;
   pushed: boolean;
   note?: string;
+  /** A configured AI provider failed and the owner's "basic" fallback split these commits with the
+   *  built-in heuristic — surfaced so a generic message is never a silent surprise. */
+  degraded?: boolean;
 }
 
 /** One repo the auto-commit timer refused to touch (the `repo_auto_commit_blocked` SSE payload). */
@@ -67,6 +70,7 @@ export function useSettings(deps: {
   autoCommitAt: Ref<string>;
   autoCommitPull: Ref<boolean>;
   autoCommitPush: Ref<boolean>;
+  autoCommitAiFallback: Ref<"skip" | "basic">;
   autoUpdate: Ref<boolean>;
   autoScan: Ref<boolean>;
   portableMode: Ref<boolean>;
@@ -98,6 +102,7 @@ export function useSettings(deps: {
     autoCommitAt,
     autoCommitPull,
     autoCommitPush,
+    autoCommitAiFallback,
     autoUpdate,
     autoScan,
     portableMode,
@@ -321,6 +326,17 @@ export function useSettings(deps: {
       await api.setAutoCommitPush(enabled);
     } catch (e) {
       autoCommitPush.value = !enabled; // roll back
+      throw e;
+    }
+  }
+  /** "skip" leaves the repo untouched for that round; "basic" commits with heuristic grouping. */
+  async function setAutoCommitAiFallback(mode: "skip" | "basic"): Promise<void> {
+    const prev = autoCommitAiFallback.value;
+    autoCommitAiFallback.value = mode;
+    try {
+      await api.setAutoCommitAiFallback(mode);
+    } catch (e) {
+      autoCommitAiFallback.value = prev; // roll back
       throw e;
     }
   }
@@ -563,6 +579,7 @@ export function useSettings(deps: {
     autoCommitIntervalSecs,
     autoCommitAt,
     autoCommitPull,
+    autoCommitAiFallback,
     autoScan,
   });
 
@@ -614,6 +631,7 @@ export function useSettings(deps: {
     setAutoCommitAt,
     setAutoCommitPull,
     setAutoCommitPush,
+    setAutoCommitAiFallback,
     setAutoScan,
     setAutoUpdate,
     setPortableMode,

@@ -340,6 +340,13 @@ export interface RepoYetiConfig {
   /** Whether auto-commit pushes after committing (absent = true). false = commit locally only. */
   autoCommitPush?: boolean;
   /**
+   * What auto-commit does when a CONFIGURED AI provider fails (quota, outage, garbage reply):
+   * "skip" (absent/default) = leave the repo untouched this round and retry next tick; "basic" =
+   * commit anyway with the deterministic heuristic grouping. Not consulted when no provider is
+   * configured (heuristic is the expected planner there). See src/auto-commit.ts.
+   */
+  autoCommitAiFallback?: "skip" | "basic";
+  /**
    * Auto-update the app on a schedule: check the update remote, and when a newer commit is
    * available AND the working tree is clean (canApply), pull + reinstall + rebuild, then
    * self-relaunch so the new code takes over — see src/auto-update.ts. Absent/false = OFF

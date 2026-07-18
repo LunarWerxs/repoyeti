@@ -21,6 +21,7 @@ export function useSettingsCloudSync(prefs: {
   autoCommitIntervalSecs: Ref<number>;
   autoCommitAt: Ref<string>;
   autoCommitPull: Ref<boolean>;
+  autoCommitAiFallback: Ref<"skip" | "basic">;
   autoScan: Ref<boolean>;
 }) {
   const {
@@ -35,6 +36,7 @@ export function useSettingsCloudSync(prefs: {
     autoCommitIntervalSecs,
     autoCommitAt,
     autoCommitPull,
+    autoCommitAiFallback,
     autoScan,
   } = prefs;
 
@@ -200,6 +202,7 @@ export function useSettingsCloudSync(prefs: {
       autoCommitIntervalSecs,
       autoCommitAt,
       autoCommitPull,
+      autoCommitAiFallback,
       autoScan,
     ],
     () => {

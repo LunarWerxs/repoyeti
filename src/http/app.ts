@@ -27,6 +27,8 @@ import {
   setAutoCommitAt,
   setAutoCommitPull,
   setAutoCommitPush,
+  setAutoCommitAiFallback,
+  normalizeAiFallback,
   AUTO_COMMIT_INTERVAL_DEFAULT_S,
   AUTO_COMMIT_AT_DEFAULT,
 } from "../auto-commit.ts";
@@ -102,6 +104,7 @@ export function createApp(cfg: RepoYetiConfig, hooks: AppHooks = {}): Hono {
   setAutoCommitAt(cfg.autoCommitAt ?? AUTO_COMMIT_AT_DEFAULT);
   setAutoCommitPull(cfg.autoCommitPull !== false); // absent = on
   setAutoCommitPush(cfg.autoCommitPush !== false); // absent = on
+  setAutoCommitAiFallback(normalizeAiFallback(cfg.autoCommitAiFallback)); // absent = "skip"
   // Auto-update: opt-in (it restarts the daemon) → absent/false = off. The timer only STARTS after
   // boot (startAutoUpdate in lifecycle.ts); this just primes the runtime flags.
   setAutoUpdateEnabled(cfg.autoUpdate === true);

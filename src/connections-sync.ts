@@ -57,6 +57,7 @@ const PREF_KEYS = [
   "autoCommitIntervalSecs",
   "autoCommitAt",
   "autoCommitPull",
+  "autoCommitAiFallback",
   "autoScan",
 ] as const satisfies readonly (keyof RepoYetiConfig)[];
 

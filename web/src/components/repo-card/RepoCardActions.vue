@@ -134,8 +134,11 @@ async function toggleAutoCommit(): Promise<void> {
   const next = !props.repo.autoCommit;
   try {
     await store.setRepoAutoCommit(props.repo.id, next);
+    // Turning a repo on while the global switch is OFF is the #1 source of "why didn't it run?" —
+    // say so in the toast instead of implying it's now live.
+    const onMessage = store.autoCommit ? t("repo.toastAutoCommitOn") : t("repo.toastAutoCommitOnGlobalOff");
     undoableToast(
-      next ? t("repo.toastAutoCommitOn") : t("repo.toastAutoCommitOff"),
+      next ? onMessage : t("repo.toastAutoCommitOff"),
       () => store.setRepoAutoCommit(props.repo.id, !next),
     );
   } catch {

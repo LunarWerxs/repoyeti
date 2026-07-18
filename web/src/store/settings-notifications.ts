@@ -167,9 +167,21 @@ export function useSettingsNotifications(pullRepo?: (repoId: string) => Promise<
   function notifyAutoCommitted(repos: AutoCommittedRepo[]): void {
     if (!repos?.length) return;
     const one = repos.length === 1 ? repos[0]! : null;
-    const body = one
+    let body = one
       ? t("notify.autoCommitBody", { name: one.name, count: one.commits }, one.commits)
       : t("notify.autoCommitManyBody", { count: repos.length }, repos.length);
+    // A configured provider failed and the owner's "basic" fallback split those with the built-in
+    // grouping. Say so — unannounced, the generic messages read as the AI's own work. Count it
+    // rather than testing `.some()`: the body already names the WHOLE batch, so an unqualified
+    // note would tar repos the AI actually did split (same mixed-batch trap as the blocked path).
+    const degraded = repos.filter((r) => r.degraded).length;
+    if (degraded > 0) {
+      body += ` — ${
+        degraded === repos.length
+          ? t("notify.autoCommitDegradedNote")
+          : t("notify.autoCommitDegradedSomeNote", { n: degraded }, degraded)
+      }`;
+    }
     toast.success(t("notify.autoCommitTitle"), { description: body });
   }
 
@@ -179,9 +191,18 @@ export function useSettingsNotifications(pullRepo?: (repoId: string) => Promise<
     if (!repos?.length) return;
     const one = repos.length === 1 ? repos[0]! : null;
     const title = t("notify.autoCommitBlockedTitle");
-    const body = one
-      ? t("notify.autoCommitBlockedBody", { name: one.name })
-      : t("notify.autoCommitBlockedManyBody", { count: repos.length }, repos.length);
+    // AI_UNAVAILABLE is not a "go fix it" skip: the owner chose to skip rather than publish generic
+    // messages, and the next tick retries on its own. The default copy ("resolve it at your desk")
+    // would be a lie. Only claim it when EVERY skip is that reason — a mixed round still has a real
+    // conflict in it, and that one does need the owner.
+    const allAiUnavailable = repos.every((r) => r.reason === "AI_UNAVAILABLE");
+    const body = allAiUnavailable
+      ? one
+        ? t("notify.autoCommitBlockedAiBody", { name: one.name })
+        : t("notify.autoCommitBlockedAiManyBody", { count: repos.length }, repos.length)
+      : one
+        ? t("notify.autoCommitBlockedBody", { name: one.name })
+        : t("notify.autoCommitBlockedManyBody", { count: repos.length }, repos.length);
     toast.warning(title, { description: body });
     if (
       desktopNotify.value &&

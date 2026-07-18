@@ -36,12 +36,14 @@ import {
   getAutoCommitAt,
   autoCommitPullEnabled,
   autoCommitPushEnabled,
+  getAutoCommitAiFallback,
   setAutoCommitEnabled,
   setAutoCommitMode,
   setAutoCommitIntervalSecs,
   setAutoCommitAt,
   setAutoCommitPull,
   setAutoCommitPush,
+  setAutoCommitAiFallback,
 } from "../../auto-commit.ts";
 import {
   autoUpdateEnabled,
@@ -169,6 +171,7 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       autoCommitAt: getAutoCommitAt(),
       autoCommitPull: autoCommitPullEnabled(),
       autoCommitPush: autoCommitPushEnabled(),
+      autoCommitAiFallback: getAutoCommitAiFallback(),
       // Auto-update: whether the daemon self-updates + restarts on a schedule, and the check
       // cadence (seconds), so Settings reflects the live state on first load.
       autoUpdate: autoUpdateEnabled(),
@@ -302,6 +305,12 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       saveConfig(cfg);
       broadcast("settings_changed", { autoCommitPush: cfg.autoCommitPush });
     }
+    if (b.autoCommitAiFallback === "skip" || b.autoCommitAiFallback === "basic") {
+      cfg.autoCommitAiFallback = b.autoCommitAiFallback;
+      setAutoCommitAiFallback(b.autoCommitAiFallback);
+      saveConfig(cfg);
+      broadcast("settings_changed", { autoCommitAiFallback: cfg.autoCommitAiFallback });
+    }
     // ── auto-update timer settings ──────────────────────────────────────────
     if (typeof b.autoUpdate === "boolean") {
       // Toggling this starts/stops the daemon-wide auto-update timer (see auto-update.ts).
@@ -400,6 +409,7 @@ export function register(app: Hono, { cfg, requestShutdown }: Deps): void {
       autoCommitAt: getAutoCommitAt(),
       autoCommitPull: autoCommitPullEnabled(),
       autoCommitPush: autoCommitPushEnabled(),
+      autoCommitAiFallback: getAutoCommitAiFallback(),
       autoUpdate: autoUpdateEnabled(),
       autoUpdateIntervalSecs: getAutoUpdateIntervalSecs(),
       autoScan: cfg.autoScan === true,

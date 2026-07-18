@@ -83,6 +83,7 @@ export const useStore = defineStore("repoyeti", () => {
   const autoCommitAt = ref("18:00");
   const autoCommitPull = ref(true);
   const autoCommitPush = ref(true);
+  const autoCommitAiFallback = ref<"skip" | "basic">("skip");
   // Owner setting: silently auto-update + restart the app on a schedule (opt-in). From /api/status,
   // kept live via `settings_changed`; off until status loads.
   const autoUpdate = ref(false);
@@ -303,6 +304,7 @@ export const useStore = defineStore("repoyeti", () => {
     setAutoCommitAt,
     setAutoCommitPull,
     setAutoCommitPush,
+    setAutoCommitAiFallback,
     setAutoScan,
     setPortableMode,
     openPortableWindow,
@@ -371,6 +373,7 @@ export const useStore = defineStore("repoyeti", () => {
     autoCommitAt,
     autoCommitPull,
     autoCommitPush,
+    autoCommitAiFallback,
     autoUpdate,
     autoScan,
     portableMode,
@@ -469,6 +472,7 @@ export const useStore = defineStore("repoyeti", () => {
       autoCommitAt.value = s.autoCommitAt ?? "18:00";
       autoCommitPull.value = s.autoCommitPull ?? true;
       autoCommitPush.value = s.autoCommitPush ?? true;
+      autoCommitAiFallback.value = s.autoCommitAiFallback ?? "skip";
       autoUpdate.value = s.autoUpdate ?? false;
       autoScan.value = s.autoScan ?? false;
       loreServersEnabled.value = s.loreServersEnabled ?? true;
@@ -594,6 +598,8 @@ export const useStore = defineStore("repoyeti", () => {
           if (typeof payload.autoCommitAt === "string") autoCommitAt.value = payload.autoCommitAt;
           if (typeof payload.autoCommitPull === "boolean") autoCommitPull.value = payload.autoCommitPull;
           if (typeof payload.autoCommitPush === "boolean") autoCommitPush.value = payload.autoCommitPush;
+          if (payload.autoCommitAiFallback === "skip" || payload.autoCommitAiFallback === "basic")
+            autoCommitAiFallback.value = payload.autoCommitAiFallback;
           if (typeof payload.autoScan === "boolean") autoScan.value = payload.autoScan;
           if (typeof payload.loreServersEnabled === "boolean") loreServersEnabled.value = payload.loreServersEnabled;
           if (typeof payload.portableMode === "boolean") portableMode.value = payload.portableMode;
@@ -783,6 +789,7 @@ export const useStore = defineStore("repoyeti", () => {
     autoCommitAt,
     autoCommitPull,
     autoCommitPush,
+    autoCommitAiFallback,
     autoUpdate,
     setAutoCommit,
     setAutoUpdate,
@@ -791,6 +798,7 @@ export const useStore = defineStore("repoyeti", () => {
     setAutoCommitAt,
     setAutoCommitPull,
     setAutoCommitPush,
+    setAutoCommitAiFallback,
     setRepoAutoCommit,
     autoScan,
     setAutoScan,
