@@ -59,12 +59,26 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7 # needed for CHANGELOG.md — the notes are built from it
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
+      # The release page gets the changelog entry for this tag, not just a compare link.
+      # `generate_release_notes` alone summarises the COMMITS in the range, and this repo ships
+      # one squashed commit per release, so on its own it produced a body containing nothing but
+      # "Full Changelog: compare/...". It still runs (appended below the body) for that link.
+      # A tag with no matching CHANGELOG section fails the release rather than publishing an
+      # empty one — shipping binaries nobody has notes for is the thing worth catching here.
+      - name: Build release notes from CHANGELOG.md
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          node scripts/release-notes.mjs "$version" --repo "$GITHUB_REPOSITORY" > RELEASE_NOTES.md
+          echo "--- release notes ---"; cat RELEASE_NOTES.md
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           files: artifacts/**/*
+          body_path: RELEASE_NOTES.md
           generate_release_notes: true
           fail_on_unmatched_files: true
