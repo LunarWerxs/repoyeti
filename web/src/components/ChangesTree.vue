@@ -235,9 +235,15 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
   <!-- the top instance (depth undefined) marks the scope arrow-key nav + roving tabindex use -->
   <div ref="rootRef" :data-changes-root="depth === undefined ? '' : undefined" @focusin="onFocusIn">
     <template v-for="{ node: n, icon } in rows" :key="n.path">
-      <!-- folder row — the whole row toggles its subtree open/closed -->
+      <!-- folder row — the whole row toggles its subtree open/closed.
+           Right-click gets the same treatment as a file row. Every action here is path-based all
+           the way down to the daemon (`git add <dir>`, a `/dir` .gitignore pattern, discard over a
+           path), so a folder is a legitimate target for them — offering these only on files meant
+           ignoring a build directory took one right-click per file inside it. Open / Open in
+           editor are deliberately absent: there is no folder to show in a diff viewer. -->
+      <ContextMenu v-if="n.type === 'dir'">
+        <ContextMenuTrigger as-child>
       <button
-        v-if="n.type === 'dir'"
         type="button"
         class="tree-row-cv group flex h-[24px] w-full items-center gap-1.5 rounded-md pr-3 text-left text-[12.5px] outline-none transition-colors hover:bg-accent/60 focus-visible:bg-accent/60"
         :class="dragOverPath === n.path && 'bg-primary/15 ring-1 ring-primary/40'"
@@ -260,6 +266,33 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
         <component :is="icon" class="shrink-0 text-[15px]" />
         <span class="truncate text-[#93939f]">{{ n.name }}</span>
       </button>
+        </ContextMenuTrigger>
+        <ContextMenuContent class="w-52">
+          <ContextMenuItem v-if="!isGuest" @select="emit('reveal', n.path)">
+            <FolderOpen :size="15" />
+            <span>{{ $t("repo.changes.revealAction") }}</span>
+          </ContextMenuItem>
+          <ContextMenuItem @select="emit('copyPath', n.path)">
+            <Copy :size="15" />
+            <span>{{ $t("repo.changes.ctxCopyPath") }}</span>
+          </ContextMenuItem>
+          <!-- Same conditional-separator rule as the file menu below. -->
+          <ContextMenuSeparator v-if="canControl || !isGuest" />
+          <ContextMenuItem v-if="canControl" @select="emit('stage', n.path)">
+            <Plus :size="15" />
+            <span>{{ $t("repo.changes.ctxStageFolder") }}</span>
+          </ContextMenuItem>
+          <ContextMenuItem v-if="!isGuest" @select="emit('gitignore', n.path)">
+            <Ban :size="15" />
+            <span>{{ $t("repo.changes.ctxGitignore") }}</span>
+          </ContextMenuItem>
+          <ContextMenuSeparator v-if="!isGuest" />
+          <ContextMenuItem v-if="!isGuest" variant="destructive" @select="emit('discard', n.path)">
+            <Undo2 :size="15" />
+            <span>{{ $t("repo.changes.ctxDiscardFolder") }}</span>
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
       <!-- file row — opens the read-only viewer (spacer keeps it aligned under folders).
            Wrapped so the hover action buttons are SIBLINGS (button-in-button is invalid).
            Right-click opens a ContextMenu (same actions as the hover buttons, plus Open / Open in
@@ -317,7 +350,12 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
              touch (pointer-coarse — phones have no :hover), on THIS file's own selection, or on
              ANY file being selected anywhere in the tree (so a partial selection stays visible
              across every row, not just the one under the pointer). -->
+        <!-- Not rendered in a read-only tree (the pull preview): selection exists to drive
+             "Commit selected", and there is nothing to commit there. It was previously only
+             transparent, so it stayed hoverable and clickable — offering to tick files for a
+             pull, which is all-or-nothing and cannot honour a subset. -->
         <button
+          v-if="!readOnly"
           type="button"
           role="checkbox"
           tabindex="-1"
@@ -404,7 +442,10 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
             <Copy :size="15" />
             <span>{{ $t("repo.changes.ctxCopyPath") }}</span>
           </ContextMenuItem>
-          <ContextMenuSeparator />
+          <!-- Separators are conditional on the group they introduce actually having items. In a
+               read-only tree (the pull preview) every action below is hidden and only Copy path
+               survives, which used to leave two dividers floating under a single item. -->
+          <ContextMenuSeparator v-if="canControl || !isGuest" />
           <ContextMenuItem v-if="canControl" @select="emit('stage', n.path)">
             <Plus :size="15" />
             <span>{{ $t("repo.changes.stageAction") }}</span>
@@ -413,7 +454,7 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
             <Ban :size="15" />
             <span>{{ $t("repo.changes.ctxGitignore") }}</span>
           </ContextMenuItem>
-          <ContextMenuSeparator />
+          <ContextMenuSeparator v-if="!isGuest" />
           <ContextMenuItem v-if="!isGuest" variant="destructive" @select="emit('discard', n.path)">
             <Undo2 :size="15" />
             <span>{{ $t("repo.discard.action") }}</span>

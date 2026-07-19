@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { Check, Trash2, LogOut, Loader2, Cloud } from "@lucide/vue";
+import { Check, Trash2, LogOut, Loader2, Cloud, ExternalLink } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { useStore } from "../../store";
 import { ApiError } from "../../api";
@@ -156,9 +156,12 @@ watch(
     <div v-if="needsOwner && !isRemote" class="px-3.5 pb-3">
       <div class="flex flex-col gap-2.5 rounded-lg border border-info/30 bg-info/10 p-3">
         <p class="text-[12.5px] leading-snug text-foreground/90">{{ $t("remote.needsOwner") }}</p>
-        <Button as="a" href="/oauth/login" size="sm" class="self-start">
+        <!-- New tab, same reasoning as the remote-access modal: signing in navigates away to the
+             provider, and doing that in place discards the Settings panel you were in. -->
+        <Button as="a" href="/oauth/login" target="_blank" rel="noopener noreferrer" size="sm" class="self-start">
           <Cloud />
           {{ $t("remote.connectCta") }}
+          <ExternalLink :size="13" class="opacity-70" />
         </Button>
       </div>
     </div>

@@ -236,3 +236,18 @@ export const ShareCreateSchema = z.object({
   scopeAll: z.boolean().default(false),
   repoIds: z.array(nonEmpty).default([]),
 });
+
+/**
+ * Edit an existing share. Every field optional — an omitted one is left as it was.
+ *
+ * `duration` re-bases the expiry from NOW, which is the only reading that isn't surprising:
+ * "make this last another week" should mean a week from today, not a week from whenever it was
+ * first minted (which for an already-expired link would leave it still expired).
+ */
+export const ShareUpdateSchema = z.object({
+  label: z.string().trim().min(1).max(80).optional(),
+  perm: z.enum(["view", "control"]).optional(),
+  duration: z.enum(["hour", "day", "week", "month", "year", "never"]).optional(),
+  scopeAll: z.boolean().optional(),
+  repoIds: z.array(nonEmpty).optional(),
+});

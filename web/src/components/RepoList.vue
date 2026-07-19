@@ -4,8 +4,10 @@ import { dragAndDrop } from "@formkit/drag-and-drop/vue";
 import { insert, tearDown } from "@formkit/drag-and-drop";
 import { Pin, Star, FolderGit2 } from "@lucide/vue";
 import { useStore } from "../store";
+import { isSectionCollapsed, toggleSection, type RepoSection } from "@/lib/repo-sections";
 import type { Repo } from "../types";
 import RepoCard from "./RepoCard.vue";
+import RepoSectionHeader from "./RepoSectionHeader.vue";
 
 const store = useStore();
 
@@ -32,6 +34,17 @@ watch(
 );
 
 const hasSections = computed(() => pinnedList.value.length > 0 || starredList.value.length > 0);
+
+// The catch-all section shows a heading only when a section above it exists — alone on the page
+// it is just "the list", and needs no label. That heading is also its collapse control, so
+// without it the section must stay open: otherwise unpinning your last pinned repo would take
+// the header away while "other" was folded, leaving an empty dashboard and nothing to click.
+// The stored preference is left untouched, so it comes back the moment the heading does.
+const otherCollapsible = computed(() => hasSections.value);
+function sectionCollapsed(section: RepoSection): boolean {
+  if (section === "other" && !otherCollapsible.value) return false;
+  return isSectionCollapsed(section);
+}
 
 // Persist the global order as pinned-block → starred-block → rest-block, then append any
 // repo NOT in the visible drag set (hidden ones) so they keep a stable spot. The daemon
@@ -115,47 +128,98 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="flex flex-col gap-5">
+    <!-- Each list stays MOUNTED when collapsed, never v-if / v-show: the drag library holds a
+         reference to these exact parent elements, so unmounting one would strand its instance,
+         and `display: none` can't be animated. `.section-collapse` animates grid-template-rows
+         1fr↔0fr instead, which needs no measured height and clips via the inner overflow. -->
+
+
     <!-- Pinned -->
     <section v-show="pinnedList.length">
-      <div
-        class="mb-2 flex items-center gap-1.5 px-0.5 text-[12px] font-semibold tracking-wide text-muted-foreground uppercase"
-      >
-        <Pin :size="13" class="text-primary" />
-        {{ $t("shell.sectionPinned") }}
-        <span class="text-muted-foreground/60">{{ pinnedList.length }}</span>
-      </div>
-      <div ref="pinnedParent" class="flex flex-col gap-2.5">
-        <RepoCard v-for="repo in pinnedList" :key="repo.id" :repo="repo" section="pinned" :draggable="store.sortMode === 'manual' && !store.isGuest" />
+      <RepoSectionHeader
+        :icon="Pin"
+        icon-class="text-primary"
+        :label="$t('shell.sectionPinned')"
+        :count="pinnedList.length"
+        :collapsed="sectionCollapsed('pinned')"
+        collapsible
+        @toggle="toggleSection('pinned')"
+      />
+      <div class="section-collapse" :class="sectionCollapsed('pinned') && 'is-collapsed'">
+        <div class="section-collapse-inner">
+          <div ref="pinnedParent" class="flex flex-col gap-2.5">
+            <RepoCard v-for="repo in pinnedList" :key="repo.id" :repo="repo" section="pinned" :draggable="store.sortMode === 'manual' && !store.isGuest" />
+          </div>
+        </div>
       </div>
     </section>
 
     <!-- Starred -->
     <section v-show="starredList.length">
-      <div
-        class="mb-2 flex items-center gap-1.5 px-0.5 text-[12px] font-semibold tracking-wide text-muted-foreground uppercase"
-      >
-        <Star :size="13" class="fill-current text-warning" />
-        {{ $t("shell.sectionStarred") }}
-        <span class="text-muted-foreground/60">{{ starredList.length }}</span>
-      </div>
-      <div ref="starredParent" class="flex flex-col gap-2.5">
-        <RepoCard v-for="repo in starredList" :key="repo.id" :repo="repo" section="starred" :draggable="store.sortMode === 'manual' && !store.isGuest" />
+      <RepoSectionHeader
+        :icon="Star"
+        icon-class="fill-current text-warning"
+        :label="$t('shell.sectionStarred')"
+        :count="starredList.length"
+        :collapsed="sectionCollapsed('starred')"
+        collapsible
+        @toggle="toggleSection('starred')"
+      />
+      <div class="section-collapse" :class="sectionCollapsed('starred') && 'is-collapsed'">
+        <div class="section-collapse-inner">
+          <div ref="starredParent" class="flex flex-col gap-2.5">
+            <RepoCard v-for="repo in starredList" :key="repo.id" :repo="repo" section="starred" :draggable="store.sortMode === 'manual' && !store.isGuest" />
+          </div>
+        </div>
       </div>
     </section>
 
     <!-- Everything else (header shown only when a section above it exists) -->
     <section v-show="otherList.length">
-      <div
+      <RepoSectionHeader
         v-show="hasSections"
-        class="mb-2 flex items-center gap-1.5 px-0.5 text-[12px] font-semibold tracking-wide text-muted-foreground uppercase"
-      >
-        <FolderGit2 :size="13" />
-        {{ $t("shell.sectionAll") }}
-        <span class="text-muted-foreground/60">{{ otherList.length }}</span>
-      </div>
-      <div ref="otherParent" class="flex flex-col gap-2.5">
-        <RepoCard v-for="repo in otherList" :key="repo.id" :repo="repo" section="other" :draggable="store.sortMode === 'manual' && !store.isGuest" />
+        :icon="FolderGit2"
+        :label="$t('shell.sectionAll')"
+        :count="otherList.length"
+        :collapsed="sectionCollapsed('other')"
+        :collapsible="otherCollapsible"
+        @toggle="toggleSection('other')"
+      />
+      <div class="section-collapse" :class="sectionCollapsed('other') && 'is-collapsed'">
+        <div class="section-collapse-inner">
+          <div ref="otherParent" class="flex flex-col gap-2.5">
+            <RepoCard v-for="repo in otherList" :key="repo.id" :repo="repo" section="other" :draggable="store.sortMode === 'manual' && !store.isGuest" />
+          </div>
+        </div>
       </div>
     </section>
   </div>
 </template>
+
+<style scoped>
+/* Collapse without unmounting: animate the grid track from 1fr to 0fr. No height measuring, and
+   the list keeps its DOM (and so its drag-and-drop registration) the whole time. */
+.section-collapse {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.22s ease;
+}
+.section-collapse.is-collapsed {
+  grid-template-rows: 0fr;
+}
+.section-collapse-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+/* A collapsed section must not leave its cards focusable or hit-testable behind a 0px track. */
+.section-collapse.is-collapsed .section-collapse-inner {
+  visibility: hidden;
+  transition: visibility 0s linear 0.22s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .section-collapse {
+    transition: none;
+  }
+}
+</style>

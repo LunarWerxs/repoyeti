@@ -169,9 +169,12 @@ export function useSettingsNotifications(pullRepo?: (repoId: string) => Promise<
   function notifyBehind(behind: BehindRepo[]): void {
     if (!behind?.length) return;
     const one = behind.length === 1 ? behind[0]! : null;
-    const title = one ? t("notify.behindTitle") : t("notify.behindManyTitle");
+    // The REPO is the title. "Behind remote" told you the category of thing that happened but
+    // not which repo it happened to, which is the only part you can't guess — and the bell shows
+    // entries from several sources, so a generic title is easy to skim past.
+    const title = one ? one.name : t("notify.behindManyTitle");
     const body = one
-      ? t("notify.behindBody", { name: one.name, count: one.behind }, one.behind)
+      ? t("notify.behindOneBody", { count: one.behind }, one.behind)
       : t("notify.behindManyBody", { count: behind.length }, behind.length);
     // The bell is where this LIVES: a persistent entry the owner can come back to and resolve,
     // rather than a wall of text over the middle of the page that expires on its own. One entry

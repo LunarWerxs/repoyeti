@@ -125,9 +125,13 @@ export const OWNER_ONLY: readonly string[] = [
   "GET /api/auth/token",
   "POST /api/auth/token",
   "DELETE /api/auth/token",
-  // share administration — a guest minting a link is privilege escalation
+  // share administration — a guest minting a link is privilege escalation. Editing or rotating
+  // one is worse: it would let a guest widen their own grant, or re-key it out from under the
+  // owner. Owner-only, like the rest of this block.
   "GET /api/shares",
   "POST /api/shares",
+  "PATCH /api/shares/:id",
+  "POST /api/shares/:id/rotate",
   "DELETE /api/shares/:id",
   "GET /api/shares/:id/events",
   // access mode / tunnel

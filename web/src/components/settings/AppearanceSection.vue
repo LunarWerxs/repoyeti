@@ -1,16 +1,15 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { useStore } from "../../store";
-import { changesViewSize, changesOverrideCount, clearAllChangesOverrides } from "@/lib/changes-view";
+import { changesViewSize } from "@/lib/changes-view";
 import { useTheme } from "@/lib/theme";
 import { useTooltipConfig } from "@/lib/tooltip-config";
 import SettingsGroup from "@/shell/SettingsGroup.vue";
 import SettingsRow from "@/shell/SettingsRow.vue";
 import InfoHint from "@/shell/InfoHint.vue";
 import ExpandTransition from "@/shell/ExpandTransition.vue";
-import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -22,16 +21,6 @@ import {
 
 const store = useStore();
 const { t } = useI18n();
-
-// How many cards pin their own changed-files height cap. Read into a ref (not a computed) so
-// the "reset" click updates it: the override map is module-level localStorage state, not a
-// reactive source this component tracks.
-const pinnedHeights = ref(changesOverrideCount());
-function resetPinnedHeights(): void {
-  clearAllChangesOverrides();
-  pinnedHeights.value = 0;
-  toast.success(t("settings.changesHeightResetDone"));
-}
 
 // Shared kit light/dark/system theme — writes to the same store App.vue reads.
 const { mode: theme } = useTheme();
@@ -153,29 +142,19 @@ async function onHideTrayIcon(enabled: boolean): Promise<void> {
         />
       </template>
     </SettingsRow>
-    <div class="flex flex-col gap-1.5 px-3.5 py-3">
-      <span class="flex items-center gap-1.5 text-[12px] text-muted-foreground">
-        {{ $t("settings.changesHeight") }}
-        <InfoHint :text="$t('settings.changesHeightHint')" />
-      </span>
-      <Select v-model="changesViewSize">
-        <SelectTrigger class="w-full" :aria-label="$t('settings.changesHeight')"><SelectValue /></SelectTrigger>
-        <SelectContent>
-          <SelectItem value="small">{{ $t("settings.heightSmall") }}</SelectItem>
-          <SelectItem value="medium">{{ $t("settings.heightMedium") }}</SelectItem>
-          <SelectItem value="tall">{{ $t("settings.heightTall") }}</SelectItem>
-        </SelectContent>
-      </Select>
-      <!-- A per-repo cap (set by dragging a card's grip) beats this preset for that card, which
-           otherwise reads as "the setting does nothing". Say so, and offer one click to undo it —
-           the grip's own double-click reset is per-card and easy to miss. -->
-      <div v-if="pinnedHeights > 0" class="flex items-center gap-2 text-[11.5px] text-muted-foreground">
-        <span class="min-w-0 flex-1">{{ $t("settings.changesHeightPinned", { count: pinnedHeights }, pinnedHeights) }}</span>
-        <Button variant="ghost" size="sm" class="h-6 shrink-0 text-[11.5px]" @click="resetPinnedHeights">
-          {{ $t("settings.changesHeightReset") }}
-        </Button>
-      </div>
-    </div>
+    <SettingsRow :label="$t('settings.changesHeight')">
+      <template #info><InfoHint :text="$t('settings.changesHeightHint')" /></template>
+      <template #control>
+        <Select v-model="changesViewSize">
+          <SelectTrigger class="w-full max-w-36" :aria-label="$t('settings.changesHeight')"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="small">{{ $t("settings.heightSmall") }}</SelectItem>
+            <SelectItem value="medium">{{ $t("settings.heightMedium") }}</SelectItem>
+            <SelectItem value="tall">{{ $t("settings.heightTall") }}</SelectItem>
+          </SelectContent>
+        </Select>
+      </template>
+    </SettingsRow>
   </SettingsGroup>
 
   <!-- Diffs ─────────────────────────────────────────────────────── -->
@@ -200,22 +179,23 @@ async function onHideTrayIcon(enabled: boolean): Promise<void> {
         />
       </template>
     </SettingsRow>
-    <!-- Threshold is moot when always-side-by-side is on → HIDE it (not dim). -->
+    <!-- Threshold is moot when always-side-by-side is on → HIDE it (not dim). Laid out as a
+         standard row (label left, control right) like every other setting, rather than the
+         stacked label-above-a-full-width-select it used to be. -->
     <ExpandTransition :open="store.diffPatchEnabled">
-      <div class="flex flex-col gap-1.5 px-3.5 py-3">
-        <span class="flex items-center gap-1.5 text-[12px] text-muted-foreground">
-          {{ $t("settings.diffPatchThreshold") }}
-          <InfoHint :text="$t('settings.diffPatchThresholdHint')" />
-        </span>
-        <Select v-model="diffPatchChoice">
-          <SelectTrigger class="w-full" :aria-label="$t('settings.diffPatchThreshold')"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem v-for="o in DIFF_PATCH_OPTIONS" :key="o.bytes" :value="String(o.bytes)">
-              {{ o.label }}
-            </SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
+      <SettingsRow :label="$t('settings.diffPatchThreshold')">
+        <template #info><InfoHint :text="$t('settings.diffPatchThresholdHint')" /></template>
+        <template #control>
+          <Select v-model="diffPatchChoice">
+            <SelectTrigger class="w-full max-w-36" :aria-label="$t('settings.diffPatchThreshold')"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem v-for="o in DIFF_PATCH_OPTIONS" :key="o.bytes" :value="String(o.bytes)">
+                {{ o.label }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </template>
+      </SettingsRow>
     </ExpandTransition>
   </SettingsGroup>
 </template>

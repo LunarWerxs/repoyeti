@@ -6,6 +6,64 @@ All notable changes to RepoYeti are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-18
+
+### Added
+
+- **Share links can be edited, and re-keyed.** A link's name, tier, expiry and repo list are now
+  editable in place: the URL you already sent keeps working and simply grants whatever you set.
+  Separately, **Regenerate** mints a fresh URL for the same link, which is the way back when you
+  lose the original: the daemon only ever stored a hash of the token, so the plaintext genuinely
+  cannot be recovered. Regenerating kills the previous URL, and says so before it does.
+- **Collapsible dashboard sections.** Pinned, Starred and the rest each fold away, and the state
+  is remembered across reloads.
+- **A long commit message collapses.** History clamps a big body to a few lines behind a Show more
+  toggle, so a generated changelog can't push the changed-files list off the card.
+
+### Changed
+
+- **Share links warn that a quick-tunnel address is temporary.** A zero-config tunnel gets a fresh
+  random `*.trycloudflare.com` hostname every time RepoYeti restarts, and links are built against
+  whatever the address was when they were minted — so a restart silently kills every link already
+  sent, and the recipient sees a DNS failure that reads as "your link is wrong". The panel now says
+  this up front and points at the named tunnel, whose address survives restarts.
+- **The remote-access dialog leads with the link, not the QR code.** The QR is behind a button next
+  to the URL, Copy moved inside the URL box, and there's a route to share links, which were
+  previously undiscoverable from the one screen about sharing access.
+- **Sign in with Connections opens in a new tab** instead of navigating away from whatever you had
+  open. The dashboard re-checks your session when the window regains focus.
+- **Settings rows are consistent.** Working tree height, Default editor and the large-file diff
+  threshold are laid out like every other setting (label left, control right). The editor picker
+  lists only editors actually installed, and is named "Default editor". "Agent Safety Rail" is now
+  "MCP Safety Rail"; "Tell me about updates" is "Auto-check for updates".
+- **The create-a-share-link form is disclosed on demand.** It sat permanently open under the list
+  of links; now it's one button until you want it, and the freshly-minted link auto-dismisses once
+  you've had a chance to copy it.
+- **A behind-remote notification is titled with the repo.** Which repo it is was the one part you
+  couldn't guess, and it was buried in the description under a generic "Behind remote".
+- **The repo name sits where it should.** The drag handle shrank to the width of its glyph and lost
+  its hover plate, reclaiming a gutter of dead space to the left of every repo.
+
+### Fixed
+
+- **Switching commits in History no longer throws you up the page.** Opening one commit closes the
+  previously open one, and when that one was tall and above, the collapse pulled the row you just
+  clicked off the top of the screen. It's now held in place while the layout settles.
+- **The pull-preview caret matches its button.** It took the accent colour when the repo is behind
+  (it was hardcoded grey), matches the button's height, and opens a menu like every other caret in
+  the app. In the shared view, where the caret isn't offered, Pull no longer renders with a flat
+  right edge joined to nothing.
+- **Right-click works on folders in the working tree.** Reveal, copy path, stage, ignore and
+  discard now apply to a whole folder; ignoring a build directory previously meant one right-click
+  per file inside it.
+- **A read-only file tree stops offering actions it can't perform.** The pull preview no longer
+  draws per-file checkboxes — a pull is fetch + merge of a branch, so there is no such thing as
+  pulling a subset — and its context menu no longer shows dividers around items that aren't there.
+- **Toasts stack instead of hiding each other.** Ours carry Undo, and an older toast's Undo used to
+  end up unreachable behind a newer one.
+- **History rows are reachable by keyboard.** They were plain divs with a click handler, so they
+  couldn't be focused or activated with Enter.
+
 ## [0.8.0] - 2026-07-18
 
 ### Added
@@ -488,7 +546,8 @@ Initial public tag of the daemon + dashboard, before the release-hardening pass.
   fetch / pull (fast-forward only) / push (no force) / commit.
 - cloudflared tunnel (+ QR) and the Vue 3 PWA dashboard.
 
-[Unreleased]: https://github.com/LunarWerxs/RepoYeti/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/LunarWerxs/RepoYeti/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/LunarWerxs/RepoYeti/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/LunarWerxs/RepoYeti/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/LunarWerxs/RepoYeti/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/LunarWerxs/RepoYeti/compare/v0.6.0...v0.6.1

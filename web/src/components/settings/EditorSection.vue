@@ -9,6 +9,7 @@ import { toast } from "vue-sonner";
 import { useStore } from "../../store";
 import type { EditorInfo } from "../../api";
 import SettingsGroup from "@/shell/SettingsGroup.vue";
+import SettingsRow from "@/shell/SettingsRow.vue";
 import InfoHint from "@/shell/InfoHint.vue";
 import {
   Select,
@@ -46,29 +47,42 @@ async function onPick(id: string): Promise<void> {
 function editorLabel(e: EditorInfo): string {
   return e.available ? e.label : t("settings.editorNotInstalled", { name: e.label });
 }
+
+/**
+ * Only editors actually installed on this machine — the catalogue is every editor RepoYeti knows
+ * how to launch, which is a much longer list than anyone has installed, and picking one of those
+ * did nothing but fall back.
+ *
+ * The exception: an editor that IS the current selection stays listed even when it looks
+ * unavailable. Otherwise a choice made on another machine (settings sync) or one whose detection
+ * momentarily fails would vanish from its own dropdown, which reads as the setting silently
+ * resetting itself.
+ */
+const editorOptions = computed<EditorInfo[]>(() =>
+  store.editorsCatalog.filter((e) => e.available || e.id === store.defaultEditor),
+);
 </script>
 
 <template>
   <SettingsGroup :label="$t('settings.cardEditor')">
-    <div class="flex flex-col gap-1.5 px-3.5 py-3">
-      <span class="flex items-center gap-1.5 text-[12px] text-muted-foreground">
-        {{ $t("settings.editorDefault") }}
-        <InfoHint :text="$t('settings.editorHint')" />
-      </span>
-      <Select v-model="editorChoice">
-        <SelectTrigger class="w-full" :aria-label="$t('settings.editorDefault')"><SelectValue /></SelectTrigger>
-        <SelectContent>
-          <SelectItem :value="AUTO">{{ $t("settings.editorAuto") }}</SelectItem>
-          <SelectItem
-            v-for="e in store.editorsCatalog"
-            :key="e.id"
-            :value="e.id"
-            :disabled="!e.available"
-          >
-            {{ editorLabel(e) }}
-          </SelectItem>
-        </SelectContent>
-      </Select>
-    </div>
+    <SettingsRow :label="$t('settings.editorDefault')">
+      <template #info><InfoHint :text="$t('settings.editorHint')" /></template>
+      <template #control>
+        <Select v-model="editorChoice">
+          <SelectTrigger class="w-full max-w-36" :aria-label="$t('settings.editorDefault')"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem :value="AUTO">{{ $t("settings.editorAuto") }}</SelectItem>
+            <SelectItem
+              v-for="e in editorOptions"
+              :key="e.id"
+              :value="e.id"
+              :disabled="!e.available"
+            >
+              {{ editorLabel(e) }}
+            </SelectItem>
+          </SelectContent>
+        </Select>
+      </template>
+    </SettingsRow>
   </SettingsGroup>
 </template>

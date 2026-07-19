@@ -259,6 +259,24 @@ export const api = {
     scopeAll: boolean;
     repoIds: string[];
   }) => req<ShareCreated>("POST", "/api/shares", input),
+  /** Change what a link GRANTS without changing the link itself: the URL already sent keeps
+   *  working and simply means something different. Every field is optional. `duration` re-bases
+   *  the expiry from now. */
+  updateShare: (
+    id: string,
+    patch: {
+      label?: string;
+      perm?: SharePerm;
+      duration?: ShareDuration;
+      scopeAll?: boolean;
+      repoIds?: string[];
+    },
+  ) => req<{ ok: boolean; share: Share }>("PATCH", `/api/shares/${encodeURIComponent(id)}`, patch),
+  /** Re-key a link: returns a NEW token (the second and only other call that carries one) and
+   *  kills the previous URL. The way back to a working link once the original is lost, since the
+   *  daemon only ever stored its hash. */
+  rotateShare: (id: string) =>
+    req<ShareCreated>("POST", `/api/shares/${encodeURIComponent(id)}/rotate`),
   /** Revoke a link — effective on the guest's very next request. */
   revokeShare: (id: string) => req<{ ok: boolean }>("DELETE", `/api/shares/${encodeURIComponent(id)}`),
   /** What this link's holder actually did. The only place that can answer it: a guest's commits

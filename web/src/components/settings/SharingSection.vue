@@ -10,7 +10,7 @@
  */
 import { ref, computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { Check, Copy, Link2, Loader2, Trash2 } from "@lucide/vue";
+import { AlertTriangle, Check, Copy, Link2, Loader2, RefreshCw, Trash2, Pencil } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { useStore } from "../../store";
 import { api, ApiError } from "../../api";
@@ -34,6 +34,10 @@ const confirmRevoke = ref<string | null>(null);
  *  gone for good (the daemon stored only a hash), so it stays until the owner dismisses it. */
 const minted = ref<{ url: string; label: string } | null>(null);
 const copied = ref(false);
+/** Pending auto-dismiss of the minted-link panel (armed only once the link has been copied). */
+let dismissTimer: number | null = null;
+/** The create form is disclosed on demand — see the "Create a share link" button. */
+const showForm = ref(false);
 
 // ── the create form ────────────────────────────────────────────────────────────
 const label = ref("");
@@ -76,6 +80,12 @@ function resetForm(): void {
   picked.value = new Set();
 }
 
+/** Fold the create form away and drop whatever was half-typed into it. */
+function closeForm(): void {
+  showForm.value = false;
+  resetForm();
+}
+
 function togglePick(id: string): void {
   const next = new Set(picked.value);
   if (next.has(id)) next.delete(id);
@@ -111,6 +121,8 @@ async function create(): Promise<void> {
     minted.value = { url: `${origin.replace(/\/$/, "")}/s/${res.token}`, label: res.share.label };
     copied.value = false;
     resetForm();
+    showForm.value = false; // the link is made; fold the form back down behind its button
+    armDismiss();
     await load();
   } catch (e) {
     toast.error(e instanceof ApiError ? e.message : t("share.createFailed"));
@@ -127,6 +139,105 @@ async function copyLink(): Promise<void> {
     setTimeout(() => (copied.value = false), 2000);
   } catch {
     toast.error(t("share.copyFailed"));
+  }
+}
+
+/**
+ * Auto-dismiss the minted-link panel.
+ *
+ * This is only safe because "Regenerate" exists: the daemon stores nothing but a hash, so before
+ * that button this panel held the single existing copy of the URL and hiding it on a timer would
+ * have destroyed the link. Now losing it costs one click to re-key, so the panel can behave like
+ * the transient confirmation it looks like.
+ */
+function armDismiss(): void {
+  if (dismissTimer !== null) clearTimeout(dismissTimer);
+  dismissTimer = window.setTimeout(() => {
+    minted.value = null;
+    dismissTimer = null;
+  }, 6000);
+}
+
+// ── edit an existing link ──────────────────────────────────────────────────────
+/** The share being edited, or null. Holds a working copy so Cancel really cancels. */
+const editing = ref<Share | null>(null);
+const editLabel = ref("");
+const editPerm = ref<SharePerm>("view");
+const editDuration = ref<ShareDuration | "keep">("keep");
+const editScopeAll = ref(false);
+const editPicked = ref<Set<string>>(new Set());
+const savingEdit = ref(false);
+/** Which link's regenerate button is armed (two-step, like revoke — it kills the current URL). */
+const confirmRotate = ref<string | null>(null);
+
+const canSaveEdit = computed(
+  () =>
+    editLabel.value.trim().length > 0 &&
+    (editScopeAll.value || editPicked.value.size > 0) &&
+    !savingEdit.value,
+);
+
+function startEdit(s: Share): void {
+  editing.value = s;
+  editLabel.value = s.label;
+  editPerm.value = s.perm;
+  // "keep" rather than the original duration: the share stores an absolute expiry, not the
+  // duration it was minted with, so there is nothing faithful to preselect. Leaving it alone is
+  // the honest default.
+  editDuration.value = "keep";
+  editScopeAll.value = s.scopeAll;
+  editPicked.value = new Set(s.repoIds);
+}
+
+function cancelEdit(): void {
+  editing.value = null;
+}
+
+function toggleEditPick(id: string): void {
+  const next = new Set(editPicked.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  editPicked.value = next;
+}
+
+async function saveEdit(): Promise<void> {
+  const target = editing.value;
+  if (!target || !canSaveEdit.value) return;
+  savingEdit.value = true;
+  try {
+    await api.updateShare(target.id, {
+      label: editLabel.value.trim(),
+      perm: editPerm.value,
+      scopeAll: editScopeAll.value,
+      repoIds: editScopeAll.value ? [] : [...editPicked.value],
+      ...(editDuration.value === "keep" ? {} : { duration: editDuration.value }),
+    });
+    editing.value = null;
+    await load();
+    toast.success(t("share.updated"));
+  } catch (e) {
+    toast.error(e instanceof ApiError ? e.message : t("share.updateFailed"));
+  } finally {
+    savingEdit.value = false;
+  }
+}
+
+/** Re-key a link. Two-step, because it kills whatever URL is already out there. */
+async function rotate(s: Share): Promise<void> {
+  if (confirmRotate.value !== s.id) {
+    confirmRotate.value = s.id;
+    return;
+  }
+  confirmRotate.value = null;
+  try {
+    const res = await api.rotateShare(s.id);
+    const origin = store.tunnelUrl ?? window.location.origin;
+    minted.value = { url: `${origin.replace(/\/$/, "")}/s/${res.token}`, label: res.share.label };
+    copied.value = false;
+    armDismiss();
+    await load();
+  } catch (e) {
+    toast.error(e instanceof ApiError ? e.message : t("share.rotateFailed"));
   }
 }
 
@@ -176,6 +287,11 @@ watch(
     if (isOpen) {
       confirmRevoke.value = null;
       minted.value = null;
+      showForm.value = false;
+      if (dismissTimer !== null) {
+        clearTimeout(dismissTimer);
+        dismissTimer = null;
+      }
       resetForm();
       void load();
     }
@@ -193,6 +309,20 @@ watch(
     </div>
 
     <template v-else>
+      <!-- A quick tunnel gets a FRESH random *.trycloudflare.com hostname every time cloudflared
+           starts, and share URLs are built against whatever the origin was when they were minted.
+           So every restart silently kills every link already sent: the recipient gets
+           DNS_PROBE_FINISHED_NXDOMAIN, which reads as "your link is wrong" rather than "the
+           address moved". Say it up front, and point at the fix (a named tunnel is a stable
+           hostname that survives restarts). -->
+      <div
+        v-if="!store.tunnelConfig.named"
+        class="mx-3.5 mt-3 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 p-3"
+      >
+        <AlertTriangle :size="14" class="mt-px shrink-0 text-warning" />
+        <p class="text-[11.5px] leading-snug text-muted-foreground">{{ $t("share.ephemeralHost") }}</p>
+      </div>
+
       <!-- The freshly-minted link: shown once, and only once. -->
       <div v-if="minted" class="mx-3.5 my-3 flex flex-col gap-2.5 rounded-lg border border-success/30 bg-success/10 p-3">
         <div class="flex items-center gap-1.5">
@@ -239,23 +369,123 @@ watch(
             {{ repoLabel(s) }} · {{ expiryLabel(s) }} · {{ usageLabel(s) }}
           </div>
         </div>
-        <Button
-          :variant="confirmRevoke === s.id ? 'destructive' : 'ghost'"
-          size="sm"
-          class="shrink-0"
-          @click="revoke(s.id)"
-          @blur="confirmRevoke = null"
-        >
-          <Trash2 />
-          {{ confirmRevoke === s.id ? $t("share.revokeConfirm") : $t("share.revoke") }}
+        <div class="flex shrink-0 items-center gap-1">
+          <Button variant="ghost" size="sm" :disabled="!s.live" @click="startEdit(s)">
+            <Pencil />
+            {{ $t("share.edit") }}
+          </Button>
+          <!-- Two-step, like revoke: this kills whatever URL is already out there. -->
+          <Button
+            :variant="confirmRotate === s.id ? 'destructive' : 'ghost'"
+            size="sm"
+            :disabled="!s.live"
+            @click="rotate(s)"
+            @blur="confirmRotate = null"
+          >
+            <RefreshCw />
+            {{ confirmRotate === s.id ? $t("share.rotateConfirm") : $t("share.rotate") }}
+          </Button>
+          <Button
+            :variant="confirmRevoke === s.id ? 'destructive' : 'ghost'"
+            size="sm"
+            @click="revoke(s.id)"
+            @blur="confirmRevoke = null"
+          >
+            <Trash2 />
+            {{ confirmRevoke === s.id ? $t("share.revokeConfirm") : $t("share.revoke") }}
+          </Button>
+        </div>
+      </div>
+
+      <!-- Edit an existing grant. Same controls as the create form, minus the secret: the link
+           itself is untouched, so whoever already has it keeps working. -->
+      <div v-if="editing" class="mx-3.5 my-3 flex flex-col gap-2.5 rounded-lg border border-info/30 bg-info/5 p-3">
+        <div class="flex items-center gap-1.5">
+          <Pencil :size="13" class="shrink-0 text-info" />
+          <span class="text-[12.5px] font-medium text-foreground">{{ $t("share.editTitle", { label: editing.label }) }}</span>
+          <Button variant="ghost" size="sm" class="ml-auto" @click="cancelEdit">{{ $t("common.cancel") }}</Button>
+        </div>
+        <p class="text-[11.5px] leading-snug text-muted-foreground">{{ $t("share.editHint") }}</p>
+
+        <Input v-model="editLabel" :placeholder="$t('share.labelPlaceholder')" class="h-8 text-[12.5px]" />
+
+        <div class="flex items-center gap-1.5">
+          <Button
+            :variant="editPerm === 'view' ? 'secondary' : 'ghost'"
+            size="sm"
+            @click="editPerm = 'view'"
+          >{{ $t("share.tierView") }}</Button>
+          <Button
+            :variant="editPerm === 'control' ? 'secondary' : 'ghost'"
+            size="sm"
+            @click="editPerm = 'control'"
+          >{{ $t("share.tierControl") }}</Button>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-1">
+          <!-- "Keep" is first and default: an edit that only renames a link should not silently
+               push its expiry out. -->
+          <Button
+            :variant="editDuration === 'keep' ? 'secondary' : 'ghost'"
+            size="sm"
+            @click="editDuration = 'keep'"
+          >{{ $t("share.keepExpiry") }}</Button>
+          <Button
+            v-for="d in DURATIONS"
+            :key="d"
+            :variant="editDuration === d ? 'secondary' : 'ghost'"
+            size="sm"
+            @click="editDuration = d"
+          >{{ durationLabel(d) }}</Button>
+        </div>
+
+        <label class="flex items-center justify-between gap-3">
+          <span class="text-[12.5px] text-foreground">{{ $t("share.scopeAll") }}</span>
+          <Switch v-model="editScopeAll" :aria-label="$t('share.scopeAll')" />
+        </label>
+
+        <div v-if="!editScopeAll" class="flex max-h-40 flex-col gap-0.5 overflow-y-auto rounded-md border border-border/60 p-1">
+          <button
+            v-for="r in store.repos"
+            :key="r.id"
+            type="button"
+            class="flex items-center gap-2 rounded px-2 py-1 text-left transition-colors hover:bg-accent/50"
+            @click="toggleEditPick(r.id)"
+          >
+            <span
+              class="flex size-3.5 shrink-0 items-center justify-center rounded-[3px] border"
+              :class="editPicked.has(r.id) ? 'border-primary bg-primary text-primary-foreground' : 'border-border'"
+            >
+              <Check v-if="editPicked.has(r.id)" :size="10" />
+            </span>
+            <span class="truncate text-[12px] text-foreground">{{ r.name }}</span>
+          </button>
+        </div>
+
+        <Button size="sm" class="self-start" :disabled="!canSaveEdit" @click="saveEdit">
+          <Loader2 v-if="savingEdit" class="animate-spin" />
+          <Check v-else />
+          {{ $t("share.saveEdit") }}
         </Button>
       </div>
 
       <!-- Create ─────────────────────────────────────────────────────── -->
-      <div class="flex flex-col gap-2.5 border-t border-border/40 px-3.5 py-3">
+      <!-- Progressive disclosure: label, permission, duration, scope and a repo checklist is a
+           lot of form to leave permanently open under a list you mostly came here to read. One
+           button until you actually want it. -->
+      <div v-if="!showForm" class="border-t border-border/40 px-3.5 py-3">
+        <Button size="sm" @click="showForm = true">
+          <Link2 />
+          {{ $t("share.newTitle") }}
+        </Button>
+      </div>
+      <div v-else class="flex flex-col gap-2.5 border-t border-border/40 px-3.5 py-3">
         <div class="flex items-center gap-1.5">
           <span class="text-[12.5px] font-medium text-foreground">{{ $t("share.newTitle") }}</span>
           <InfoHint :text="$t('share.newHint')" />
+          <Button variant="ghost" size="sm" class="ml-auto" @click="closeForm">
+            {{ $t("common.cancel") }}
+          </Button>
         </div>
 
         <Input

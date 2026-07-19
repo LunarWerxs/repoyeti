@@ -143,8 +143,10 @@ test("falling behind raises a bell entry that can pull right there", async ({ pa
   const bell = page.getByRole("button", { name: "Notifications" });
   await bell.click();
   const menu = page.getByRole("menu");
-  await expect(menu.getByText("Behind remote")).toBeVisible();
-  await expect(menu.getByText(/demo is 3 commits behind/)).toBeVisible();
+  // The REPO names the entry; the description says what happened to it. A generic "Behind
+  // remote" title left the one unguessable fact — which repo — buried in the body.
+  await expect(menu.getByText("demo", { exact: true })).toBeVisible();
+  await expect(menu.getByText(/3 commits behind its remote/)).toBeVisible();
 
   // …and it's actionable without leaving the flyout.
   await menu.getByRole("button", { name: "Pull now" }).click();

@@ -13,6 +13,7 @@ import { useRepoFeedback } from "@/lib/repo-feedback";
 import StashPanel from "../StashPanel.vue";
 import PullPreview from "./PullPreview.vue";
 import { Button } from "@/components/ui/button";
+import type { ButtonVariants } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { VCS_CAPABILITIES } from "../../types";
 import type { Repo } from "../../types";
@@ -37,6 +38,20 @@ const pullTooltip = computed(() =>
 );
 const busyAction = computed(() => store.busy[props.repo.id]);
 const anyBusy = computed(() => !!busyAction.value);
+// Pull goes accent when there is actually something to pull. Computed once and handed to BOTH
+// halves of the split button, so the caret can never disagree with the button it is attached to.
+/**
+ * Whether the preview caret is actually rendered beside Pull.
+ *
+ * ONE source of truth, because Pull squares off its right corners to butt against that caret —
+ * and a share-link guest doesn't get the caret (the incoming endpoint is owner-only), so keying
+ * the rounding off a different condition left the guest's Pull button with a flat right edge
+ * joined to nothing.
+ */
+const hasPullCaret = computed(() => caps.value.fetch && !store.isGuest);
+const pullVariant = computed<ButtonVariants["variant"]>(() =>
+  st.value && st.value.behind > 0 ? "default" : "outline",
+);
 
 async function run(name: "fetch" | "pull" | "push" | "refresh"): Promise<void> {
   const r = await store.doAction(props.repo.id, name);
@@ -73,9 +88,9 @@ async function run(name: "fetch" | "pull" | "push" | "refresh"): Promise<void> {
       <Tooltip>
         <TooltipTrigger as-child>
           <Button
-            :variant="st && st.behind > 0 ? 'default' : 'outline'"
+            :variant="pullVariant"
             size="sm"
-            :class="caps.fetch ? 'rounded-r-none' : ''"
+            :class="hasPullCaret ? 'rounded-r-none' : ''"
             :disabled="!hasUpstream || anyBusy"
             @click="run('pull')"
           >
@@ -89,10 +104,12 @@ async function run(name: "fetch" | "pull" | "push" | "refresh"): Promise<void> {
       <!-- Git only: the preview is defined as a merge against an upstream ref, which a
            centralized backend (Lore) has no local equivalent of. Owner-only too — the endpoint
            is owner-gated (see src/share/policy.ts), so a share-link guest would just get a 403. -->
+      <!-- No class here: PullPreview's root is a renderless <DropdownMenu>, so anything passed
+           in never reaches an element. It owns its own split-button joining classes. -->
       <PullPreview
-        v-if="caps.fetch && !store.isGuest"
-        class="-ml-px rounded-l-none"
+        v-if="hasPullCaret"
         :repo-id="repo.id"
+        :variant="pullVariant"
         :disabled="!hasUpstream || anyBusy"
         @pull="run('pull')"
       />

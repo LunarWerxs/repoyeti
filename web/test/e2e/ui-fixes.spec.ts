@@ -426,3 +426,106 @@ test("remove dialog does not scroll sideways on a long path", async ({ page }) =
   // A copy button rides alongside the path box.
   await expect(dialog.getByRole("button", { name: "Copy path" })).toBeVisible();
 });
+
+test("repo sections collapse, and stay collapsed across a reload", async ({ page, request }) => {
+  await page.setViewportSize({ width: 1400, height: 1000 });
+
+  // Needs a Pinned section to exist: the catch-all section is only collapsible when a section
+  // above it does, so with nothing pinned there is deliberately no toggle to test.
+  const listed = await (await request.get("/api/repos")).json();
+  const repos = (listed.repos ?? []) as { id: string; pinned?: boolean }[];
+  for (const r of repos) if (r.pinned) await request.post(`/api/repos/${r.id}/pinned`, { data: { pinned: false } });
+  await request.post(`/api/repos/${repos[0]!.id}/pinned`, { data: { pinned: true } });
+
+  // Clear the stored preference ONCE for a known baseline. Deliberately not via addInitScript:
+  // that re-runs on every navigation, including the reload below, which would wipe the very
+  // state this test exists to check and let a broken persistence path pass.
+  await page.goto("/");
+  await page.evaluate(() => localStorage.removeItem("repoyeti:sectionsCollapsed"));
+  await page.reload();
+
+  const pinnedHeader = page.getByRole("button", { name: /Pinned/i }).first();
+  await expect(pinnedHeader).toBeVisible();
+  await expect(pinnedHeader).toHaveAttribute("aria-expanded", "true");
+
+  const pinnedSection = page.locator("section").first();
+  const pinnedCards = pinnedSection.locator('[id^="repo-card-"]');
+  await expect(pinnedCards.first()).toBeVisible();
+
+  await pinnedHeader.click();
+  await expect(pinnedHeader).toHaveAttribute("aria-expanded", "false");
+  // The cards are hidden, not unmounted — the drag library holds the parent element.
+  await expect(pinnedCards.first()).toBeHidden();
+  await expect(pinnedHeader).toBeVisible(); // …and the way back is still on screen
+
+  // The whole point: a layout you set up once. A reload must not undo it.
+  await page.reload();
+  const afterReload = page.getByRole("button", { name: /Pinned/i }).first();
+  await expect(afterReload).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator("section").first().locator('[id^="repo-card-"]').first()).toBeHidden();
+
+  await afterReload.click();
+  await expect(afterReload).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("section").first().locator('[id^="repo-card-"]').first()).toBeVisible();
+
+  for (const r of repos) await request.post(`/api/repos/${r.id}/pinned`, { data: { pinned: false } });
+});
+
+test("the pull caret matches the Pull button it is joined to", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.goto("/");
+  const card = page.locator('[id^="repo-card-"]').filter({ hasText: "behind-demo" }).first();
+  await card.waitFor({ state: "visible" });
+  await card.getByRole("button").first().click();
+  await page.waitForTimeout(900);
+
+  await expect(card.getByRole("button", { name: "Pull options" })).toBeVisible();
+  const geo = await page.evaluate(() => {
+    const caret = [...document.querySelectorAll('button[aria-label="Pull options"]')].pop() as HTMLElement;
+    const pull = caret.previousElementSibling as HTMLElement;
+    const b = pull.getBoundingClientRect(), k = caret.getBoundingClientRect();
+    const ks = getComputedStyle(caret), bs = getComputedStyle(pull);
+    return {
+      pullH: Math.round(b.height), caretH: Math.round(k.height), caretW: Math.round(k.width),
+      leftRadii: [ks.borderTopLeftRadius, ks.borderBottomLeftRadius],
+      rightRadius: ks.borderTopRightRadius,
+      sameBg: ks.backgroundColor === bs.backgroundColor,
+      pullBg: bs.backgroundColor,
+    };
+  });
+
+  // Same height, and the same colour — Pull goes accent when the repo is behind (this repo is),
+  // and a hardcoded variant on the caret used to leave a grey stub welded to a green button.
+  expect(geo.caretH).toBe(geo.pullH);
+  expect(geo.sameBg).toBe(true);
+  expect(geo.pullBg).not.toBe("rgba(0, 0, 0, 0)"); // i.e. it really is in the filled state
+  // Squared where the two meet, still rounded on the outer edge.
+  expect(geo.leftRadii).toEqual(["0px", "0px"]);
+  expect(geo.rightRadius).not.toBe("0px");
+  // Narrower than it is tall: a caret, not a second button.
+  expect(geo.caretW).toBeLessThan(geo.pullH);
+});
+
+test("work-tree folders have their own right-click menu", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.goto("/");
+  const card = page.locator('[id^="repo-card-"]').filter({ hasText: "alpha" }).first();
+  await card.waitFor({ state: "visible" });
+  await card.getByRole("button").first().click();
+  await page.waitForTimeout(1200);
+
+  // Folder rows are the ones carrying aria-expanded (they toggle a subtree).
+  const folder = card.locator("button[data-tree-row][aria-expanded]").first();
+  await expect(folder).toBeVisible();
+  await folder.click({ button: "right" });
+
+  // Ignoring a build directory used to mean one right-click per file inside it.
+  const menu = page.getByRole("menu");
+  await expect(menu).toBeVisible();
+  await expect(menu.getByText("Stage folder")).toBeVisible();
+  await expect(menu.getByText("Add to .gitignore")).toBeVisible();
+  await expect(menu.getByText("Copy path")).toBeVisible();
+  // Open / Open in editor are file-only: there is no folder to show in a diff viewer.
+  await expect(menu.getByText("Open in editor")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+});

@@ -13,9 +13,11 @@
 import type { Hono } from "hono";
 import type { Deps } from "../deps.ts";
 import { jsonError } from "../../contract.ts";
-import { parseBody, ShareCreateSchema } from "../../schemas.ts";
+import { parseBody, ShareCreateSchema, ShareUpdateSchema } from "../../schemas.ts";
 import {
   createShare,
+  updateShare,
+  rotateShareToken,
   listShares,
   revokeShare,
   getShare,
@@ -107,6 +109,56 @@ export function register(app: Hono, _deps: Deps): void {
       expiresAt: expiryFor(duration),
     });
     // The ONLY response that ever carries the token. Everything else returns the DTO.
+    return c.json({ ok: true, share: toDto(share), token });
+  });
+
+  // Edit a live grant WITHOUT touching its secret: the link already in someone's inbox keeps
+  // working and just means something different. Narrowing repos or shortening an expiry should
+  // never force the owner to revoke and re-send.
+  app.patch("/api/shares/:id", async (c) => {
+    const id = c.req.param("id");
+    if (!id) return jsonError(c, "NOT_FOUND", "no such share link");
+    const p = await parseBody(c, ShareUpdateSchema);
+    if (!p.ok) return p.res;
+    const { label, perm, duration, scopeAll, repoIds } = p.data;
+
+    const current = getShare(id);
+    if (!current || current.revokedAt !== null) {
+      return jsonError(c, "NOT_FOUND", "no such share link");
+    }
+
+    // Same two guards the create path uses, against the state this edit would RESULT in — a
+    // patch that only flips scopeAll off must not leave a link granting nothing.
+    const nextScopeAll = scopeAll ?? current.scopeAll;
+    const nextRepoIds = repoIds ?? (nextScopeAll ? [] : shareRepoIds(id));
+    if (!nextScopeAll && nextRepoIds.length === 0) {
+      return jsonError(c, "BAD_REQUEST", "pick at least one repository, or share all of them");
+    }
+    const unknown = nextScopeAll ? [] : nextRepoIds.filter((rid) => !getRepo(rid));
+    if (unknown.length > 0) return jsonError(c, "NOT_FOUND", "unknown repository in the share list");
+
+    const updated = updateShare(id, {
+      ...(label === undefined ? {} : { label }),
+      ...(perm === undefined ? {} : { perm }),
+      scopeAll: nextScopeAll,
+      repoIds: nextRepoIds,
+      // Only re-base the expiry when the caller actually said something about duration.
+      ...(duration === undefined ? {} : { expiresAt: expiryFor(duration) }),
+    });
+    if (!updated) return jsonError(c, "NOT_FOUND", "no such share link");
+    return c.json({ ok: true, share: toDto(updated) });
+  });
+
+  // Mint a NEW secret for an existing grant. The plaintext link is unrecoverable by design, so
+  // this is the only way back to a working URL once the owner loses it — at the cost of killing
+  // the previous one, which the UI states before it happens.
+  app.post("/api/shares/:id/rotate", (c) => {
+    const id = c.req.param("id");
+    if (!id) return jsonError(c, "NOT_FOUND", "no such share link");
+    const token = mintToken();
+    const share = rotateShareToken(id, hashToken(token));
+    if (!share) return jsonError(c, "NOT_FOUND", "no such share link");
+    // Carries a token, like the mint response and for the same one-time reason.
     return c.json({ ok: true, share: toDto(share), token });
   });
 

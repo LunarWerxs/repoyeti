@@ -6,7 +6,7 @@
 // sharing one SVG graph gutter. Lane geometry comes from the pure @/lib/git-graph layout; the
 // backend log carries `parents` + `refs`, and its branch scope (all / local / current) drives
 // the graph's toggle. Detail (files + bounded diff) is fetched per-commit on tap, cached by hash.
-import { ref, computed, watch, onMounted, onBeforeUnmount, useTemplateRef } from "vue";
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, useTemplateRef } from "vue";
 import { useI18n } from "vue-i18n";
 import { History, ChevronDown, Loader2, RefreshCw, GitMerge, Copy, CornerDownRight, Tag, FileEdit, Files, Eye, SquarePen, FolderOpen } from "@lucide/vue";
 import { toast } from "vue-sonner";
@@ -193,12 +193,43 @@ watch(sentinelEl, (el) => {
 const expandedCommit = ref<string | null>(null);
 const commitCache = ref<Record<string, CommitDetail>>({});
 const loadingCommit = ref<string | null>(null);
+/**
+ * Hold `el` still in the viewport while the surrounding layout animates.
+ *
+ * Only one commit is expanded at a time, so opening a new one closes the old one. When the old
+ * one is ABOVE and was tall — you scrolled through its file list to reach the next commit — that
+ * collapse pulls hundreds of pixels out from over your head and the row you just clicked shoots
+ * off the top of the screen. Scrolling once afterwards isn't enough either: the collapse is a
+ * 200ms grid-rows transition, so the layout keeps moving after the click. This re-pins every
+ * frame until it settles, which also makes the collapse look anchored rather than jumpy.
+ */
+function holdRowInPlace(el: HTMLElement, ms = 260): void {
+  const target = el.getBoundingClientRect().top;
+  const started = performance.now();
+  const step = (): void => {
+    const drift = el.getBoundingClientRect().top - target;
+    // Sub-pixel drift isn't worth a scroll write; at a scroll boundary the correction simply
+    // can't apply, and retrying costs nothing.
+    if (Math.abs(drift) > 0.5) window.scrollBy(0, drift);
+    if (performance.now() - started < ms) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
 async function toggleCommit(hash: string): Promise<void> {
   if (expandedCommit.value === hash) {
     expandedCommit.value = null;
     return;
   }
+  // Anchor only when something else was already open — that's the case where a collapse moves
+  // this row. Opening the first one just adds content below it and shifts nothing above.
+  const displacing = expandedCommit.value !== null;
+  const row = rowEls.get(hash);
   expandedCommit.value = hash;
+  if (displacing && row) {
+    await nextTick();
+    holdRowInPlace(row);
+  }
   if (commitCache.value[hash]) return;
   loadingCommit.value = hash;
   try {
@@ -224,6 +255,49 @@ function splitPath(p: string): { dir: string; name: string } {
   const i = p.lastIndexOf("/");
   return i === -1 ? { dir: "", name: p } : { dir: p.slice(0, i + 1), name: p.slice(i + 1) };
 }
+
+// ── commit-message body clamp ────────────────────────────────────────────────────────
+// A long body (a generated changelog, a template with trailers) would otherwise push the
+// changed-files list off the bottom of the card. Clamp it to a few lines and offer Show more.
+//
+// The clamp is measured rather than assumed: the toggle only appears when the text really is
+// taller than the clamp, so a two-line message never sprouts a pointless "Show more". And the
+// open height is the measured content height, not a large guess, so the transition finishes
+// exactly when the text stops growing instead of running on against a cap it never reaches.
+const BODY_CLAMP_LINES = 8;
+// The body sits inside the v-for over commits, and Vue collects a ref declared inside a v-for
+// into an ARRAY even when only one element is rendered (only the open commit renders a detail).
+// Unwrap it, or every measurement runs against an array and throws.
+const bodyEl = useTemplateRef<HTMLElement | HTMLElement[]>("bodyEl");
+const bodyOpen = ref(false);
+const bodyOverflows = ref(false);
+const bodyMaxHeight = ref<string | undefined>(undefined);
+
+function measureBody(): void {
+  const raw = bodyEl.value;
+  const el = Array.isArray(raw) ? raw[0] : raw;
+  if (!el) {
+    bodyOverflows.value = false;
+    bodyMaxHeight.value = undefined;
+    return;
+  }
+  const lineHeight = Number.parseFloat(getComputedStyle(el).lineHeight) || 14;
+  const clampPx = Math.round(lineHeight * BODY_CLAMP_LINES);
+  // scrollHeight is the FULL text height even while max-height clips it.
+  const full = el.scrollHeight;
+  bodyOverflows.value = full > clampPx + 1;
+  bodyMaxHeight.value = !bodyOverflows.value || bodyOpen.value ? `${full}px` : `${clampPx}px`;
+}
+
+// Re-measure when the open commit changes (new text) or the toggle flips. A commit's detail
+// arrives asynchronously, so this also runs when the cache fills in.
+watch([expandedCommit, bodyOpen, () => commitCache.value], async () => {
+  await nextTick();
+  measureBody();
+});
+// A new commit starts clamped — carrying "expanded" across to a different message would be
+// remembering a decision about text the owner never saw.
+watch(expandedCommit, () => (bodyOpen.value = false));
 
 /** The open commit's cached detail (undefined until loaded, or never for a hash not yet fetched). */
 const expandedDetail = computed<CommitDetail | undefined>(() => {
@@ -514,15 +588,25 @@ watch(
 
             <!-- ══ commit row ══ -->
             <template v-else>
+              <!-- A clickable row, made operable by keyboard: it was a bare <div> with a click
+                   handler, so it carried aria-expanded but could not be reached by Tab or fired
+                   with Enter. Same treatment the repo-card header row uses. It stays a div rather
+                   than a <button> because it contains its own copy-hash control, and a button
+                   cannot legally contain another button. -->
               <div
                 :ref="setRowEl(item.commit!.hash)"
-                class="group/r flex cursor-pointer items-stretch rounded-md transition-colors hover:bg-accent/40"
+                role="button"
+                tabindex="0"
+                class="group/r flex cursor-pointer items-stretch rounded-md outline-none transition-colors hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring/40"
                 :class="[
                   expandedCommit === item.commit!.hash && 'bg-accent/40',
                   flashHash === item.commit!.hash && 'flash',
                 ]"
                 :aria-expanded="expandedCommit === item.commit!.hash"
+                :aria-label="t('repo.history.commitRowLabel', { subject: item.commit!.subject })"
                 @click="toggleCommit(item.commit!.hash)"
+                @keydown.enter.prevent="toggleCommit(item.commit!.hash)"
+                @keydown.space.prevent="toggleCommit(item.commit!.hash)"
               >
                 <!-- graph gutter -->
                 <svg :width="gutterW" :height="rowPx" class="shrink-0" :viewBox="`0 0 ${gutterW} ${rowPx}`" aria-hidden="true">
@@ -704,13 +788,33 @@ watch(
                       {{ expandedDetail.committerName }} · {{ fromNow(expandedDetail.committerDate) }}
                     </div>
                   </div>
-                  <!-- commit message (subject + body) -->
+                  <!-- commit message (subject + body). A long body is clamped to a few lines with
+                       a Show more toggle: a generated or template-heavy message would otherwise
+                       push the changed-files list off the bottom of the card. -->
                   <div class="mb-2 rounded bg-secondary/20 px-2 py-1.5">
                     <div class="whitespace-pre-wrap text-[12px] font-medium text-foreground">{{ expandedDetail.subject }}</div>
-                    <div
-                      v-if="expandedDetail.body"
-                      class="mt-1 whitespace-pre-wrap text-[11px] leading-snug text-muted-foreground"
-                    >{{ expandedDetail.body }}</div>
+                    <template v-if="expandedDetail.body">
+                      <div
+                        ref="bodyEl"
+                        class="commit-body mt-1 whitespace-pre-wrap text-[11px] leading-snug text-muted-foreground"
+                        :class="bodyOverflows && !bodyOpen && 'is-clamped'"
+                        :style="{ maxHeight: bodyMaxHeight }"
+                      >{{ expandedDetail.body }}</div>
+                      <button
+                        v-if="bodyOverflows"
+                        type="button"
+                        class="mt-1 flex items-center gap-1 rounded-sm text-[11px] font-medium text-info outline-none transition-colors hover:text-info/80 focus-visible:ring-2 focus-visible:ring-ring/40"
+                        :aria-expanded="bodyOpen"
+                        @click.stop="bodyOpen = !bodyOpen"
+                      >
+                        <ChevronDown
+                          :size="12"
+                          class="transition-transform duration-200"
+                          :class="bodyOpen && 'rotate-180'"
+                        />
+                        {{ bodyOpen ? $t("repo.history.showLess") : $t("repo.history.showMore") }}
+                      </button>
+                    </template>
                   </div>
                   <!-- changed files — click one to open it in the shared Monaco viewer (diff at this commit) -->
                   <div v-if="detailFiles.length" class="overflow-hidden rounded-md border border-border">
@@ -794,6 +898,22 @@ watch(
 .expand-enter-from,
 .expand-leave-to {
   grid-template-rows: 0fr;
+}
+
+/* Clamped commit body. max-height animates between the clamp and the measured full height;
+   the fade at the bottom signals there is more text without needing an ellipsis. */
+.commit-body {
+  overflow: hidden;
+  transition: max-height 0.24s ease;
+}
+.commit-body.is-clamped {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 1.2em), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 1.2em), transparent 100%);
+}
+@media (prefers-reduced-motion: reduce) {
+  .commit-body {
+    transition: none;
+  }
 }
 
 /* Brief highlight when a "jump to parent" lands on a row. */

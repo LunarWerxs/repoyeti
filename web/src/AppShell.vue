@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, computed, watch } from "vue";
+import { onMounted, onBeforeUnmount, ref, computed, watch } from "vue";
 import { Plus, Loader2 } from "@lucide/vue";
 import { useStore } from "./store";
 import { Button } from "@/components/ui/button";
@@ -97,7 +97,19 @@ onMounted(async () => {
   scheduleIdle(() => {
     if (store.autoScan) void store.startScan();
   });
+
+  // Sign-in opens in a NEW tab (see RemoteAccess / AccessSection), so this tab never navigates
+  // and would otherwise sit on a stale "not signed in" view until reloaded by hand. Re-read auth
+  // whenever the window comes back to the foreground — cheap, and only while signed out, so a
+  // normal alt-tab on a signed-in dashboard costs nothing.
+  window.addEventListener("focus", onWindowFocus);
 });
+
+function onWindowFocus(): void {
+  if (store.authenticated) return;
+  void store.loadAuth();
+}
+onBeforeUnmount(() => window.removeEventListener("focus", onWindowFocus));
 </script>
 
 <template>
@@ -190,7 +202,9 @@ onMounted(async () => {
     <AddRepo v-model:open="showAdd" />
     <ScanProjects v-model:open="store.scanOpen" />
     <Settings v-model:open="showSettings" :side="settingsSide" :right-offset-px="pageShiftPx" :target-tab="settingsTab" />
-    <RemoteAccess v-model:open="showRemote" />
+    <!-- "I want to share ONE repo, not my whole dashboard" — the remote modal hands off to
+         Settings → Access, where share links live. -->
+    <RemoteAccess v-model:open="showRemote" @share-links="onSettings('open', 'access')" />
     <FileViewer />
   </div>
 </template>

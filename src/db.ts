@@ -967,6 +967,73 @@ export function getShareByTokenHash(tokenHash: string): Share | null {
   return r ? toShare(r) : null;
 }
 
+/**
+ * Edit a live share in place: its label, tier, expiry and repo scope. Everything here is a
+ * property of the GRANT, not of the secret, so none of it touches token_hash — the link someone
+ * already holds keeps working and simply means something different from now on. That is the whole
+ * point: narrowing a link's repos or shortening its expiry should not force the owner to revoke
+ * and re-send.
+ *
+ * A revoked share is NOT editable. Reviving one by editing would resurrect a secret the owner
+ * already decided to kill, which is not something a PATCH should be able to do.
+ *
+ * Fields are optional; an omitted field is left alone. `repoIds` is only consulted when the share
+ * ends up scoped (scopeAll false), matching createShare's rule that a repo list alongside
+ * "everything" is a lie.
+ */
+export interface ShareUpdate {
+  label?: string;
+  perm?: "view" | "control";
+  scopeAll?: boolean;
+  repoIds?: string[];
+  expiresAt?: number | null;
+}
+
+export function updateShare(id: string, patch: ShareUpdate): Share | null {
+  const db2 = getDb();
+  const current = getShare(id);
+  if (!current || current.revokedAt !== null) return null;
+
+  const label = patch.label ?? current.label;
+  const perm = patch.perm ?? current.perm;
+  const scopeAll = patch.scopeAll ?? current.scopeAll;
+  const expiresAt = patch.expiresAt === undefined ? current.expiresAt : patch.expiresAt;
+
+  db2
+    .query(`UPDATE shares SET label = ?, perm = ?, scope_all = ?, expires_at = ? WHERE id = ?`)
+    .run(label, perm, scopeAll ? 1 : 0, expiresAt, id);
+
+  // Rewrite the scope only when this call actually says something about it. Replacing the set
+  // wholesale (delete-then-insert) rather than diffing keeps "the grant is exactly this list"
+  // true even if a previous write left rows behind.
+  if (scopeAll) {
+    db2.query(`DELETE FROM share_repos WHERE share_id = ?`).run(id);
+  } else if (patch.repoIds !== undefined) {
+    db2.query(`DELETE FROM share_repos WHERE share_id = ?`).run(id);
+    const ins = db2.query(`INSERT OR IGNORE INTO share_repos (share_id, repo_id) VALUES (?, ?)`);
+    for (const repoId of patch.repoIds) ins.run(id, repoId);
+  }
+  return getShare(id);
+}
+
+/**
+ * Point a share at a NEW secret, returning the share so the caller can hand back the new link.
+ * The old token stops working the instant this lands.
+ *
+ * This exists because the plaintext link is unrecoverable by design (only its hash is stored), so
+ * an owner who loses the URL has no way back to it. Rotating is the honest answer: it keeps
+ * "the secret is never at rest" true, and gives them a working link again — at the cost of
+ * invalidating whatever they sent before, which the UI has to say plainly.
+ */
+export function rotateShareToken(id: string, tokenHash: string): Share | null {
+  const current = getShare(id);
+  if (!current || current.revokedAt !== null) return null;
+  getDb()
+    .query(`UPDATE shares SET token_hash = ?, last_used_at = NULL, use_count = 0 WHERE id = ?`)
+    .run(tokenHash, id);
+  return getShare(id);
+}
+
 /** Revoke a link. Idempotent; returns false when the id is unknown. The row stays (audit trail). */
 export function revokeShare(id: string): boolean {
   const r = getDb()

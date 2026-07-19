@@ -35,16 +35,6 @@ export function hasChangesOverride(repoId: string): boolean {
   return typeof overrides.value[repoId] === "number";
 }
 
-/** How many repos currently pin their own cap — drives the "reset all" affordance in Settings. */
-export function changesOverrideCount(): number {
-  return Object.values(overrides.value).filter((v) => typeof v === "number").length;
-}
-
-/** Drop every per-repo cap, so all cards fall back to the Settings preset. */
-export function clearAllChangesOverrides(): void {
-  overrides.value = {};
-}
-
 /** The effective cap in px for a repo: its own if it has one, else the global preset. */
 export function changesCapPx(repoId: string): number {
   const o = overrides.value[repoId];

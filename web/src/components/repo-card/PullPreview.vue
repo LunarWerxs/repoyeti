@@ -12,6 +12,7 @@ import {
   ArrowDownToLine,
   CheckCircle2,
   ChevronDown,
+  Eye,
   FileQuestion,
   GitCommitHorizontal,
   Loader2,
@@ -20,9 +21,16 @@ import { useStore } from "../../store";
 import { fromNow } from "@/lib/util";
 import { buildChangeTree } from "@/lib/util";
 import { provideTreeCollapse } from "@/lib/changes-tree";
-import { provideTreeSelection } from "@/lib/changes-selection";
+
 import ChangesTree from "../ChangesTree.vue";
 import { Button } from "@/components/ui/button";
+import type { ButtonVariants } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -33,7 +41,14 @@ import {
 } from "@/components/ui/dialog";
 import type { ChangedFile } from "../../types";
 
-const props = defineProps<{ repoId: string; disabled?: boolean }>();
+// `variant` is passed in rather than chosen here: this caret is the right half of a split button,
+// and Pull switches to the accent variant when the repo is actually behind. Hardcoding one here
+// left a grey caret welded to a green button. Taking it as a prop means the two cannot drift.
+const props = defineProps<{
+  repoId: string;
+  disabled?: boolean;
+  variant?: ButtonVariants["variant"];
+}>();
 const emit = defineEmits<{ pull: [] }>();
 const store = useStore();
 
@@ -64,10 +79,16 @@ const incomingAsChanges = computed<ChangedFile[]>(() =>
 );
 const tree = computed(() => buildChangeTree(incomingAsChanges.value));
 
-// The tree component injects both of these. Scoped to a preview-only key so expanding folders
-// here can't disturb the real source-control tree's persisted collapse state for this repo.
+// Scoped to a preview-only key so expanding folders here can't disturb the real source-control
+// tree's persisted collapse state for this repo.
+//
+// NO selection is provided, deliberately, which is what stops the tree drawing per-file
+// checkboxes. Ticking files here would promise a partial pull, and there is no such thing: a pull
+// is fetch + merge of a BRANCH, so it advances the whole ref or nothing. (Copying individual paths
+// out of the fetched ref is `git checkout <upstream> -- <path>`, which leaves the branch behind
+// and dirties the tree — a different operation with different consequences, not a pull.) This
+// dialog is a read-only look at what the one pull would bring.
 provideTreeCollapse(`incoming:${props.repoId}`);
-provideTreeSelection(`incoming:${props.repoId}`);
 
 /** Pull, then close. The parent owns the actual action (and its toast). */
 function pullNow(): void {
@@ -77,18 +98,41 @@ function pullNow(): void {
 </script>
 
 <template>
-  <!-- caret beside Pull: same height, joined to it visually -->
-  <Button
-    variant="outline"
-    size="sm"
-    class="h-8 w-7 px-0"
-    :disabled="disabled"
-    :aria-label="$t('repo.preview.open')"
-    :title="$t('repo.preview.open')"
-    @click="open = true"
-  >
-    <ChevronDown :size="14" />
-  </Button>
+  <!-- The right half of a split button: same variant and same `size` as Pull, so it matches in
+       both colour and height, with a hairline divider against Pull's right edge. Opening a menu
+       rather than firing the dialog directly matches every other caret in the app (the commit
+       split button, the branch switcher): a caret means "there are choices here".
+       The joining classes live HERE, not on the <PullPreview> tag: this component's root is a
+       renderless <DropdownMenu>, so a class passed in from the parent has no element to land on
+       and is silently dropped — which is exactly how the left side ended up still rounded.
+       `px-1` rather than the `px-1.5` its larger cousins use, because this button is h-6 to
+       Commit's h-9; the same padding on a shorter button reads as a wide stub. -->
+  <DropdownMenu>
+    <DropdownMenuTrigger as-child>
+      <Button
+        :variant="variant"
+        size="sm"
+        class="-ml-px rounded-l-none border-l border-l-black/15 px-1 dark:border-l-white/20"
+        :disabled="disabled"
+        :aria-label="$t('repo.preview.menuLabel')"
+        :title="$t('repo.preview.menuLabel')"
+      >
+        <ChevronDown />
+      </Button>
+    </DropdownMenuTrigger>
+    <DropdownMenuContent align="end" class="w-48">
+      <!-- The primary action is repeated here, as it is in the commit menu: having opened the
+           menu, you should not have to close it again to do the obvious thing. -->
+      <DropdownMenuItem @select="emit('pull')">
+        <ArrowDownToLine :size="15" />
+        <span>{{ $t("repo.actions.pull") }}</span>
+      </DropdownMenuItem>
+      <DropdownMenuItem @select="open = true">
+        <Eye :size="15" />
+        <span>{{ $t("repo.preview.title") }}</span>
+      </DropdownMenuItem>
+    </DropdownMenuContent>
+  </DropdownMenu>
 
   <Dialog v-model:open="open">
     <DialogContent class="sm:max-w-2xl">

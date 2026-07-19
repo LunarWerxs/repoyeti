@@ -160,7 +160,7 @@ function onAccount(a: { host: string; login: string } | null): void {
     :aria-expanded="selecting ? undefined : expanded"
     :aria-pressed="selecting ? picked : undefined"
     :aria-label="rowLabel"
-    class="group flex cursor-pointer items-center gap-1.5 rounded-md p-2 outline-none transition-colors hover:bg-accent/30 focus-visible:ring-2 focus-visible:ring-ring/40 sm:gap-2 sm:p-2.5"
+    class="group flex cursor-pointer items-center gap-1 rounded-md p-2 outline-none transition-colors hover:bg-accent/30 focus-visible:ring-2 focus-visible:ring-ring/40 sm:gap-1.5 sm:p-2.5"
     :class="selecting && picked && 'bg-primary/10'"
     @click="onRowActivate"
     @keydown.enter.prevent="onRowActivate"
@@ -168,9 +168,11 @@ function onAccount(a: { host: string; login: string } | null): void {
   >
     <!-- In multi-select mode the drag handle's slot becomes the selection checkbox — same
          position, so rows don't reflow when the mode flips. See @/lib/repo-selection. -->
+    <!-- Same WIDTH as the drag handle below, so flipping into select mode doesn't shift the
+         name sideways. -->
     <span
       v-if="selecting"
-      class="flex size-7 shrink-0 items-center justify-center"
+      class="flex h-7 w-4 shrink-0 items-center justify-center"
       aria-hidden="true"
     >
       <span
@@ -182,10 +184,14 @@ function onAccount(a: { host: string; login: string } | null): void {
     </span>
     <!-- drag handle: hidden entirely when a preset sort is active (draggable=false, since
          dragging is meaningless then; see RepoList.vue); otherwise rendered but only
-         revealed on row hover/focus, so it doesn't clutter the row at rest. -->
+         revealed on row hover/focus, so it doesn't clutter the row at rest.
+         Only as wide as the grip glyph — a 28px square reserved a visible gutter to the left of
+         every repo name for a control that is invisible at rest. No hover plate either: the
+         grab cursor already says "drag me", which is the convention everywhere else. The
+         focus-visible ring STAYS, because that is the only cue a keyboard user gets. -->
     <button
       v-else-if="draggable"
-      class="drag-handle flex size-7 shrink-0 cursor-grab touch-none items-center justify-center rounded-md text-muted-foreground/60 opacity-0 outline-none transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 hover:bg-accent hover:text-muted-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/40 active:bg-accent/70 active:cursor-grabbing"
+      class="drag-handle flex h-7 w-4 shrink-0 cursor-grab touch-none items-center justify-center rounded-sm text-muted-foreground/60 opacity-0 outline-none transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 hover:text-muted-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/40 active:cursor-grabbing"
       :aria-label="$t('repo.dragToReorder')"
       @click.stop
     >
@@ -195,7 +201,7 @@ function onAccount(a: { host: string; login: string } | null): void {
     <!-- name + branch. `displayName` is the owner's label (Rename); `name` is the folder on
          disk and the fallback. The folder name stays reachable as the title so a renamed card
          never hides where it actually lives. -->
-    <div class="flex min-w-0 flex-1 items-center gap-2 px-0.5">
+    <div class="flex min-w-0 flex-1 items-center gap-2">
       <span
         class="truncate text-[15px] leading-tight font-semibold text-foreground"
         :title="tooltipsEnabled && repo.displayName ? repo.name : undefined"
