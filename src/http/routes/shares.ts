@@ -13,6 +13,7 @@
 import type { Hono } from "hono";
 import type { Deps } from "../deps.ts";
 import { jsonError } from "../../contract.ts";
+import { getTunnelUrl } from "../../runtime.ts";
 import { parseBody, ShareCreateSchema, ShareUpdateSchema } from "../../schemas.ts";
 import {
   createShare,
@@ -33,6 +34,7 @@ import {
   setGuestCookie,
   shareIsLive,
   expiryFor,
+  isStaleOrigin,
 } from "../../share/index.ts";
 
 /**
@@ -52,9 +54,19 @@ interface ShareDto {
   useCount: number;
   /** False once expired — the panel greys these out and offers cleanup. */
   live: boolean;
+  /** The public origin this link was handed out on, or null if it predates the record. */
+  origin: string | null;
+  /**
+   * True when this link's URL points at an origin the daemon is no longer reachable at — i.e.
+   * the recipient now gets a DNS failure. Computed here rather than in the client so there is
+   * one definition of "stale", and only when we actually know our current origin (with no tunnel
+   * up we cannot tell the difference between "moved" and "not published yet").
+   */
+  stale: boolean;
 }
 
 function toDto(s: Share): ShareDto {
+  const liveOrigin = getTunnelUrl();
   return {
     id: s.id,
     label: s.label,
@@ -66,6 +78,8 @@ function toDto(s: Share): ShareDto {
     lastUsedAt: s.lastUsedAt,
     useCount: s.useCount,
     live: shareIsLive(s),
+    origin: s.origin,
+    stale: isStaleOrigin(s.origin, liveOrigin),
   };
 }
 
@@ -107,6 +121,8 @@ export function register(app: Hono, _deps: Deps): void {
       scopeAll,
       repoIds,
       expiresAt: expiryFor(duration),
+      // Remember where this link will be handed out, so we can tell later that the address moved.
+      origin: getTunnelUrl(),
     });
     // The ONLY response that ever carries the token. Everything else returns the DTO.
     return c.json({ ok: true, share: toDto(share), token });
@@ -156,7 +172,7 @@ export function register(app: Hono, _deps: Deps): void {
     const id = c.req.param("id");
     if (!id) return jsonError(c, "NOT_FOUND", "no such share link");
     const token = mintToken();
-    const share = rotateShareToken(id, hashToken(token));
+    const share = rotateShareToken(id, hashToken(token), getTunnelUrl());
     if (!share) return jsonError(c, "NOT_FOUND", "no such share link");
     // Carries a token, like the mint response and for the same one-time reason.
     return c.json({ ok: true, share: toDto(share), token });

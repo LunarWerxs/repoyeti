@@ -8,6 +8,33 @@
 import { startTunnel, startNamedTunnel, type TunnelHandle } from "./tunnel.ts";
 import { namedTunnel, type RepoYetiConfig } from "./config.ts";
 import { broadcast } from "./bus.ts";
+import { announce, createRelayIdentity, type RelayIdentity } from "./relay.ts";
+import { saveConfig } from "./config.ts";
+
+/**
+ * Publish our current public address to the relay, if the owner turned it on.
+ *
+ * Mints this daemon's signing identity on first use and persists it, so the relay can pin the key
+ * and refuse anyone else who later tries to move this id's address. Everything here is best-effort:
+ * the relay exists to keep already-sent links working, and it going down must not surface as a
+ * failure in a tool that manages local repositories perfectly well without it.
+ */
+export async function publishToRelay(cfg: RepoYetiConfig, origin: string): Promise<void> {
+  const relay = cfg.relay;
+  if (!relay?.enabled || !relay.url?.trim()) return;
+  let identity: RelayIdentity | undefined = relay.identity;
+  if (!identity) {
+    identity = createRelayIdentity();
+    cfg.relay = { ...relay, identity };
+    try {
+      saveConfig(cfg);
+    } catch {
+      /* an unwritable config shouldn't stop us announcing this session */
+    }
+  }
+  const res = await announce(relay.url, identity, origin);
+  if (!res.ok) console.warn(`repoyeti: relay announce failed — ${res.error}`);
+}
 
 let tunnelUrl: string | null = null;
 let tunnelHandle: TunnelHandle | null = null;
@@ -42,6 +69,11 @@ export function startManagedTunnel(cfg: RepoYetiConfig, onReady?: (url: string) 
     tunnelStarting = false;
     onReady?.(url);
     broadcast("daemon_status", { tunnelUrl: url, tunnelActive: true });
+    // Tell the relay where we moved to, if the owner opted in. This is the moment that matters:
+    // a quick tunnel hands out a NEW hostname here, which is exactly when every share link already
+    // sent would otherwise go dead. Best-effort and non-blocking — the relay is a convenience, and
+    // a failure to reach it must never affect local git management.
+    void publishToRelay(cfg, url);
   };
   const onErr = (msg: string): void => {
     tunnelStarting = false;

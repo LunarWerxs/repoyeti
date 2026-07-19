@@ -1027,6 +1027,7 @@
     "updateFailed": "Couldn't update the share link",
     "rotate": "Regenerate",
     "rotateConfirm": "Replace link?",
-    "rotateFailed": "Couldn't regenerate the link"
+    "rotateFailed": "Couldn't regenerate the link",
+    "staleLink": "Sent on an address that has since changed — regenerate to get a working link."
   }
 }

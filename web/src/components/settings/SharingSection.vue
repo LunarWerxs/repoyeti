@@ -368,6 +368,13 @@ watch(
           <div class="mt-0.5 truncate text-[11px] text-muted-foreground">
             {{ repoLabel(s) }} · {{ expiryLabel(s) }} · {{ usageLabel(s) }}
           </div>
+          <!-- The link still WORKS as a grant; it's the address in the URL that has moved, so
+               whoever holds it now gets a DNS failure. Say it here rather than let them find out
+               from the person they sent it to — Regenerate mints one on the current address. -->
+          <div v-if="s.stale" class="mt-1 flex items-center gap-1.5 text-[11px] text-warning">
+            <AlertTriangle :size="12" class="shrink-0" />
+            <span class="truncate">{{ $t("share.staleLink") }}</span>
+          </div>
         </div>
         <div class="flex shrink-0 items-center gap-1">
           <Button variant="ghost" size="sm" :disabled="!s.live" @click="startEdit(s)">

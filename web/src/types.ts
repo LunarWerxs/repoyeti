@@ -610,6 +610,11 @@ export interface Share {
   useCount: number;
   /** False once expired — the panel greys these out. */
   live: boolean;
+  /** The public origin this link's URL was built against, or null if it predates the record. */
+  origin: string | null;
+  /** True when that origin is no longer where this daemon lives, so the link now resolves to
+   *  nothing on the recipient's end. Decided by the daemon — see toDto() in routes/shares.ts. */
+  stale: boolean;
 }
 
 /** POST /api/shares — the ONLY response that ever carries the secret link token. */

@@ -128,3 +128,25 @@ export function readGuestShare(c: Context): Share | null {
     return null;
   }
 }
+
+/**
+ * Has this link's address moved out from under it?
+ *
+ * A zero-config quick tunnel re-hosts itself on every restart, so a link minted against the old
+ * hostname stops resolving — silently, on the RECIPIENT's end. Comparing the origin recorded at
+ * mint against where we live now is what lets the owner be told instead of finding out from the
+ * person they sent it to.
+ *
+ * Returns false whenever we cannot know: no recorded origin (the link predates the record), or no
+ * live origin (no tunnel up). "We don't know where we live" is NOT the same as "we moved", and
+ * flagging every link the moment remote access is off would be noise, not a warning.
+ */
+export function isStaleOrigin(shareOrigin: string | null, liveOrigin: string | null): boolean {
+  if (!shareOrigin || !liveOrigin) return false;
+  return normalizeOrigin(shareOrigin) !== normalizeOrigin(liveOrigin);
+}
+
+/** Trailing slashes and case differences are not a change of address. */
+function normalizeOrigin(u: string): string {
+  return u.trim().replace(/\/+$/, "").toLowerCase();
+}

@@ -217,6 +217,13 @@ export function initDb(): Database {
   // Migrations: add columns to pre-existing databases. Each throws "duplicate column
   // name" on DBs that already have it (incl. fresh ones) — ignore.
   try {
+    // Which public origin a share link's URL was built against, so the Sharing panel can spot a
+    // link whose address no longer exists (a quick tunnel re-hosts itself on every restart).
+    handle.exec("ALTER TABLE shares ADD COLUMN origin TEXT;");
+  } catch {
+    /* column already present */
+  }
+  try {
     handle.exec("ALTER TABLE repos ADD COLUMN sort_order INTEGER;");
   } catch {
     /* column already present */
@@ -869,6 +876,16 @@ export interface Share {
   revokedAt: number | null;
   lastUsedAt: number | null;
   useCount: number;
+  /**
+   * The public origin this link's URL was built against, e.g. "https://xyz.trycloudflare.com".
+   * null for links minted before this was recorded (and for ones minted with no tunnel up).
+   *
+   * Stored so the owner can be TOLD when a link has gone stale. A zero-config quick tunnel gets a
+   * fresh hostname on every restart, and a link that embeds the old one simply stops resolving —
+   * silently, on the recipient's end. Comparing this to the live origin turns that into something
+   * the Sharing panel can show and offer to fix.
+   */
+  origin: string | null;
 }
 
 interface ShareRow {
@@ -881,10 +898,11 @@ interface ShareRow {
   revoked_at: number | null;
   last_used_at: number | null;
   use_count: number;
+  origin: string | null;
 }
 
 const SHARE_COLS =
-  "id, label, perm, scope_all, created_at, expires_at, revoked_at, last_used_at, use_count";
+  "id, label, perm, scope_all, created_at, expires_at, revoked_at, last_used_at, use_count, origin";
 
 function toShare(r: ShareRow): Share {
   return {
@@ -897,6 +915,7 @@ function toShare(r: ShareRow): Share {
     revokedAt: r.revoked_at,
     lastUsedAt: r.last_used_at,
     useCount: r.use_count,
+    origin: r.origin ?? null,
   };
 }
 
@@ -907,6 +926,8 @@ export interface ShareInput {
   /** Ignored when scopeAll — the grant is "everything", so a repo list would be a lie. */
   repoIds: string[];
   expiresAt: number | null;
+  /** The public origin the link will be handed out on; null when no tunnel is up. */
+  origin?: string | null;
 }
 
 /**
@@ -920,10 +941,19 @@ export function createShare(tokenHash: string, input: ShareInput): Share {
   const db2 = getDb();
   db2
     .query(
-      `INSERT INTO shares (id, token_hash, label, perm, scope_all, created_at, expires_at, revoked_at, last_used_at, use_count)
-       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0)`,
+      `INSERT INTO shares (id, token_hash, label, perm, scope_all, created_at, expires_at, revoked_at, last_used_at, use_count, origin)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, ?)`,
     )
-    .run(id, tokenHash, input.label, input.perm, input.scopeAll ? 1 : 0, now, input.expiresAt);
+    .run(
+      id,
+      tokenHash,
+      input.label,
+      input.perm,
+      input.scopeAll ? 1 : 0,
+      now,
+      input.expiresAt,
+      input.origin ?? null,
+    );
   if (!input.scopeAll) {
     const ins = db2.query(`INSERT OR IGNORE INTO share_repos (share_id, repo_id) VALUES (?, ?)`);
     for (const repoId of input.repoIds) ins.run(id, repoId);
@@ -938,6 +968,7 @@ export function createShare(tokenHash: string, input: ShareInput): Share {
     revokedAt: null,
     lastUsedAt: null,
     useCount: 0,
+    origin: input.origin ?? null,
   };
 }
 
@@ -1025,12 +1056,16 @@ export function updateShare(id: string, patch: ShareUpdate): Share | null {
  * "the secret is never at rest" true, and gives them a working link again — at the cost of
  * invalidating whatever they sent before, which the UI has to say plainly.
  */
-export function rotateShareToken(id: string, tokenHash: string): Share | null {
+export function rotateShareToken(id: string, tokenHash: string, origin?: string | null): Share | null {
   const current = getShare(id);
   if (!current || current.revokedAt !== null) return null;
+  // The re-keyed URL is handed out fresh, so it belongs to wherever we live NOW — otherwise
+  // regenerating a stale link would produce another link still flagged stale.
   getDb()
-    .query(`UPDATE shares SET token_hash = ?, last_used_at = NULL, use_count = 0 WHERE id = ?`)
-    .run(tokenHash, id);
+    .query(
+      `UPDATE shares SET token_hash = ?, last_used_at = NULL, use_count = 0, origin = ? WHERE id = ?`,
+    )
+    .run(tokenHash, origin ?? current.origin ?? null, id);
   return getShare(id);
 }
 

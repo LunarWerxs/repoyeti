@@ -1,0 +1,19 @@
+# Cloudflare Worker config for the RepoYeti relay. See README.md in this directory.
+#
+# Plain JS, no build step and no bundler: this service is ~150 lines whose entire appeal is being
+# boring and never needing attention. Adding a toolchain would be the most likely source of future
+# breakage in something that otherwise has none.
+
+name = "repoyeti-relay"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# The hostname share links point at. Must be a zone on your Cloudflare account.
+# route = { pattern = "go.example.com/*", zone_name = "example.com" }
+
+# id -> { publicKey, origin, updatedAt }. One write per daemon restart, one read per link opened,
+# so the free tier is not a constraint here.
+#   wrangler kv namespace create RELAY
+[[kv_namespaces]]
+binding = "RELAY"
+id = "PASTE_YOUR_KV_NAMESPACE_ID"

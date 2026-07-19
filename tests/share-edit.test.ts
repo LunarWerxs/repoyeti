@@ -20,7 +20,7 @@ import {
   shareRepoIds,
   type Share,
 } from "../src/db.ts";
-import { hashToken, mintToken } from "../src/share/index.ts";
+import { hashToken, mintToken, isStaleOrigin } from "../src/share/index.ts";
 import { mkScratchDir } from "./helpers/scratch.ts";
 import { mustUpsertRepo } from "./helpers/upsert.ts";
 import { $ } from "bun";
@@ -134,4 +134,66 @@ test("a revoked share can be neither edited nor rotated", () => {
 test("editing an unknown id reports failure instead of creating one", () => {
   expect(updateShare("00000000-0000-0000-0000-000000000000", { label: "nope" })).toBeNull();
   expect(rotateShareToken("00000000-0000-0000-0000-000000000000", hashToken(mintToken()))).toBeNull();
+});
+
+// ── the origin a link was handed out on ────────────────────────────────────────
+// A quick tunnel re-hosts itself on every restart, so a link that embeds the old hostname stops
+// resolving — silently, on the RECIPIENT's end. Recording where each link was minted is what lets
+// the owner be told instead of finding out second-hand.
+
+test("a link records the origin it was minted against", () => {
+  const { share } = mint({ origin: "https://old-host.trycloudflare.com" });
+  expect(getShare(share.id)?.origin).toBe("https://old-host.trycloudflare.com");
+});
+
+test("a link minted with no tunnel up records no origin", () => {
+  // Not knowing where we live is different from having moved — this must not read as stale later.
+  const { share } = mint({ origin: null });
+  expect(getShare(share.id)?.origin).toBeNull();
+});
+
+test("editing a link leaves its origin alone", () => {
+  const { share } = mint({ origin: "https://old-host.trycloudflare.com" });
+  updateShare(share.id, { label: "renamed" });
+  // An edit doesn't re-issue the URL, so the address it was sent on hasn't changed.
+  expect(getShare(share.id)?.origin).toBe("https://old-host.trycloudflare.com");
+});
+
+test("regenerating re-stamps the origin to wherever we live now", () => {
+  const { share } = mint({ origin: "https://old-host.trycloudflare.com" });
+  rotateShareToken(share.id, hashToken(mintToken()), "https://new-host.trycloudflare.com");
+  // Otherwise regenerating a stale link would hand back another link still flagged stale.
+  expect(getShare(share.id)?.origin).toBe("https://new-host.trycloudflare.com");
+});
+
+test("regenerating without a known origin keeps the previous one", () => {
+  const { share } = mint({ origin: "https://old-host.trycloudflare.com" });
+  rotateShareToken(share.id, hashToken(mintToken()), null);
+  // Better to keep the last address we knew than to blank it and lose the staleness signal.
+  expect(getShare(share.id)?.origin).toBe("https://old-host.trycloudflare.com");
+});
+
+// ── the staleness rule ─────────────────────────────────────────────────────────
+// Extracted from the DTO so the decision "is this link's address dead?" is testable on its own.
+
+test("a link minted on a different address is stale", () => {
+  expect(isStaleOrigin("https://old.trycloudflare.com", "https://new.trycloudflare.com")).toBe(true);
+});
+
+test("a link minted on the current address is not stale", () => {
+  expect(isStaleOrigin("https://same.trycloudflare.com", "https://same.trycloudflare.com")).toBe(false);
+});
+
+test("trailing slashes and case are not a change of address", () => {
+  // These differences come from how a URL was stored, not from the daemon moving. Treating them
+  // as stale would tell owners to regenerate links that work perfectly.
+  expect(isStaleOrigin("https://Host.TryCloudflare.com/", "https://host.trycloudflare.com")).toBe(false);
+});
+
+test("not knowing where we live is never reported as stale", () => {
+  // No tunnel up, or a link predating the record. "Unknown" must not read as "moved", or every
+  // link would be flagged the moment remote access is switched off.
+  expect(isStaleOrigin(null, "https://new.trycloudflare.com")).toBe(false);
+  expect(isStaleOrigin("https://old.trycloudflare.com", null)).toBe(false);
+  expect(isStaleOrigin(null, null)).toBe(false);
 });

@@ -50,6 +50,24 @@ export interface OAuthConfig {
 }
 
 /**
+ * Relay settings. `identity` holds this daemon's Ed25519 keypair — the private half is what proves
+ * only this machine may move its own forwarding address. It lives in config.json (0600) rather than
+ * the OS keychain because losing it costs a re-register, not access to anything: it signs
+ * "I am at this address" and nothing else.
+ */
+export interface RelayConfig {
+  /** Base URL of the relay, e.g. https://go.repoyeti.app. Empty/absent = feature off. */
+  url?: string;
+  /** Owner opted in. Absent/false = never contact the relay. */
+  enabled?: boolean;
+  identity?: {
+    id: string;
+    publicKey: string;
+    privateKey: string;
+  };
+}
+
+/**
  * Bring-your-own-key AI config. The owner pastes a provider API key; RepoYeti uses it
  * SERVER-SIDE only (list models + draft commit messages) and never returns it to any
  * client. The key bytes live in the OS keychain (see secrets.ts) — config.json on disk
@@ -399,6 +417,12 @@ export interface RepoYetiConfig {
   oauth?: OAuthConfig;
   /** Remote-access tunnel config (quick trycloudflare by default; named for a stable host). */
   tunnel?: TunnelConfig;
+  /**
+   * Optional relay: a permanent forwarding URL for a daemon whose tunnel address keeps moving
+   * (see src/relay.ts and relay/worker.js). OFF unless the owner turns it on — a self-hosted tool
+   * should not phone anywhere by default. Only (id, origin, timestamp, signature) is ever sent.
+   */
+  relay?: RelayConfig;
   /** Optional product pulse, forwarded to a Connections-compatible endpoint when configured. */
   pulse?: PulseConfig;
   /** Optional "Sync my settings with Connections" state (off by default). See CloudSyncConfig. */
