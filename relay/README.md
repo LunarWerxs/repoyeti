@@ -52,9 +52,22 @@ captured one cannot be replayed later.
 Covered by `tests/relay-worker.test.ts`, which runs the real Worker against a fake KV — including
 the case where an attacker signs correctly with their *own* key and offers a replacement public key.
 
+## Deployed instance
+
+`https://repoyeti-relay.lunawerx.workers.dev` — LunarWerx account, `workers.dev`, free tier.
+
+No custom domain is needed: a `workers.dev` hostname is already stable, which is the only property
+this service requires. Point it at a domain later by uncommenting `route` in `wrangler.toml`.
+
+**If you own a domain, you probably don't want this at all.** Put the daemon on a NAMED TUNNEL
+instead (`tunnel.hostname` + a connector token in the daemon config): your address is then stable
+AND resolves on networks that block `trycloudflare.com`, because visitors never touch trycloudflare.
+The relay only forwards to a quick tunnel, so it fixes rotation and not blocking. It exists for
+people without a domain.
+
 ## Deploy
 
-You need a Cloudflare account and a domain on it. Cloudflare Workers' free tier (100k requests/day)
+You need a Cloudflare account. No domain required — `workers.dev` is enough. The free tier (100k requests/day)
 is far more than this needs: one write per daemon restart, one read per link opened.
 
 ```sh

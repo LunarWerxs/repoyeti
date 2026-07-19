@@ -4,9 +4,11 @@
 # boring and never needing attention. Adding a toolchain would be the most likely source of future
 # breakage in something that otherwise has none.
 
+account_id = "36d7c731fd0352ef08ea7e46d2d20793"
 name = "repoyeti-relay"
 main = "worker.js"
 compatibility_date = "2026-01-01"
+workers_dev = true
 
 # The hostname share links point at. Must be a zone on your Cloudflare account.
 # route = { pattern = "go.example.com/*", zone_name = "example.com" }
@@ -16,4 +18,4 @@ compatibility_date = "2026-01-01"
 #   wrangler kv namespace create RELAY
 [[kv_namespaces]]
 binding = "RELAY"
-id = "PASTE_YOUR_KV_NAMESPACE_ID"
+id = "32a5ba4b757c4bbf83edbf2f467eb960"
