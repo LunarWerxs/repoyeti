@@ -6,6 +6,20 @@ All notable changes to RepoYeti are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **A stable address out of the box.** The permanent forwarding address is now the default (on
+  once remote access is on) instead of an opt-in toggle: a fresh daemon gets one link that
+  survives restarts with zero configuration. Configuring your own domain switches you to it and
+  quietly steps the relay aside; an explicit opt-out in the config is still honored.
+- **"Custom address" is one honest toggle.** Off by default; turning it on opens the domain
+  editor, and turning it off with a domain configured asks before removing anything. A new
+  [setup guide](docs/STABLE_ADDRESS.md) walks through creating the Cloudflare named tunnel —
+  the part nobody could have guessed from an input box.
+- **Cloud sync says what "not connected" means.** Signed-in-but-disconnected now explains that
+  the daemon keeps its own credential (your browser session is separate) and that Reconnect
+  restores it.
+
 ### Fixed
 
 - **Settings toggles stick again.** "Watch specific folders" no longer flips itself back on at

@@ -40,9 +40,11 @@ async function putRelay(app: ReturnType<typeof createApp>, body: unknown): Promi
 
 // ── redactRelay() — the key-free projection the UI reads ────────────────────────────
 
-test("redactRelay: no relay config → off, nothing configured, default offered", () => {
+test("redactRelay: no relay config → ON by default (the stable address is the default), nothing configured", () => {
+  // Default-on semantics (config.ts relayEffective): only an explicit `enabled: false`, or a
+  // configured named tunnel, reads as off. An untouched config gets the hosted address.
   expect(redactRelay(base())).toEqual({
-    enabled: false,
+    enabled: true,
     url: null,
     id: null,
     defaultUrl: DEFAULT_RELAY_URL,
@@ -132,11 +134,16 @@ test("GET /api/status carries the redacted relay for the owner, private key abse
 
 // ── the origin links are handed out on ─────────────────────────────────────────────
 
-test("getRelayBase: null unless enabled AND a url AND an identity all exist", () => {
+test("getRelayBase: null when opted out or identity-less; the url falls back to the hosted default", () => {
   const identity = createRelayIdentity();
+  // No identity yet (fresh daemon before its first announce) → no base, even though default-on.
   expect(getRelayBase(base())).toBeNull();
+  // Explicit opt-out wins regardless of what else is configured.
   expect(getRelayBase(base({ relay: { enabled: false, url: "https://g.example.com", identity } }))).toBeNull();
-  expect(getRelayBase(base({ relay: { enabled: true, identity } }))).toBeNull();
+  // Enabled + identity but NO url → the hosted default steps in (relayEffective's fallback).
+  expect(getRelayBase(base({ relay: { enabled: true, identity } }))).toBe(
+    `${DEFAULT_RELAY_URL}/r/${identity.id}`,
+  );
   expect(getRelayBase(base({ relay: { enabled: true, url: "https://g.example.com" } }))).toBeNull();
   expect(getRelayBase(base({ relay: { enabled: true, url: "https://g.example.com", identity } }))).toBe(
     `https://g.example.com/r/${identity.id}`,

@@ -657,6 +657,20 @@ export function redactTunnel(cfg: RepoYetiConfig): RedactedTunnelConfig {
  */
 export const DEFAULT_RELAY_URL = "https://repoyeti-relay.lunawerx.workers.dev";
 
+/**
+ * The relay's EFFECTIVE opt state — the stable address is the default, not a feature you find.
+ *
+ * ON unless (a) the owner explicitly said no, or (b) a named tunnel is configured: a custom
+ * domain IS a permanent address, so routing its links through the relay would add a hop that
+ * buys nothing. `enabled: true` stored explicitly still wins over (b) for anyone who wants both.
+ * The url falls back to the hosted default so a fresh daemon needs zero configuration.
+ */
+export function relayEffective(cfg: RepoYetiConfig): { enabled: boolean; url: string } {
+  const explicit = cfg.relay?.enabled;
+  const enabled = explicit === true || (explicit === undefined && !namedTunnel(cfg));
+  return { enabled, url: cfg.relay?.url?.trim() || DEFAULT_RELAY_URL };
+}
+
 /** Key-free projection of the relay config, safe to send to the owner's UI. NEVER the private key —
  *  that half is what proves only this machine may move its own forwarding address. */
 export interface RedactedRelayConfig {
@@ -670,10 +684,11 @@ export interface RedactedRelayConfig {
   defaultUrl: string;
 }
 
-/** Redact the relay config for the API: opt-in flag, base URL and public id — never the keypair. */
+/** Redact the relay config for the API: EFFECTIVE opt state (see relayEffective — default-on),
+ *  base URL and public id — never the keypair. */
 export function redactRelay(cfg: RepoYetiConfig): RedactedRelayConfig {
   return {
-    enabled: cfg.relay?.enabled === true,
+    enabled: relayEffective(cfg).enabled,
     url: cfg.relay?.url?.trim() || null,
     id: cfg.relay?.identity?.id ?? null,
     defaultUrl: DEFAULT_RELAY_URL,

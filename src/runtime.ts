@@ -6,7 +6,7 @@
  * (`daemon_status`), so the "remote access" panel shows a link/QR the moment it's ready.
  */
 import { startTunnel, startNamedTunnel, type TunnelHandle } from "./tunnel.ts";
-import { namedTunnel, type RepoYetiConfig } from "./config.ts";
+import { namedTunnel, relayEffective, type RepoYetiConfig } from "./config.ts";
 import { broadcast } from "./bus.ts";
 import { announce, createRelayIdentity, relayShareUrl, type RelayIdentity } from "./relay.ts";
 import { saveConfig } from "./config.ts";
@@ -20,8 +20,8 @@ import { saveConfig } from "./config.ts";
  * failure in a tool that manages local repositories perfectly well without it.
  */
 export async function publishToRelay(cfg: RepoYetiConfig, origin: string): Promise<void> {
-  const relay = cfg.relay;
-  if (!relay?.enabled || !relay.url?.trim()) return;
+  const relay = relayEffective(cfg);
+  if (!relay.enabled) return;
   const identity = ensureRelayIdentity(cfg);
   const res = await announce(relay.url, identity, origin);
   relayAnnounced = res.ok;
@@ -67,10 +67,10 @@ export function getRelayStatus(): { announced: boolean; error: string | null } {
  * simply be appended to it.
  */
 export function getRelayBase(cfg: RepoYetiConfig): string | null {
-  const relay = cfg.relay;
-  if (!relay?.enabled) return null;
-  const base = relay.url?.trim().replace(/\/+$/, "");
-  const id = relay.identity?.id;
+  const relay = relayEffective(cfg);
+  if (!relay.enabled) return null;
+  const base = relay.url.replace(/\/+$/, "");
+  const id = cfg.relay?.identity?.id;
   return base && id ? `${base}/r/${id}` : null;
 }
 
