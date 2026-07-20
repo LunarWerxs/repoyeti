@@ -37,7 +37,10 @@ All notable changes to RepoYeti are documented here. The format is based on
 
 - **The built-in stable address got a real name.** New links use `https://go.repoyeti.com`
   instead of the `…workers.dev` hostname. It's the same Worker and store behind a custom domain,
-  so every link already registered keeps resolving — nothing to migrate.
+  so every link already registered keeps resolving — nothing to migrate. (The free fallback
+  hostname is `repoyeti.lunawerx.workers.dev`.)
+- **Running your own relay is a linked click away.** "Use a different relay" now points at the
+  setup guide, so pointing RepoYeti at a relay you host isn't a guess.
 - **Advanced grew the tuning knobs.** External editor, Keyboard shortcuts, and the large-file
   diff threshold moved from General to Advanced; Updates is just "Updates" again.
 

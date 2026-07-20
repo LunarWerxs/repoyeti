@@ -52,6 +52,8 @@ const relaySelfHostOpen = ref(false);
 /** Setup guide for a custom domain (linked from the editor — a "hostname + connector token"
  *  pair is not guessable without it). */
 const STABLE_ADDRESS_DOCS = "https://github.com/LunarWerxs/RepoYeti/blob/main/docs/STABLE_ADDRESS.md";
+/** Guide for running your own relay Worker (the "Use a different relay" path). */
+const RELAY_SELFHOST_DOCS = "https://github.com/LunarWerxs/RepoYeti/blob/main/relay/README.md";
 async function saveTunnel(): Promise<void> {
   if (savingTunnel.value) return;
   savingTunnel.value = true;
@@ -279,6 +281,17 @@ watch(
               <Check v-else />
               {{ $t("settings.relaySave") }}
             </Button>
+            <!-- The one thing that makes "point at your own" real: how to stand one up. It's a single
+                 Cloudflare Worker; the guide is a few paragraphs, not a project. -->
+            <a
+              :href="RELAY_SELFHOST_DOCS"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="flex items-center gap-1 self-start text-[11.5px] text-info underline-offset-2 hover:underline"
+            >
+              {{ $t("settings.relaySelfHostDocs") }}
+              <ExternalLink :size="11" class="opacity-70" />
+            </a>
           </div>
         </template>
         <!-- relay explicitly disabled in config, no custom domain -->

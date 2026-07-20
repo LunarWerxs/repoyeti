@@ -5,11 +5,13 @@
 # breakage in something that otherwise has none.
 
 account_id = "36d7c731fd0352ef08ea7e46d2d20793"
-name = "repoyeti-relay"
+# `repoyeti` (not `repoyeti-relay`) so the free fallback hostname is the clean
+# repoyeti.lunawerx.workers.dev rather than repoyeti-relay.lunawerx.workers.dev.
+name = "repoyeti"
 main = "worker.js"
 compatibility_date = "2026-01-01"
-# workers.dev stays on so already-registered daemons and links minted on the old
-# repoyeti-relay.lunawerx.workers.dev URL keep resolving — same Worker, same KV.
+# workers.dev on → the free fallback hostname repoyeti.lunawerx.workers.dev, same Worker + KV as
+# the go.repoyeti.com custom domain, so both resolve identically.
 workers_dev = true
 
 # The public stable address. A Workers CUSTOM DOMAIN (not a route): Cloudflare creates the proxied

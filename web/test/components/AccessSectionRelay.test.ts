@@ -71,6 +71,9 @@ describe("AccessSection — stable address panel", () => {
       .findAll("button")
       .find((b) => b.text() === i18n.global.t("settings.relayShowAdvanced"))!;
     await advanced.trigger("click");
+    // Switching relays is only "easy" if you can find out how to run one — the guide link is here.
+    const docLink = wrapper.findAll("a").find((a) => a.text() === i18n.global.t("settings.relaySelfHostDocs"));
+    expect(docLink?.attributes("href")).toContain("relay/README.md");
     const input = wrapper.find(`input[aria-label="${i18n.global.t("settings.relayUrlLabel")}"]`);
     await input.setValue("https://relay.example");
     const save = wrapper

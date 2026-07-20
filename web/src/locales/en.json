@@ -768,6 +768,7 @@
     "relayHideAdvanced": "Hide relay settings",
     "relayUrlLabel": "Relay address",
     "relayUrlHint": "Leave blank to use the default. Point this at your own if you deployed one.",
+    "relaySelfHostDocs": "How to run your own relay",
     "relaySave": "Save relay",
     "relaySaved": "Relay saved",
     "relaySaveFailed": "Couldn't save the relay",

@@ -655,9 +655,10 @@ export function redactTunnel(cfg: RepoYetiConfig): RedactedTunnelConfig {
  * Worker before they can keep a share link alive is the same as not shipping the feature. This is
  * the instance documented in relay/README.md; the field stays editable for anyone self-hosting.
  *
- * `go.repoyeti.com` is a Workers custom domain on the SAME worker + KV as the old
- * `repoyeti-relay.lunawerx.workers.dev` address, so links minted on either resolve identically —
- * this rename made new links prettier without stranding a single already-registered daemon.
+ * `go.repoyeti.com` is a Workers custom domain on the `repoyeti` worker (KV-backed); its free
+ * fallback hostname is `repoyeti.lunawerx.workers.dev`, the same worker + KV, so both resolve
+ * identically. Self-hosting? Point this at your own relay under "Use a different relay" in
+ * Settings, or fork relay/ per its README.
  */
 export const DEFAULT_RELAY_URL = "https://go.repoyeti.com";
 
