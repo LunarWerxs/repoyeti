@@ -85,3 +85,6 @@ $RECYCLE.BIN/
 
 # Local root rebuild convenience wrapper (delegates to misc/Rebuild.bat)
 /Rebuild.bat
+
+# wrangler local miniflare state (relay dev)
+relay/.wrangler/
