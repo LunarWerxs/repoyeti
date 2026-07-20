@@ -287,11 +287,14 @@ export interface IncomingResult {
   fastForward: boolean;
 }
 
-/** One changed file in a commit. */
+/** One changed file in a commit, with its per-file line delta (`git show --numstat`). */
 export interface CommitFile {
   status: string; // A / M / D / R / C
   path: string;
   from?: string;
+  /** Added / removed line counts for this file (both 0 for a binary file). */
+  adds: number;
+  dels: number;
 }
 
 /** Full detail for one commit (the History tap-to-expand view). Mirrors src/inspect.ts. */
@@ -316,8 +319,8 @@ export interface CommitDetail {
   /** Commit message body (everything after the subject line); "" when none. */
   body: string;
   files: CommitFile[];
-  diff: string;
-  truncated: boolean;
+  /** TOTAL changed-file count; greater than files.length when the daemon capped the list. */
+  filesTotal: number;
 }
 
 export interface StashEntry {

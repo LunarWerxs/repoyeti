@@ -128,7 +128,7 @@ export const META: Record<string, RouteMeta> = {
       { name: "merges", description: "Filter merge commits.", enum: ["only", "exclude"] },
     ],
   },
-  "GET /api/repos/:id/commit/:hash": { summary: "One commit's detail (changed files + bounded diff).", tags: ["history"] },
+  "GET /api/repos/:id/commit/:hash": { summary: "One commit's detail (changed files with per-file line counts; capped list + filesTotal).", tags: ["history"] },
 
   // ── stash ───────────────────────────────────────────────────────────────────────
   "GET /api/repos/:id/stashes": { summary: "List a repo's stashes.", tags: ["stash"] },

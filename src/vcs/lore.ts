@@ -620,8 +620,7 @@ export const loreBackend: VcsBackend = {
     committerEmail: "",
     committerDate: 0,
     files: [],
-    diff: "",
-    truncated: false,
+    filesTotal: 0,
   }),
 
   readStashes: loreReadStashes,

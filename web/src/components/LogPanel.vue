@@ -16,7 +16,6 @@ import { fromNow } from "@/lib/util";
 import { cn } from "@/lib/utils";
 import { useRepoFeedback } from "@/lib/repo-feedback";
 import { computeGraph, type GraphCommit, type GraphLink } from "@/lib/git-graph";
-import { splitUnifiedDiff } from "@/lib/unified-diff";
 import { statusColor } from "@/lib/git-status-colors";
 import { openFile, isViewing } from "@/lib/file-viewer";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -193,8 +192,19 @@ watch(sentinelEl, (el) => {
 const expandedCommit = ref<string | null>(null);
 const commitCache = ref<Record<string, CommitDetail>>({});
 const loadingCommit = ref<string | null>(null);
+/** Nearest ancestor that actually scrolls vertically — the history list has its own
+ *  overflow-y container, so corrections must land on it, not on the window. Resolved per
+ *  frame because a collapse can shrink the list below its max-height cap mid-animation,
+ *  at which point the remaining drift belongs to whatever scrolls outside it. */
+function scrollParentOf(el: HTMLElement): HTMLElement | null {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    if (/(auto|scroll)/.test(getComputedStyle(p).overflowY) && p.scrollHeight > p.clientHeight) return p;
+  }
+  return null;
+}
+
 /**
- * Hold `el` still in the viewport while the surrounding layout animates.
+ * Hold `el` at `targetTop` (viewport px) while the surrounding layout animates.
  *
  * Only one commit is expanded at a time, so opening a new one closes the old one. When the old
  * one is ABOVE and was tall — you scrolled through its file list to reach the next commit — that
@@ -203,17 +213,20 @@ const loadingCommit = ref<string | null>(null);
  * 200ms grid-rows transition, so the layout keeps moving after the click. This re-pins every
  * frame until it settles, which also makes the collapse look anchored rather than jumpy.
  */
-function holdRowInPlace(el: HTMLElement, ms = 260): void {
-  const target = el.getBoundingClientRect().top;
+function holdRowInPlace(el: HTMLElement, targetTop: number, ms = 260): void {
   const started = performance.now();
   const step = (): void => {
-    const drift = el.getBoundingClientRect().top - target;
+    const drift = el.getBoundingClientRect().top - targetTop;
     // Sub-pixel drift isn't worth a scroll write; at a scroll boundary the correction simply
     // can't apply, and retrying costs nothing.
-    if (Math.abs(drift) > 0.5) window.scrollBy(0, drift);
+    if (Math.abs(drift) > 0.5) {
+      const scroller = scrollParentOf(el);
+      if (scroller) scroller.scrollTop += drift;
+      else window.scrollBy(0, drift);
+    }
     if (performance.now() - started < ms) requestAnimationFrame(step);
   };
-  requestAnimationFrame(step);
+  step();
 }
 
 async function toggleCommit(hash: string): Promise<void> {
@@ -225,10 +238,14 @@ async function toggleCommit(hash: string): Promise<void> {
   // this row. Opening the first one just adds content below it and shifts nothing above.
   const displacing = expandedCommit.value !== null;
   const row = rowEls.get(hash);
+  // Capture the anchor BEFORE the state flip: if the old detail collapses without a transition
+  // (reduced motion, teleported tab), the jump happens during the same patch nextTick waits on,
+  // and a post-patch measurement would anchor the row at its already-wrong position.
+  const targetTop = displacing && row ? row.getBoundingClientRect().top : 0;
   expandedCommit.value = hash;
   if (displacing && row) {
     await nextTick();
-    holdRowInPlace(row);
+    holdRowInPlace(row, targetTop);
   }
   if (commitCache.value[hash]) return;
   loadingCommit.value = hash;
@@ -242,7 +259,7 @@ async function toggleCommit(hash: string): Promise<void> {
         ok: false, code: "ERROR", message,
         hash, shortHash: hash.slice(0, 12), subject: "", body: "", authorName: "", authorEmail: "", date: 0,
         parents: [], isMerge: false, committerName: "", committerEmail: "", committerDate: 0,
-        files: [], diff: "", truncated: false,
+        files: [], filesTotal: 0,
       },
     };
   } finally {
@@ -306,15 +323,12 @@ const expandedDetail = computed<CommitDetail | undefined>(() => {
 });
 
 interface DetailFile { status: string; path: string; from?: string; adds: number; dels: number }
-/** The open commit's changed files, each with its +add/−del stat from the commit's unified diff. */
+/** The open commit's changed files, each with its +add/−del stat (counted server-side via
+ *  `git show --numstat`, so it's exact for every file and needs no client-side patch parsing). */
 const detailFiles = computed<DetailFile[]>(() => {
   const d = expandedDetail.value;
   if (!d?.ok) return [];
-  const byPath = new Map(splitUnifiedDiff(d.diff).map((f) => [f.path, f] as const));
-  return d.files.map((f) => {
-    const pf = byPath.get(f.path);
-    return { status: f.status, path: f.path, from: f.from, adds: pf?.adds ?? 0, dels: pf?.dels ?? 0 };
-  });
+  return d.files.map((f) => ({ status: f.status, path: f.path, from: f.from, adds: f.adds, dels: f.dels }));
 });
 
 /** Open a changed file in the shared Monaco viewer, showing its diff AT this commit. */
@@ -853,8 +867,9 @@ watch(
                     </ContextMenu>
                   </div>
                   <div v-else class="text-[11px] text-muted-foreground">{{ $t("repo.history.noChanges") }}</div>
-                  <p v-if="expandedDetail.truncated" class="mt-1 text-[11px] text-muted-foreground">
-                    {{ $t("repo.history.diffTruncated") }}
+                  <!-- Same key + plural the worktree section's 60-file cap uses (line ~594). -->
+                  <p v-if="expandedDetail.filesTotal > detailFiles.length" class="mt-1 text-[11px] text-muted-foreground">
+                    {{ $t("repo.history.moreFiles", { count: expandedDetail.filesTotal - detailFiles.length }) }}
                   </p>
                 </template>
                 <div v-else class="text-[12px] text-muted-foreground">

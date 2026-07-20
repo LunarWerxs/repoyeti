@@ -492,7 +492,6 @@
       "copyHash": "Copy commit hash",
       "copied": "Commit hash copied",
       "ctxOpenAtCommit": "Open at this commit",
-      "diffTruncated": "Diff truncated. Open the repo to see the rest.",
       "detailUnavailable": "Commit detail isn't available for this repository.",
       "colDescription": "Description",
       "colAuthor": "Author",

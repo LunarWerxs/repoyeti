@@ -69,4 +69,12 @@ test("readCommit carries parents + isMerge for a merge commit", async () => {
   expect(detail.ok).toBe(true);
   expect(detail.isMerge).toBe(true);
   expect(detail.parents.length).toBe(2);
+
+  // A merge's file list is the FIRST-PARENT diff ("what did this merge bring in"), pinned by
+  // `-m --first-parent` on both show calls. Plain `git show` would use condensed combined mode,
+  // whose --name-status and --numstat emit DIFFERENT row sets — the index zip would then staple
+  // stats onto the wrong files. Here the merge brought feat.txt in from the feature branch.
+  expect(detail.files.map((f) => `${f.status} ${f.path}`)).toEqual(["A feat.txt"]);
+  expect(detail.files[0]).toMatchObject({ adds: 1, dels: 0 });
+  expect(detail.filesTotal).toBe(1);
 });

@@ -82,8 +82,7 @@ export function getCommit(repoId: string, hash: string): Promise<CommitDetail> {
       committerEmail: "",
       committerDate: 0,
       files: [],
-      diff: "",
-      truncated: false,
+      filesTotal: 0,
     });
   return backendFor(repo.vcs).readCommit(repo.absPath, hash);
 }

@@ -31,8 +31,7 @@ function detailFor(hash: string): CommitDetail {
     committerEmail: "e",
     committerDate: 0,
     files: [],
-    diff: "d",
-    truncated: false,
+    filesTotal: 0,
   };
 }
 
@@ -144,8 +143,9 @@ describe("LogPanel.vue", () => {
       ...detailFor("c1"),
       subject: "subject one",
       body: "Extended body line.",
-      files: [{ status: "M", path: "src/foo.ts" }],
-      diff: "diff --git a/src/foo.ts b/src/foo.ts\n--- a/src/foo.ts\n+++ b/src/foo.ts\n@@ -1 +1 @@\n-old line\n+new line\n",
+      files: [{ status: "M", path: "src/foo.ts", adds: 1, dels: 1 }],
+      // 3 changed files but only 1 shipped — as if the daemon capped the list (COMMIT_FILES_CAP).
+      filesTotal: 3,
     };
     vi.spyOn(api, "commitDetail").mockResolvedValue(detail);
 
@@ -166,10 +166,10 @@ describe("LogPanel.vue", () => {
     const text = wrapper.text();
     expect(text).toContain("Extended body line."); // commit message body rendered
     expect(text).toContain("foo.ts"); // file listed (rendered filename-first, dir shown separately)
-    expect(text).toContain("+1"); // additions stat (from splitUnifiedDiff)
-    // No raw diff blob inline anymore — the diff lives in the Monaco viewer on click.
+    expect(text).toContain("+1"); // additions stat (from the file's server-side --numstat count)
+    expect(text).toContain("and 2 more files"); // capped list → "…and N more files" note (filesTotal 3, 1 shipped)
+    // No raw diff blob inline — the diff lives in the Monaco viewer on click.
     expect(wrapper.find("pre").exists()).toBe(false);
-    expect(text).not.toContain("old line");
 
     // Clicking the file opens the shared viewer scoped to THIS commit.
     const fileBtn = wrapper.findAll("button").find((b) => b.text().includes("foo.ts"))!;

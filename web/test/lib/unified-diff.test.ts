@@ -4,7 +4,6 @@ import {
   diffModels,
   collapseContext,
   renderFileDiff,
-  splitUnifiedDiff,
   MAX_MODELS_LINES,
 } from "@/lib/unified-diff";
 
@@ -108,62 +107,3 @@ describe("renderFileDiff", () => {
   });
 });
 
-describe("splitUnifiedDiff", () => {
-  const SAMPLE = [
-    "diff --git a/src/foo.ts b/src/foo.ts",
-    "index 111..222 100644",
-    "--- a/src/foo.ts",
-    "+++ b/src/foo.ts",
-    "@@ -1,3 +1,3 @@",
-    " const a = 1;",
-    "-const b = 2;",
-    "+const b = 3;",
-    " const c = 4;",
-    "diff --git a/README.md b/README.md",
-    "new file mode 100644",
-    "--- /dev/null",
-    "+++ b/README.md",
-    "@@ -0,0 +1,2 @@",
-    "+# Title",
-    "+hello",
-    "diff --git a/logo.png b/logo.png",
-    "new file mode 100644",
-    "Binary files /dev/null and b/logo.png differ",
-  ].join("\n");
-
-  it("splits a multi-file patch into per-file slices with add/del stats", () => {
-    const files = splitUnifiedDiff(SAMPLE);
-    expect(files.map((f) => f.path)).toEqual(["src/foo.ts", "README.md", "logo.png"]);
-
-    const foo = files[0]!;
-    expect(foo.adds).toBe(1);
-    expect(foo.dels).toBe(1);
-    expect(foo.binary).toBe(false);
-    expect(foo.rows.some((r) => r.kind === "add" && r.text === "const b = 3;")).toBe(true);
-    expect(foo.rows.some((r) => r.kind === "del" && r.text === "const b = 2;")).toBe(true);
-    expect(foo.rows.some((r) => r.kind === "meta" && r.text.startsWith("@@"))).toBe(true);
-
-    expect(files[1]!.adds).toBe(2);
-    expect(files[1]!.dels).toBe(0);
-    expect(files[2]!.binary).toBe(true);
-  });
-
-  it("returns [] for an empty / whitespace diff", () => {
-    expect(splitUnifiedDiff("")).toEqual([]);
-    expect(splitUnifiedDiff("   \n ")).toEqual([]);
-  });
-
-  it("keeps a rename's new path and records the old one", () => {
-    const renameOnly = [
-      "diff --git a/old/name.ts b/new/name.ts",
-      "similarity index 100%",
-      "rename from old/name.ts",
-      "rename to new/name.ts",
-    ].join("\n");
-    const [f] = splitUnifiedDiff(renameOnly);
-    expect(f!.path).toBe("new/name.ts");
-    expect(f!.oldPath).toBe("old/name.ts");
-    expect(f!.adds).toBe(0);
-    expect(f!.dels).toBe(0);
-  });
-});
