@@ -6,6 +6,24 @@ All notable changes to RepoYeti are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Settings toggles stick again.** "Watch specific folders" no longer flips itself back on at
+  every settings open — an over-helpful auto-disclose overrode the saved choice, and it's gone.
+- **The Accounts tab fits on one line.** "Accounts & access" wrapped the tab bar; it's just
+  "Accounts" now.
+- **One Connections account, one place.** The "Signed in with Connections" card moved into
+  Cloud sync (it used to float under Git identity, where it looked like a git thing), and Cloud
+  sync no longer offers "Sign in with Connections" while you're already signed in — a sync that
+  lost its connection says so and offers Reconnect instead.
+- **The stable address no longer presents as an editable mystery.** The active address shows as a
+  status line; the hostname/token editor is folded behind "Change or remove this address…".
+
+### Changed
+
+- **Advanced grew the tuning knobs.** External editor, Keyboard shortcuts, and the large-file
+  diff threshold moved from General to Advanced; Updates is just "Updates" again.
+
 ## [0.10.0] - 2026-07-20
 
 ### Added

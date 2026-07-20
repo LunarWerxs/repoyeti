@@ -40,18 +40,10 @@ watch(showScanFolders, (v) => {
     /* private mode / storage disabled — the in-memory ref still drives this session */
   }
 });
-// Configured roots mean folder-watching IS active — force the section open so the state is
-// visible instead of hinted at by a count. A deliberate collapse THIS session is respected
-// (userTouched); the next settings open re-discloses, which is the honest default while
-// watching continues underneath.
-const userTouchedScanFolders = ref(false);
-watch(
-  () => store.roots.length,
-  (n) => {
-    if (n > 0 && !userTouchedScanFolders.value && !showScanFolders.value) showScanFolders.value = true;
-  },
-  { immediate: true },
-);
+// NOTE: no auto-disclose. An earlier version forced this open whenever roots existed, which
+// made the owner's OFF choice silently flip back ON at every settings open — a toggle that
+// doesn't stick is worse than any amount of hidden state. The switch is a plain persisted
+// disclosure now; the section hint says roots stay watched either way.
 const newRoot = ref("");
 const addingRoot = ref(false);
 const confirmRemoveRoot = ref<string | null>(null);
@@ -110,7 +102,7 @@ async function removeRoot(path: string): Promise<void> {
         <Switch
           :model-value="showScanFolders"
           :aria-label="$t('settings.scanFoldersEnable')"
-          @update:model-value="(v: boolean) => { userTouchedScanFolders = true; showScanFolders = v; }"
+          @update:model-value="(v: boolean) => (showScanFolders = v)"
         />
       </template>
     </SettingsRow>

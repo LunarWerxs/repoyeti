@@ -13,7 +13,9 @@ import DiscoverySection from "./settings/DiscoverySection.vue";
 import CloudSyncSection from "./settings/CloudSyncSection.vue";
 import AppearanceSection from "./settings/AppearanceSection.vue";
 import EditorSection from "./settings/EditorSection.vue";
-import UpdatesHotkeysSection from "./settings/UpdatesHotkeysSection.vue";
+import UpdatesSection from "./settings/UpdatesSection.vue";
+import HotkeysSection from "./settings/HotkeysSection.vue";
+import DiffTuningSection from "./settings/DiffTuningSection.vue";
 import AutoCommitSection from "./settings/AutoCommitSection.vue";
 import BackgroundSyncSection from "./settings/BackgroundSyncSection.vue";
 import AgentSafetySection from "./settings/AgentSafetySection.vue";
@@ -43,7 +45,8 @@ type TabId = "general" | "access" | "automation" | "advanced";
 const tab = ref<TabId>("general");
 const tabs = computed<{ id: TabId; label: string }[]>(() => [
   { id: "general", label: t("settings.tabs.general") },
-  { id: "access", label: t("settings.tabs.accountsAccess") },
+  // Label kept to ONE short word — "Accounts & access" wrapped to two lines in the tab bar.
+  { id: "access", label: t("settings.tabs.accounts") },
   { id: "automation", label: t("settings.tabs.automation") },
   { id: "advanced", label: t("settings.tabs.advanced") },
 ]);
@@ -87,12 +90,11 @@ watch(
            `open` watcher that fires when the panel opens, which would never run for a section
            first mounted by a later tab click. -->
 
-      <!-- General: appearance + diffs, folders to scan, editor, updates + shortcuts ────── -->
+      <!-- General: appearance, folders to scan, updates ────── -->
       <div v-show="tab === 'general'" class="flex flex-col gap-4">
         <AppearanceSection />
         <DiscoverySection :open="open" />
-        <EditorSection />
-        <UpdatesHotkeysSection />
+        <UpdatesSection />
       </div>
 
       <!-- Accounts & access: GitHub accounts, git identities, Connections account,
@@ -111,9 +113,12 @@ watch(
         <AiProvidersSection :open="open" />
       </div>
 
-      <!-- Advanced: the sharp, rarely-touched tools — ⭐ Agent Safety Rail, ⭐ Identity
-           Firewall, Lore servers ──────────────────────────────────────────────── -->
+      <!-- Advanced: power tuning (editor, shortcuts, diff threshold) + the sharp,
+           rarely-touched tools — ⭐ Agent Safety Rail, ⭐ Identity Firewall, Lore servers ── -->
       <div v-show="tab === 'advanced'" class="flex flex-col gap-4">
+        <EditorSection />
+        <HotkeysSection />
+        <DiffTuningSection />
         <AgentSafetySection />
         <!-- The Firewall pins a REQUIRED identity per path glob — meaningless (and unbuildable:
              every rule needs an identity to point at) until identities are in play at all. -->

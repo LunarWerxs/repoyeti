@@ -48,6 +48,8 @@ const tunnelHost = ref("");
 const tunnelToken = ref("");
 const savingTunnel = ref(false);
 const confirmForgetTunnel = ref(false);
+/** Whether the hostname/token editor is disclosed (folded by default — see the template note). */
+const tunnelEditOpen = ref(false);
 async function saveTunnel(): Promise<void> {
   if (savingTunnel.value) return;
   savingTunnel.value = true;
@@ -175,6 +177,7 @@ watch(
       relayAdvanced.value = false;
       copiedRelay.value = false;
       confirmForgetTunnel.value = false;
+      tunnelEditOpen.value = false;
       needsOwner.value = false;
     }
   },
@@ -183,22 +186,9 @@ watch(
 </script>
 
 <template>
-  <!-- Signed-in account (the daemon owner). Its own row above the group — it's the
-       Connections account remote access authenticates against, NOT a git identity.
-       Shown only when actually signed in (store.owner). -->
-  <div
-    v-if="store.owner"
-    class="flex shrink-0 items-center justify-between gap-2 rounded-xl border border-primary/20 bg-primary/10 px-3 py-2.5"
-  >
-    <div class="min-w-0">
-      <div class="text-[11px] text-primary/80">{{ $t("identity.signedInWith") }}</div>
-      <div class="mono truncate text-[13px] text-foreground/90">{{ store.owner }}</div>
-    </div>
-    <Button variant="ghost" size="sm" @click="store.logout()">
-      <LogOut />
-      {{ $t("identity.signOut") }}
-    </Button>
-  </div>
+  <!-- (The signed-in Connections account row lives in CloudSyncSection now — one account, one
+       place. This section only discloses an inline sign-in prompt when the remote toggle
+       actually needs an owner, below.) -->
 
   <!-- Access (local ↔ remote) ───────────────────────────────────── -->
   <SettingsGroup :label="$t('settings.cardAccess')">
@@ -232,7 +222,10 @@ watch(
     <!-- The rows below only mean anything while remote access is on: the tunnel names the
          remote URL, and "sign out everywhere" revokes remote sessions. Hidden otherwise. -->
     <template v-if="isRemote">
-      <!-- stable address (named Cloudflare tunnel) — a permanent URL instead of a rotating one -->
+      <!-- stable address (named Cloudflare tunnel) — a permanent URL instead of a rotating one.
+           The steady state is ONE status line; the hostname/token inputs live behind a
+           disclosure. An always-visible input pre-filled with the active address read as
+           "why is my address editable?" — configuring is the exception, not the resting view. -->
       <div class="flex flex-col gap-2.5 px-3.5 py-3">
         <div class="flex items-center gap-1.5">
           <span class="text-[12.5px] font-medium text-foreground">{{ $t("settings.tunnelLabel") }}</span>
@@ -245,39 +238,49 @@ watch(
           <Check :size="13" class="shrink-0" />
           <span class="min-w-0 break-all">{{ $t("settings.tunnelActive", { host: store.tunnelConfig.hostname }) }}</span>
         </p>
-        <Input
-          v-model="tunnelHost"
-          class="mono text-[12.5px]"
-          :placeholder="$t('settings.tunnelHostPlaceholder')"
-          :aria-label="$t('settings.tunnelHostLabel')"
-        />
-        <Input
-          v-if="!store.tunnelConfig.tokenFromEnv"
-          v-model="tunnelToken"
-          type="password"
-          class="text-[12.5px]"
-          :placeholder="store.tunnelConfig.hasToken ? $t('settings.tunnelTokenSaved') : $t('settings.tunnelTokenPlaceholder')"
-          :aria-label="$t('settings.tunnelTokenLabel')"
-        />
-        <p v-else class="text-[11.5px] text-muted-foreground">{{ $t("settings.tunnelTokenEnv") }}</p>
-        <div class="flex items-center gap-2">
-          <Button size="sm" :disabled="savingTunnel" @click="saveTunnel">
-            <Loader2 v-if="savingTunnel" class="animate-spin" />
-            <Check v-else />
-            {{ $t("settings.tunnelSave") }}
-          </Button>
-          <Button
-            v-if="store.tunnelConfig.hostname || store.tunnelConfig.hasToken"
-            :variant="confirmForgetTunnel ? 'destructive' : 'ghost'"
-            size="sm"
-            class="ml-auto"
-            @click="forgetTunnel"
-            @blur="confirmForgetTunnel = false"
-          >
-            <Trash2 />
-            {{ confirmForgetTunnel ? $t("settings.tunnelForgetConfirm") : $t("settings.tunnelForget") }}
-          </Button>
-        </div>
+        <button
+          type="button"
+          class="self-start text-[11.5px] text-muted-foreground underline-offset-2 hover:underline"
+          :aria-expanded="tunnelEditOpen"
+          @click="tunnelEditOpen = !tunnelEditOpen"
+        >
+          {{ tunnelEditOpen ? $t("settings.tunnelEditHide") : (store.tunnelConfig.named ? $t("settings.tunnelEditChange") : $t("settings.tunnelEditSetup")) }}
+        </button>
+        <template v-if="tunnelEditOpen">
+          <Input
+            v-model="tunnelHost"
+            class="mono text-[12.5px]"
+            :placeholder="$t('settings.tunnelHostPlaceholder')"
+            :aria-label="$t('settings.tunnelHostLabel')"
+          />
+          <Input
+            v-if="!store.tunnelConfig.tokenFromEnv"
+            v-model="tunnelToken"
+            type="password"
+            class="text-[12.5px]"
+            :placeholder="store.tunnelConfig.hasToken ? $t('settings.tunnelTokenSaved') : $t('settings.tunnelTokenPlaceholder')"
+            :aria-label="$t('settings.tunnelTokenLabel')"
+          />
+          <p v-else class="text-[11.5px] text-muted-foreground">{{ $t("settings.tunnelTokenEnv") }}</p>
+          <div class="flex items-center gap-2">
+            <Button size="sm" :disabled="savingTunnel" @click="saveTunnel">
+              <Loader2 v-if="savingTunnel" class="animate-spin" />
+              <Check v-else />
+              {{ $t("settings.tunnelSave") }}
+            </Button>
+            <Button
+              v-if="store.tunnelConfig.hostname || store.tunnelConfig.hasToken"
+              :variant="confirmForgetTunnel ? 'destructive' : 'ghost'"
+              size="sm"
+              class="ml-auto"
+              @click="forgetTunnel"
+              @blur="confirmForgetTunnel = false"
+            >
+              <Trash2 />
+              {{ confirmForgetTunnel ? $t("settings.tunnelForgetConfirm") : $t("settings.tunnelForget") }}
+            </Button>
+          </div>
+        </template>
       </div>
 
       <!-- permanent link (relay) — one address that survives the tunnel rotating underneath it -->

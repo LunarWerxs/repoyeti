@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { useStore } from "../../store";
@@ -10,7 +9,6 @@ import { useTooltipConfig } from "@/lib/tooltip-config";
 import SettingsGroup from "@/shell/SettingsGroup.vue";
 import SettingsRow from "@/shell/SettingsRow.vue";
 import InfoHint from "@/shell/InfoHint.vue";
-import ExpandTransition from "@/shell/ExpandTransition.vue";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -39,26 +37,8 @@ async function onDiffStats(enabled: boolean): Promise<void> {
   }
 }
 
-// Large-file Diff threshold (server setting). Preset sizes are powers of two so the labels
-// read as real KB/MB (512 KB = 524288 = the server default). <Select> is string-valued, so
-// map via String(bytes).
-const DIFF_PATCH_OPTIONS = [
-  { bytes: 256 * 1024, label: "256 KB" },
-  { bytes: 512 * 1024, label: "512 KB" },
-  { bytes: 1024 * 1024, label: "1 MB" },
-  { bytes: 2 * 1024 * 1024, label: "2 MB" },
-];
-const diffPatchChoice = computed<string>({
-  get: () => String(store.diffPatchBytes),
-  set: (v: string) => void onDiffPatchBytes(Number(v)),
-});
-async function onDiffPatchBytes(bytes: number): Promise<void> {
-  try {
-    await store.setDiffPatchBytes(bytes);
-  } catch {
-    toast.error(t("settings.diffPatchThresholdFailed"));
-  }
-}
+// (The large-file patch THRESHOLD moved to Advanced → Diffs — a byte-size tuning knob, not an
+// appearance choice. The user-facing switches stay here.)
 
 // "Always side-by-side" is the user-facing inverse of the server's compact-patch flag:
 // ON → never use the compact patch (diffPatchEnabled = false).
@@ -190,24 +170,6 @@ async function onHideTrayIcon(enabled: boolean): Promise<void> {
         />
       </template>
     </SettingsRow>
-    <!-- Threshold is moot when always-side-by-side is on → HIDE it (not dim). Laid out as a
-         standard row (label left, control right) like every other setting, rather than the
-         stacked label-above-a-full-width-select it used to be. -->
-    <ExpandTransition :open="store.diffPatchEnabled">
-      <SettingsRow :label="$t('settings.diffPatchThreshold')">
-        <template #info><InfoHint :text="$t('settings.diffPatchThresholdHint')" /></template>
-        <template #control>
-          <Select v-model="diffPatchChoice">
-            <SelectTrigger class="w-full max-w-36" :aria-label="$t('settings.diffPatchThreshold')"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem v-for="o in DIFF_PATCH_OPTIONS" :key="o.bytes" :value="String(o.bytes)">
-                {{ o.label }}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </template>
-      </SettingsRow>
-    </ExpandTransition>
   </SettingsGroup>
 </template>
 

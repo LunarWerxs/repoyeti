@@ -62,7 +62,12 @@ describe("AccessSection — relay toggle payload", () => {
 
     const wrapper = mountAccess();
     // The owner opens Advanced and types a candidate relay, but never hits Save…
-    await wrapper.find("button.self-start").trigger("click");
+    // (Target the RELAY disclosure by its label — the tunnel editor has its own fold button now,
+    // so a bare `button.self-start` grabs whichever renders first.)
+    const relayAdvancedBtn = wrapper
+      .findAll("button")
+      .find((b) => b.text() === i18n.global.t("settings.relayShowAdvanced"))!;
+    await relayAdvancedBtn.trigger("click");
     const input = wrapper.find(`input[aria-label="${i18n.global.t("settings.relayUrlLabel")}"]`);
     await input.setValue("https://scratch.example");
     // …then changes their mind and just switches the relay off.

@@ -91,6 +91,20 @@ async function disconnect(): Promise<void> {
     </div>
 
     <template v-else>
+      <!-- Signed-in Connections account — THE one place it's shown (it used to float above the
+           Access group, where it read as part of Git identity). This is the account that owns
+           remote access AND cloud sync, so it lives with the feature that explains why it exists. -->
+      <div class="flex items-center justify-between gap-2 px-3.5 py-2.5">
+        <div class="min-w-0">
+          <div class="text-[11px] text-primary/80">{{ $t("identity.signedInWith") }}</div>
+          <div class="mono truncate text-[13px] text-foreground/90">{{ store.owner }}</div>
+        </div>
+        <Button variant="ghost" size="sm" @click="store.logout()">
+          <LogOut />
+          {{ $t("identity.signOut") }}
+        </Button>
+      </div>
+
       <!-- master toggle -->
       <SettingsRow :label="$t('settings.cloudSync.enableLabel')">
         <template #info><InfoHint :text="$t('settings.cloudSync.enableHint')" /></template>
@@ -140,12 +154,14 @@ async function disconnect(): Promise<void> {
         </Button>
       </div>
 
-      <!-- enabled but not yet connected (shouldn't normally happen once signed in, but keep it non-blocking) -->
+      <!-- enabled but not yet connected (fresh daemon restart, expired sync token). The owner IS
+           signed in — the row above says so — so a bare "Sign in with Connections" button here
+           read as the app contradicting itself. Name the state and offer the actual remedy. -->
       <div v-else-if="store.syncStatus.enabled" class="flex flex-col gap-2 px-3.5 py-3">
-        <Button size="sm" class="self-start" @click="signIn">
-          <Cloud :size="14" />
-          {{ $t("settings.cloudSync.signIn") }}
-          <ExternalLink :size="14" class="opacity-70" />
+        <p class="text-[12px] text-muted-foreground">{{ $t("settings.cloudSync.notConnected") }}</p>
+        <Button size="sm" variant="outline" class="self-start" @click="signIn">
+          <RefreshCw :size="14" />
+          {{ $t("settings.cloudSync.reconnect") }}
         </Button>
       </div>
 
