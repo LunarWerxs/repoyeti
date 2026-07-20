@@ -6,6 +6,8 @@ All notable changes to RepoYeti are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-20
+
 ### Added
 
 - **A stable address out of the box.** The permanent forwarding address is now the default (on
