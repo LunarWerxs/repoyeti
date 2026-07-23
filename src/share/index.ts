@@ -6,12 +6,14 @@
  * daemon at all, so the whole module is written to be read by someone deciding whether to trust it.
  *
  * ── The credential ─────────────────────────────────────────────────────────────
- * A link's secret is 32 random bytes (256 bits, `randomBytes` — a CSPRNG). Only sha256(secret) is
- * stored. That means:
+ * A link's secret is 32 random bytes (256 bits, `randomBytes` — a CSPRNG). Redemption consults only
+ * sha256(secret), while the plaintext is retained separately so the owner can copy the same link
+ * later. That means:
  *   • Guessing is not a threat model. Rate-limiting a 256-bit space would be security theatre.
- *   • The database is not a bearer credential: a stolen repoyeti.db yields hashes, not links.
- *   • The plaintext exists exactly once, in the mint response. Nothing can recover it afterwards —
- *     the owner makes a new link instead. This is deliberate, and matches the API-token route.
+ *   • repoyeti.db IS bearer-sensitive: its retained tokens are working share links. This is an
+ *     explicit owner tradeoff for Copy link; settings sync never sends the database or secrets.
+ *   • Revocation clears the retained plaintext. Rows minted before retention have none and must be
+ *     re-keyed before the panel can offer a copyable URL.
  *
  * ── Why redemption swaps the token for a cookie ────────────────────────────────
  * GET /s/<secret> validates the secret once, then sets a signed cookie and redirects. The token
@@ -58,12 +60,12 @@ export function expiryFor(duration: ShareDuration, now = Date.now()): number | n
   return ms === null ? null : now + ms;
 }
 
-/** Mint a link secret. Returned to the owner once, then only its hash survives. */
+/** Mint a link secret. The caller stores both it and its hash; redemption consults the hash only. */
 export function mintToken(): string {
   return randomBytes(32).toString("base64url");
 }
 
-/** sha256 of a presented secret, hex. The only form of a token that touches disk. */
+/** sha256 of a presented secret, hex. The only form redemption ever looks up. */
 export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }

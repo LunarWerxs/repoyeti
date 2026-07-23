@@ -39,9 +39,14 @@ import {
 } from "../../share/index.ts";
 
 /**
- * A share as the owner's Sharing panel sees it. There is no token field, at any point after mint —
- * the plaintext is unrecoverable by design (only its sha256 was stored), so the panel shows a link
- * exactly once, at creation, and offers "revoke + make a new one" forever after.
+ * A share as the owner's Sharing panel sees it.
+ *
+ * It now carries `url`, which it deliberately did not before: the plaintext used to be
+ * unrecoverable (only its sha256 was stored), so the panel could show a link exactly once, at
+ * creation, and had nothing to offer afterwards but "re-key and re-send". Links minted from now on
+ * retain their secret (see Share.token in src/db.ts for what that costs), so the panel can just
+ * hand the owner their link back. This route is owner-only, both via the auth middleware and by
+ * name in share/policy.ts, so the field is never reachable by a guest.
  */
 interface ShareDto {
   id: string;
@@ -69,9 +74,19 @@ interface ShareDto {
    * the relay was switched on still compare unequal — and those genuinely are dead.
    */
   stale: boolean;
+  /**
+   * The link itself, ready to copy, or null for one minted before the secret was retained (and for
+   * any revoked link, whose secret is cleared).
+   *
+   * Assembled against the CURRENT address rather than reproducing the URL as it was handed out.
+   * That is the useful answer, and it is what makes `stale` actionable instead of merely sad: for a
+   * link whose origin moved, the copy is a WORKING url the owner can re-send, while `stale` stays
+   * true to say the one already in the recipient's inbox is dead.
+   */
+  url: string | null;
 }
 
-function toDto(cfg: RepoYetiConfig, s: Share): ShareDto {
+function toDto(cfg: RepoYetiConfig, s: Share, fallbackOrigin: string): ShareDto {
   const liveOrigin = publicShareOrigin(cfg);
   return {
     id: s.id,
@@ -86,6 +101,7 @@ function toDto(cfg: RepoYetiConfig, s: Share): ShareDto {
     live: shareIsLive(s),
     origin: s.origin,
     stale: isStaleOrigin(s.origin, liveOrigin),
+    url: s.token ? shareLinkFor(cfg, s.token, fallbackOrigin) : null,
   };
 }
 
@@ -103,7 +119,13 @@ function deadLinkPage(): string {
 
 export function register(app: Hono, { cfg }: Deps): void {
   // ── owner: list / create / revoke ────────────────────────────────────────────
-  app.get("/api/shares", (c) => c.json({ shares: listShares().map((s) => toDto(cfg, s)) }));
+  app.get("/api/shares", (c) => {
+    // The panel gets each link back, ready to copy. Assembling it needs an origin to fall back
+    // on when no tunnel/relay address is published, and the request we are answering IS that
+    // address: this route is owner-only and in practice reached on loopback.
+    const origin = new URL(c.req.url).origin;
+    return c.json({ shares: listShares().map((s) => toDto(cfg, s, origin)) });
+  });
 
   app.post("/api/shares", async (c) => {
     const p = await parseBody(c, ShareCreateSchema);
@@ -129,15 +151,16 @@ export function register(app: Hono, { cfg }: Deps): void {
       expiresAt: expiryFor(duration),
       // Remember where this link will be handed out, so we can tell later that the address moved.
       origin: publicShareOrigin(cfg),
+      // ...and the secret itself, so the panel can offer Copy link on this row later instead of
+      // only in the one-shot panel below. See Share.token in src/db.ts.
+      token,
     });
-    // The ONLY response that ever carries the token. Everything else returns the DTO.
-    //
     // `url` is assembled server-side because the relay form puts the token in the URL fragment
     // rather than the path (see shareLinkFor) — a distinction the browser should not have to
     // re-derive, since getting it wrong would send the secret to the relay.
     return c.json({
       ok: true,
-      share: toDto(cfg, share),
+      share: toDto(cfg, share, new URL(c.req.url).origin),
       token,
       url: shareLinkFor(cfg, token, new URL(c.req.url).origin),
     });
@@ -177,22 +200,27 @@ export function register(app: Hono, { cfg }: Deps): void {
       ...(duration === undefined ? {} : { expiresAt: expiryFor(duration) }),
     });
     if (!updated) return jsonError(c, "NOT_FOUND", "no such share link");
-    return c.json({ ok: true, share: toDto(cfg, updated) });
+    return c.json({ ok: true, share: toDto(cfg, updated, new URL(c.req.url).origin) });
   });
 
-  // Mint a NEW secret for an existing grant. The plaintext link is unrecoverable by design, so
-  // this is the only way back to a working URL once the owner loses it — at the cost of killing
-  // the previous one, which the UI states before it happens.
+  // Mint a NEW secret for an existing grant. This is a deliberate re-key, and for legacy rows
+  // whose plaintext predates retention it is also the only way to gain a copyable URL. Either way
+  // it kills the previous URL, which the UI states before it happens.
   app.post("/api/shares/:id/rotate", (c) => {
     const id = c.req.param("id");
     if (!id) return jsonError(c, "NOT_FOUND", "no such share link");
     const token = mintToken();
-    const share = rotateShareToken(id, hashToken(token), publicShareOrigin(cfg));
+    const share = rotateShareToken(id, {
+      tokenHash: hashToken(token),
+      token,
+      origin: publicShareOrigin(cfg),
+    });
     if (!share) return jsonError(c, "NOT_FOUND", "no such share link");
-    // Carries a token, like the mint response and for the same one-time reason.
+    // Re-keying is also how a pre-existing link (minted before secrets were retained, so with no
+    // Copy button) gains one: the row comes back carrying the new secret.
     return c.json({
       ok: true,
-      share: toDto(cfg, share),
+      share: toDto(cfg, share, new URL(c.req.url).origin),
       token,
       url: shareLinkFor(cfg, token, new URL(c.req.url).origin),
     });

@@ -238,8 +238,11 @@ CREATE TABLE sessions (                     -- the daemon's own RP session(s)
 );
 ```
 
-**Invariant:** no raw secret bytes ever land in SQLite — only key *paths* (SSH) and keychain
-*handles*. The auth credential itself is issued and revoked by connections.icu, not by RepoYeti.
+**Invariant:** owner authentication secrets do not land in SQLite — only key *paths* (SSH) and
+keychain *handles*. Share-link tokens are the deliberate exception added in §17: they are retained
+in `shares.token` solely so the owner can copy an existing link, making `repoyeti.db`
+bearer-sensitive. Connections credentials remain issued and revoked by connections.icu and stored
+outside SQLite.
 
 ---
 
@@ -1199,7 +1202,7 @@ owner login is still the only way to become the **owner**. A share link is a dif
 | | |
 |---|---|
 | **The credential** | 32 random bytes (`randomBytes`, base64url) in the URL: `https://<tunnel>/s/<token>`. Guessing is not a threat model at 256 bits — there is no rate limit and none is needed. |
-| **At rest** | Only `sha256(token)`, in `shares.token_hash`. A stolen `repoyeti.db` yields hashes, not links. The plaintext exists **exactly once**, in the mint response; it cannot be recovered afterwards, by design — the owner revokes and re-mints instead. |
+| **At rest** | `sha256(token)` in `shares.token_hash`, which is the only thing redemption ever consults, **plus the plaintext in `shares.token`** so the panel can offer *Copy link* on a share it minted earlier. That second column is an owner-made trade, taken with the cost stated: a copy of `repoyeti.db` is now a set of working links, where before it was a set of useless digests. It is defensible only because that file never leaves the machine (settings sync ships an allowlist of config keys and no secrets, see `src/connections-sync.ts`) and reading it already means running as the owner, who can mint a fresh link through the API regardless. Cleared on revoke; NULL for links minted before this existed, which is why those rows show *Copy* greyed out rather than not at all. |
 | **Tiers** | `view` — repos, uncommitted files, diffs, history. `control` — plus the sync loop (fetch/pull/push/stage/commit/commit-selected) and Smart Commit (which spends the **owner's** AI key — an explicit owner call). |
 | **Scope** | Named repos, or "all repos" (which includes ones discovered later). A per-repo link never widens on its own. |
 | **Expiry** | 1 hour / day / week / month / year / never. Enforced on every request, not just at redemption. |
@@ -1229,6 +1232,32 @@ owner login is still the only way to become the **owner**. A share link is a dif
    event allowlist (`src/share/events.ts`) — the raw bus carries `settings_changed`, `daemon_status`,
    `scan_*` and `approval_pending`, none of which is a guest's business. Credentials embedded in a
    remote URL (`https://user:ghp_x@…`) are stripped from everything a guest sees.
+
+   The projection narrows **credentials and owner-plane state**, not *layout*. `pinned` / `starred`
+   deliberately survive it (`src/share/redact.ts`), because the guest renders the same component
+   tree as the owner and those two flags are the only input to its Pinned / Starred /
+   everything-else sections. Flattening them didn't hide a secret; it silently gave the guest a
+   *different dashboard*, one unlabelled, uncollapsible list. Their `repo_*_changed` events are
+   allowlisted for the same reason. `autoCommit` stays flattened: it is owner automation state that
+   drives controls a guest never gets.
+
+   `hidden` is neither. It is resolved at the **scope** layer instead of the projection layer,
+   because it means two different things depending on how the share was minted. On a **scopeAll**
+   share it means *out of scope*: "share every repo" is a promise about the dashboard the owner
+   actually looks at, and a repo they retired by hiding is the one case where scopeAll would hand a
+   stranger something the owner cannot see themselves. So `getSharedRepos` filters it out and
+   `shareCoversRepo` returns false for it, the latter mattering more: it is the choke point
+   `auth.ts`'s guestGate 404s every scoped route on, and filtering only the list would hide the repo
+   from the dashboard while leaving `/api/repos/<id>/…` open to anyone who kept the id. On an
+   **explicit per-repo** share it means nothing: naming a repo in the grant outranks a
+   dashboard-declutter flag, so the repo stays reachable and `guestRepoView` flattens the flag so it
+   still renders. Consequently a scopeAll guest's `repo_hidden_changed` is delivered as the scope
+   change it is (`repo_removed` / `repo_added`, see `src/share/events.ts`), never as the flag.
+
+   > One trap, paid for once: `shareCoversRepo` treats a **missing** row as covered. `repo_removed`
+   > is broadcast *after* the row is deleted, so answering "not covered" for a row that no longer
+   > exists would swallow the very event that tells the guest to drop the card. "Not covered" has to
+   > mean deliberately withheld, not merely absent.
 
    > Measured, not assumed. Owner and guest streams captured over one 12-second window while a scan
    > ran: the **owner** received 48 `repo_added` (each carrying a repo's absolute path), 51
@@ -1262,7 +1291,14 @@ plain commit is additive and recoverable, an amend is neither.
   minting a link that can't be opened, and builds the URL against the tunnel origin — not the
   `localhost` the owner is probably reading it on.
 - **Owner always wins.** A browser holding both an owner session and a guest cookie is the owner. The
-  practical consequence: to preview what a guest sees, open the link in a private window.
+  practical consequence: to preview what a guest sees, open the link in a private window, **over the
+  tunnel**. A private window pointed at `http://127.0.0.1:<port>/s/<token>` does *not* work and is a
+  standing trap: `authMiddleware` branches on `isRemoteRequest()` (src/auth.ts), which is true only
+  when `cf-connecting-ip` / `x-forwarded-*` is present, and in local mode the loopback branch returns
+  `next()` before it ever reads the guest cookie. The share is redeemed, the cookie is set, and the
+  page still renders the owner's dashboard. To reproduce the guest gate locally without a tunnel,
+  front the daemon with a proxy that injects `cf-connecting-ip`, which is the one thing the tunnel
+  adds.
 - Rotating the signing key ("sign out everywhere") also invalidates every guest cookie — but not the
   links themselves, which are rows; the next `/s/<token>` open issues a fresh cookie. Revoke to kill
   a link.

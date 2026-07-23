@@ -237,9 +237,9 @@ export const META: Record<string, RouteMeta> = {
   "POST /api/mcp": { summary: "MCP JSON-RPC endpoint (Streamable HTTP) — AI tool access.", tags: ["mcp"] },
 
   // ── share links — owner admin (the guest surface is policy'd in src/share/policy.ts) ────
-  "GET /api/shares": { summary: "List the owner's live share links (never returns a link's token).", tags: ["shares"] },
+  "GET /api/shares": { summary: "List the owner's live shares, including copyable URLs when retained.", tags: ["shares"] },
   "POST /api/shares": {
-    summary: "Mint a share link; returns the secret URL token ONCE (the only time it's returned).",
+    summary: "Mint a share link; returns its token and retains it for the owner's Copy link action.",
     body: ShareCreateSchema,
     tags: ["shares"],
   },

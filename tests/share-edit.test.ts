@@ -53,6 +53,23 @@ function mint(overrides: Partial<Parameters<typeof createShare>[1]> = {}): { sha
   return { share, token };
 }
 
+/**
+ * Like mint(), but the plaintext travels all the way into Share.token instead of being thrown
+ * away after hashing. mint() itself never passes one (every test above it predates the `token`
+ * column), so this exists specifically for the Copy-link tests, where the caller needs the exact
+ * token that produced `tokenHash` in hand to prove the two never drift apart.
+ */
+function mintWithToken(token: string): Share {
+  return createShare(hashToken(token), {
+    label: "for my brother",
+    perm: "view",
+    scopeAll: false,
+    repoIds: [repoA],
+    expiresAt: null,
+    token,
+  });
+}
+
 test("an edit changes the grant and leaves the secret alone", () => {
   const { share, token } = mint();
 
@@ -103,7 +120,7 @@ test("rotating mints a new secret and kills the old one", () => {
   const next = mintToken();
   expect(next).not.toBe(token);
 
-  const rotated = rotateShareToken(share.id, hashToken(next));
+  const rotated = rotateShareToken(share.id, { tokenHash: hashToken(next) });
   expect(rotated?.id).toBe(share.id);
 
   // The new link works…
@@ -114,7 +131,7 @@ test("rotating mints a new secret and kills the old one", () => {
 
 test("rotating resets the usage counters, since they described the old key", () => {
   const { share } = mint();
-  const rotated = rotateShareToken(share.id, hashToken(mintToken()));
+  const rotated = rotateShareToken(share.id, { tokenHash: hashToken(mintToken()) });
   expect(rotated?.useCount).toBe(0);
   expect(rotated?.lastUsedAt).toBeNull();
 });
@@ -124,7 +141,7 @@ test("a revoked share can be neither edited nor rotated", () => {
   expect(revokeShare(share.id)).toBe(true);
 
   expect(updateShare(share.id, { label: "back from the dead" })).toBeNull();
-  expect(rotateShareToken(share.id, hashToken(mintToken()))).toBeNull();
+  expect(rotateShareToken(share.id, { tokenHash: hashToken(mintToken()) })).toBeNull();
 
   // And the original secret stays dead rather than being quietly re-armed.
   const found = getShareByTokenHash(hashToken(token));
@@ -133,7 +150,59 @@ test("a revoked share can be neither edited nor rotated", () => {
 
 test("editing an unknown id reports failure instead of creating one", () => {
   expect(updateShare("00000000-0000-0000-0000-000000000000", { label: "nope" })).toBeNull();
-  expect(rotateShareToken("00000000-0000-0000-0000-000000000000", hashToken(mintToken()))).toBeNull();
+  expect(rotateShareToken("00000000-0000-0000-0000-000000000000", { tokenHash: hashToken(mintToken()) })).toBeNull();
+});
+
+// ── the plaintext token (Copy link on a share the owner already sent) ──────────
+// Retaining the secret alongside its hash is what lets the panel hand an existing link back
+// instead of only ever offering "regenerate". The two columns are written together everywhere
+// they're written at all, and the tests below exist to make sure they never say something
+// different: a stored token whose hash doesn't match token_hash would look like a perfectly good
+// link right up until someone tried to use it.
+
+test("createShare round-trips a token whose hash matches token_hash, so Copy link redeems", () => {
+  const token = mintToken();
+  const share = mintWithToken(token);
+  expect(share.token).toBe(token);
+  // The whole point: hashing the stored plaintext back must reproduce the stored hash, proven by
+  // redeeming through the real lookup path rather than comparing strings by hand.
+  expect(getShareByTokenHash(hashToken(share.token!))?.id).toBe(share.id);
+});
+
+test("createShare without a token leaves it null — the pre-existing-link shape", () => {
+  // mint() never passes `token`, which is exactly the shape of a link minted before this column
+  // existed: no secret to show, so Copy link has nothing to offer and that must not crash.
+  const { share } = mint();
+  expect(share.token).toBeNull();
+  expect(getShare(share.id)?.token).toBeNull();
+});
+
+test("rotating replaces both the hash and the plaintext together", () => {
+  const token = mintToken();
+  const share = mintWithToken(token);
+  const next = mintToken();
+
+  const rotated = rotateShareToken(share.id, { tokenHash: hashToken(next), token: next });
+  expect(rotated?.token).toBe(next);
+
+  // The new plaintext redeems…
+  expect(getShareByTokenHash(hashToken(next))?.id).toBe(share.id);
+  // …and the old one is gone on both fronts, not just the hash — a lingering plaintext would be
+  // a live secret with no way left to look it up, which is worse than storing none at all.
+  expect(getShareByTokenHash(hashToken(token))).toBeNull();
+});
+
+test("revoking clears the stored token but keeps the row as an audit trail", () => {
+  const token = mintToken();
+  const share = mintWithToken(token);
+  expect(revokeShare(share.id)).toBe(true);
+
+  const after = getShare(share.id);
+  // Still here — revoke stamps revoked_at, it does not delete.
+  expect(after).not.toBeNull();
+  expect(after?.revokedAt).not.toBeNull();
+  // But nothing left for a stale Copy button to hand back.
+  expect(after?.token).toBeNull();
 });
 
 // ── the origin a link was handed out on ────────────────────────────────────────
@@ -161,14 +230,14 @@ test("editing a link leaves its origin alone", () => {
 
 test("regenerating re-stamps the origin to wherever we live now", () => {
   const { share } = mint({ origin: "https://old-host.trycloudflare.com" });
-  rotateShareToken(share.id, hashToken(mintToken()), "https://new-host.trycloudflare.com");
+  rotateShareToken(share.id, { tokenHash: hashToken(mintToken()), origin: "https://new-host.trycloudflare.com" });
   // Otherwise regenerating a stale link would hand back another link still flagged stale.
   expect(getShare(share.id)?.origin).toBe("https://new-host.trycloudflare.com");
 });
 
 test("regenerating without a known origin keeps the previous one", () => {
   const { share } = mint({ origin: "https://old-host.trycloudflare.com" });
-  rotateShareToken(share.id, hashToken(mintToken()), null);
+  rotateShareToken(share.id, { tokenHash: hashToken(mintToken()), origin: null });
   // Better to keep the last address we knew than to blank it and lose the staleness signal.
   expect(getShare(share.id)?.origin).toBe("https://old-host.trycloudflare.com");
 });

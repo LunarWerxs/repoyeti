@@ -23,6 +23,9 @@ import {
   listShareEvents,
   countShareEvents,
   logShareEvent,
+  setRepoPinned,
+  setRepoStarred,
+  setRepoHidden,
   type Share,
 } from "../src/db.ts";
 import { hashToken, mintToken, GUEST_COOKIE } from "../src/share/index.ts";
@@ -137,6 +140,48 @@ test("view guest CANNOT commit — that's the whole difference between the tiers
   expect(res.status).toBe(403);
 });
 
+test("a view guest's /api/repos carries the owner's pinned/starred grouping, not the owner's secrets", async () => {
+  // guestRepoView() used to flatten pinned/starred to false, which meant a guest's dashboard rendered
+  // one flat unlabelled list while the owner's showed Pinned / Starred / everything-else sections —
+  // same data, different component tree. That flattening was dropped deliberately (see redact.ts),
+  // so this proves the flags now survive the REAL gate end-to-end, not just the guestRepoView() unit
+  // test in share-events.test.ts. It also re-pins the fields that must still be stripped, in the same
+  // request, so the loosening can't be mistaken for "the narrowing was abandoned".
+  setRepoPinned(sharedRepoId, true);
+  setRepoStarred(secretRepoId, true);
+  try {
+    const app = createApp(enforcedCfg());
+    const share = mkShare("view", { scopeAll: true, repoIds: [] });
+    const res = await app.request("/api/repos", { headers: { ...REMOTE, cookie: guestCookie(share) } });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      repos: Array<{
+        name: string;
+        pinned: boolean;
+        starred: boolean;
+        identityId: string | null;
+        syncAccountLogin: string | null;
+        autoCommit: boolean;
+      }>;
+    };
+    const shared = body.repos.find((r) => r.name === "shared-repo")!;
+    const secret = body.repos.find((r) => r.name === "secret-repo")!;
+    expect(shared.pinned).toBe(true);
+    expect(secret.starred).toBe(true);
+
+    // Still guest-facing, not owner-facing: the owner's bookkeeping stays stripped for every repo.
+    for (const r of body.repos) {
+      expect(r.identityId).toBeNull();
+      expect(r.syncAccountLogin).toBeNull();
+      expect(r.autoCommit).toBe(false);
+    }
+  } finally {
+    // Other tests in this file assert on repo state too; leave the fixtures as they were found.
+    setRepoPinned(sharedRepoId, false);
+    setRepoStarred(secretRepoId, false);
+  }
+});
+
 // ── scope ────────────────────────────────────────────────────────────────────────
 
 test("a repo outside the share is 404 — indistinguishable from not existing", async () => {
@@ -174,6 +219,55 @@ test("scopeAll shares every repo — including ones the link never named", async
   // which the per-repo shares in this file are proven NOT to.
   expect(names).toContain("shared-repo");
   expect(names).toContain("secret-repo");
+});
+
+test("scopeAll excludes a repo the owner has HIDDEN — from the list AND from its scoped route", async () => {
+  // The leak this closes: a scopeAll share used to hand over EVERY row, so a repo the owner had
+  // retired by hiding it — one they can't see on their own dashboard — went to the guest anyway.
+  // Both surfaces are asserted together on purpose, because the obvious half-fix is to filter
+  // getSharedRepos() and stop: that hides the repo from the dashboard while `/api/repos/<id>/changes`
+  // stays wide open to anyone who already has the id. shareCoversRepo() is the gate's actual choke
+  // point (auth.ts guestGate), and pinning both here is what keeps them from drifting apart.
+  setRepoHidden(secretRepoId, true);
+  try {
+    const app = createApp(enforcedCfg());
+    const share = mkShare("view", { scopeAll: true, repoIds: [] });
+    const cookie = guestCookie(share);
+
+    const list = await app.request("/api/repos", { headers: { ...REMOTE, cookie } });
+    const names = ((await list.json()) as { repos: Array<{ name: string }> }).repos.map((r) => r.name);
+    expect(names).not.toContain("secret-repo");
+
+    // 404, not just "absent from the list" — an id-addressable route must refuse it too.
+    const scoped = await app.request(`/api/repos/${secretRepoId}/changes`, { headers: { ...REMOTE, cookie } });
+    expect(scoped.status).toBe(404);
+  } finally {
+    setRepoHidden(secretRepoId, false);
+  }
+});
+
+test("an explicit per-repo share still reaches a repo the owner has hidden", async () => {
+  // The owner's dashboard-declutter flag is a personal preference, not a scope decision — naming a
+  // repo in the share list is a deliberate act that outranks it. So a hidden repo named explicitly
+  // must still list, still reach its scoped route, AND the guest's own copy must read hidden: false
+  // (guestRepoView flattens it) so the dashboard actually renders the repo instead of looking broken.
+  setRepoHidden(secretRepoId, true);
+  try {
+    const app = createApp(enforcedCfg());
+    const share = mkShare("view", { scopeAll: false, repoIds: [secretRepoId] });
+    const cookie = guestCookie(share);
+
+    const list = await app.request("/api/repos", { headers: { ...REMOTE, cookie } });
+    const body = (await list.json()) as { repos: Array<{ name: string; hidden: boolean }> };
+    const secret = body.repos.find((r) => r.name === "secret-repo");
+    expect(secret).toBeDefined();
+    expect(secret!.hidden).toBe(false);
+
+    const scoped = await app.request(`/api/repos/${secretRepoId}/changes`, { headers: { ...REMOTE, cookie } });
+    expect(scoped.status).not.toBe(404);
+  } finally {
+    setRepoHidden(secretRepoId, false);
+  }
 });
 
 // ── the owner-only surface, swept ────────────────────────────────────────────────
@@ -483,6 +577,71 @@ test("the owner keeps full access while shares exist", async () => {
   expect(body.repos.length).toBeGreaterThanOrEqual(2);
   // ...and still reaches owner-only routes.
   expect((await app.request("/api/shares", { headers: { ...REMOTE, cookie } })).status).toBe(200);
+});
+
+test("the owner's share list returns a retained, redeemable URL — but not a raw token field", async () => {
+  // This is the route-level contract behind the row Copy button. A DB-only test can prove the
+  // plaintext survived, and a component test can prove a supplied url is copied, while both still
+  // miss the seam that joins them: toDto() must build the URL from THIS share's retained token.
+  const app = createApp(enforcedCfg());
+  const token = mintToken();
+  const share = createShare(hashToken(token), {
+    label: "copy me",
+    perm: "view",
+    scopeAll: false,
+    repoIds: [sharedRepoId],
+    expiresAt: null,
+    token,
+  });
+
+  const res = await app.request("/api/shares", {
+    headers: { ...REMOTE, cookie: ownerCookie() },
+  });
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as {
+    shares: Array<{ id: string; url: string | null; token?: string }>;
+  };
+  const listed = body.shares.find((s) => s.id === share.id);
+  expect(listed).toBeDefined();
+  expect(listed!.url).not.toBeNull();
+  expect(listed!.url).toContain(token);
+  expect(listed!.token).toBeUndefined();
+
+  // Redemption still consults token_hash, not the retained display copy. If this redirect works,
+  // the URL handed to Copy and the authentication digest were minted from the same secret.
+  const redeem = await app.request(`/s/${token}`);
+  expect(redeem.status).toBe(302);
+});
+
+test("the owner's share list leaves a legacy row visibly uncopyable", async () => {
+  const app = createApp(enforcedCfg());
+  const legacy = mkShare("view"); // no `token`, exactly the pre-retention row shape
+  const res = await app.request("/api/shares", {
+    headers: { ...REMOTE, cookie: ownerCookie() },
+  });
+  const body = (await res.json()) as { shares: Array<{ id: string; url: string | null }> };
+  expect(body.shares.find((s) => s.id === legacy.id)?.url).toBeNull();
+});
+
+test("a guest cannot read retained URLs from the owner-only share list", async () => {
+  // Once repoyeti.db retains bearer credentials, this boundary is more than an admin nicety:
+  // leaking GET /api/shares to any guest would let one share-link holder collect every other link.
+  const app = createApp(enforcedCfg());
+  const token = mintToken();
+  createShare(hashToken(token), {
+    label: "must stay owner-only",
+    perm: "view",
+    scopeAll: false,
+    repoIds: [sharedRepoId],
+    expiresAt: null,
+    token,
+  });
+  const guest = mkShare("control");
+  const res = await app.request("/api/shares", {
+    headers: { ...REMOTE, cookie: guestCookie(guest) },
+  });
+  expect(res.status).toBe(403);
+  expect(await res.text()).not.toContain(token);
 });
 
 test("owner wins when a browser holds BOTH an owner session and a guest cookie", async () => {

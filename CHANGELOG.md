@@ -6,6 +6,50 @@ All notable changes to RepoYeti are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-23
+
+### Added
+
+- **Copy an existing share link.** Every link in Settings → Accounts → Sharing now has a copy
+  button, so re-sending one no longer means regenerating it and breaking the copy the other person
+  already has. RepoYeti keeps each link it mints in its local database to make this possible, which
+  is a deliberate trade: that file now holds working links rather than one-way hashes of them. It
+  never leaves your machine (settings sync carries preferences only, never secrets), and anything
+  able to read it could already mint links of its own. Revoking a link erases its copy. Links made
+  before this update were never kept, so theirs is greyed out and says so; regenerating one is the
+  way to get a copyable link, at the usual cost of retiring the old one.
+- **Tray shortcuts can forward dropped files and folders.** Dropping paths onto a shortcut built
+  from `misc/Tray-Launch.vbs` now passes them to an adapter through the opt-in
+  `LUNARWERX_TRAY_DROP` process variable. Plain launches and adapters that do not support drops
+  keep their existing behavior.
+
+### Changed
+
+- **Unread notifications are easier to spot.** The header count badge is now destructive red
+  instead of the app's brand green, keeping it visually distinct from ordinary enabled and
+  success states.
+
+### Fixed
+
+- **A share link now shows the same dashboard you see.** Pinned and Starred arrived at the other
+  end flattened, so whoever you sent the link to got one long unlabelled list instead of your
+  Pinned section on top and a collapsible "All repositories" below it. Both flags now survive the
+  trip, and they update live: pin something and the guest's sections re-group without a reload.
+  There was never a second UI to maintain; the daemon was blanking the two fields the one UI
+  groups by. Everything that was private stays private: commit identities, linked GitHub accounts,
+  auto-commit and any credential embedded in a remote URL are still stripped, and a guest still
+  cannot pin or star anything.
+- **"Share every repo" no longer includes the ones you hid.** Hiding a repo is how you retire it
+  here, so a "share all" link was handing out repos you had already taken off your own dashboard.
+  Hidden repos are now out of scope for those links entirely: gone from the list, and their
+  per-repo URLs answer 404 rather than merely being unlisted. Hide one while someone has the link
+  open and it disappears from their view live; unhide it and it comes back. Sharing a repo by
+  picking it explicitly is unchanged and still wins, because naming it is a decision that outranks
+  a dashboard-declutter flag.
+- **The file viewer closes when its repo disappears.** Removing a repo (or, on a share link,
+  losing access to it) dropped the card but left the file drawer open on it, looking live while
+  every button in it quietly failed. It now closes with the card.
+
 ## [0.11.0] - 2026-07-20
 
 ### Added
@@ -632,7 +676,10 @@ Initial public tag of the daemon + dashboard, before the release-hardening pass.
   fetch / pull (fast-forward only) / push (no force) / commit.
 - cloudflared tunnel (+ QR) and the Vue 3 PWA dashboard.
 
-[Unreleased]: https://github.com/LunarWerxs/RepoYeti/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/LunarWerxs/RepoYeti/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/LunarWerxs/RepoYeti/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/LunarWerxs/RepoYeti/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/LunarWerxs/RepoYeti/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/LunarWerxs/RepoYeti/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/LunarWerxs/RepoYeti/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/LunarWerxs/RepoYeti/compare/v0.6.1...v0.7.0

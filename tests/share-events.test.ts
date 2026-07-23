@@ -15,7 +15,7 @@
  */
 import { test, expect, beforeAll } from "bun:test";
 import { $ } from "bun";
-import { initDb, createShare, type Share } from "../src/db.ts";
+import { initDb, createShare, setRepoHidden, type Share } from "../src/db.ts";
 import { hashToken, mintToken } from "../src/share/index.ts";
 import { guestEventData } from "../src/share/events.ts";
 import { redactRemoteUrl, guestRepoView } from "../src/share/redact.ts";
@@ -79,9 +79,14 @@ test("owner-plane events are dropped entirely", () => {
     ["auto_update_restarting", { message: "restarting" }],
     ["repo_identity_changed", { id: inScope, identityId: "i1" }],
     ["repo_account_changed", { id: inScope, host: "github.com", login: "someone" }],
+    // Note this list runs against the PER-REPO `share`. Hiding is owner-plane for that grant: it
+    // names the repo outright, so decluttering your own dashboard can't silently revoke a link you
+    // handed someone. On an all-repos share hiding IS a scope change and is translated instead —
+    // see the repo_hidden_changed tests below. autoCommit is flattened by guestRepoView, so
+    // forwarding it would put state on the guest's dashboard its controls can't act on. And
+    // pinned/starred deliberately DO reach a guest now, per "the guest dashboard groups by
+    // pinned/starred, so those patches must arrive live".
     ["repo_hidden_changed", { id: inScope, hidden: true }],
-    ["repo_pinned_changed", { id: inScope, pinned: true }],
-    ["repo_starred_changed", { id: inScope, starred: true }],
     ["repo_auto_commit_changed", { id: inScope, autoCommit: true }],
   ];
   for (const [event, payload] of forbidden) {
@@ -107,20 +112,37 @@ test("repo_removed is scoped too", () => {
   expect(guestEventData(share, "repo_removed", { id: outOfScope })).toBeNull();
 });
 
+test("the guest dashboard groups by pinned/starred, so those patches must arrive live", () => {
+  // guestRepoView keeps both flags (one dashboard, one layout), which makes them live view state:
+  // without these events a guest's Pinned section drifts from the owner's until a reload.
+  for (const [event, key] of [
+    ["repo_pinned_changed", "pinned"],
+    ["repo_starred_changed", "starred"],
+  ] as const) {
+    const out = guestEventData(share, event, { id: inScope, [key]: true });
+    expect(out, `${event} must reach a guest`).not.toBeNull();
+    expect(out!.event).toBe(event); // forwarded as itself, not translated
+    // The payload is an id + a boolean and nothing else — no owner bookkeeping rides along.
+    expect(JSON.parse(out!.data)).toEqual({ id: inScope, [key]: true });
+    // ...and it is still scoped, like every other single-repo event.
+    expect(guestEventData(share, event, { id: outOfScope, [key]: true })).toBeNull();
+  }
+});
+
 test("a multi-repo event is filtered element-wise, not all-or-nothing", () => {
   // The subtle one: `{repos:[…]}` events would otherwise leak every OTHER repo's id + name just
   // because one repo in the batch happened to be in scope.
-  const data = guestEventData(share, "repo_synced", {
+  const out = guestEventData(share, "repo_synced", {
     repos: [
       { id: inScope, name: "in-scope", pulled: 2 },
       { id: outOfScope, name: "out-of-scope", pulled: 9 },
     ],
   });
-  expect(data).not.toBeNull();
-  const parsed = JSON.parse(data!) as { repos: Array<{ id: string }> };
+  expect(out).not.toBeNull();
+  const parsed = JSON.parse(out!.data) as { repos: Array<{ id: string }> };
   expect(parsed.repos).toHaveLength(1);
   expect(parsed.repos[0]!.id).toBe(inScope);
-  expect(data).not.toContain("out-of-scope");
+  expect(out!.data).not.toContain("out-of-scope");
 });
 
 test("a multi-repo event with nothing in scope is dropped, not sent empty", () => {
@@ -144,18 +166,92 @@ test("repo_added reaches an all-repos share, but never a per-repo one", () => {
   expect(guestEventData(allShare, "repo_added", { repo })).not.toBeNull();
 });
 
+// ── hiding a repo scopes it out of an all-repos share ─────────────────────────────
+
+test("allShare: hiding a repo translates repo_hidden_changed into repo_removed", () => {
+  // From the guest's side, the owner hiding a repo IS the repo leaving their scope — so a scopeAll
+  // share must never forward the owner's private repo_hidden_changed verbatim; it is renamed to
+  // the scope-change event a guest actually understands.
+  const out = guestEventData(allShare, "repo_hidden_changed", { id: inScope, hidden: true });
+  expect(out).not.toBeNull();
+  expect(out!.event).toBe("repo_removed");
+  expect(JSON.parse(out!.data)).toEqual({ id: inScope });
+});
+
+test("allShare: un-hiding a repo translates repo_hidden_changed into repo_added, narrowed like any other guest repo", () => {
+  // The un-hide direction is the same translation run in reverse: the repo arriving back on the
+  // owner's own dashboard is, for a scopeAll guest, a repo arriving on theirs — and it must go
+  // through the same guestRepoView narrowing every other repo_added repo gets, not a raw row that
+  // still carries the owner's identity/account bookkeeping.
+  const out = guestEventData(allShare, "repo_hidden_changed", { id: inScope, hidden: false });
+  expect(out).not.toBeNull();
+  expect(out!.event).toBe("repo_added");
+  const parsed = JSON.parse(out!.data) as {
+    repo: { identityId: string | null; autoCommit: boolean };
+  };
+  expect(parsed.repo.identityId).toBeNull();
+  expect(parsed.repo.autoCommit).toBe(false);
+});
+
+test("a per-repo share drops repo_hidden_changed in both directions", () => {
+  // That grant names the repo explicitly. Decluttering your own dashboard must not silently
+  // revoke a link you deliberately handed someone, so neither hide nor un-hide may translate for
+  // a share that isn't scopeAll.
+  expect(guestEventData(share, "repo_hidden_changed", { id: inScope, hidden: true })).toBeNull();
+  expect(guestEventData(share, "repo_hidden_changed", { id: inScope, hidden: false })).toBeNull();
+});
+
+test("allShare: a hidden repo is out of scope for both single-repo and batch events", () => {
+  // getSharedRepos/shareCoversRepo (db.ts) already exclude a hidden repo from an all-repos share;
+  // this pins that the live event stream honours the same rule instead of leaking the repo through
+  // a different code path that forgot to check it.
+  setRepoHidden(inScope, true);
+  try {
+    expect(guestEventData(allShare, "repo_state_changed", { id: inScope, status: null })).toBeNull();
+    const out = guestEventData(allShare, "repo_synced", {
+      repos: [{ id: inScope, name: "in-scope", pulled: 1 }],
+    });
+    expect(out).toBeNull(); // the batch's only member is now out of scope ⇒ nothing to send
+  } finally {
+    setRepoHidden(inScope, false); // other tests in this file still assume inScope is visible
+  }
+});
+
+test("allShare: repo_added is dropped when the carried repo's own hidden flag is true", () => {
+  // An event must not smuggle in what the list won't show: even though the event NAME is
+  // repo_added, a payload whose repo is (or just became) hidden is exactly what a scopeAll guest's
+  // repo list already excludes — so it gets dropped on the raw flag, before guestRepoView ever
+  // flattens it away.
+  const hiddenRepo = { id: "hidden-1", name: "hidden-repo", absPath: "/x/y", status: null, hidden: true };
+  expect(guestEventData(allShare, "repo_added", { repo: hiddenRepo })).toBeNull();
+});
+
+test("allShare: a repo that no longer EXISTS is still covered, so repo_removed survives", () => {
+  // The trap in excluding hidden repos from a scopeAll share: shareCoversRepo went from an
+  // unconditional `true` to a row lookup, and `repo_removed` is broadcast AFTER the row is deleted
+  // (service/repo-mgmt.ts: deleteRepos, then broadcast). A lookup that answered "not covered" for a
+  // missing row would therefore swallow the one event that tells the guest's dashboard to drop the
+  // card, stranding a dead repo on screen until they reloaded. "Not covered" means deliberately
+  // withheld, never merely absent.
+  const gone = "definitely-not-a-real-repo-id";
+  const out = guestEventData(allShare, "repo_removed", { id: gone });
+  expect(out).not.toBeNull();
+  expect(out!.event).toBe("repo_removed");
+  expect(JSON.parse(out!.data)).toEqual({ id: gone });
+});
+
 // ── credential redaction ─────────────────────────────────────────────────────────
 
 test("a live event never carries a credential embedded in the remote URL", () => {
   // RepoStatus.remote is whatever `git remote -v` printed. If the owner's origin embeds a PAT,
   // it would ride this event straight to the guest.
-  const data = guestEventData(share, "repo_state_changed", {
+  const out = guestEventData(share, "repo_state_changed", {
     id: inScope,
     status: { branch: "main", remote: "https://someone:ghp_SUPERSECRET@github.com/o/r.git", dirty: 1 },
   });
-  expect(data).not.toBeNull();
-  expect(data).not.toContain("ghp_SUPERSECRET");
-  expect(data).toContain("https://github.com/o/r.git");
+  expect(out).not.toBeNull();
+  expect(out!.data).not.toContain("ghp_SUPERSECRET");
+  expect(out!.data).toContain("https://github.com/o/r.git");
 });
 
 test("redactRemoteUrl strips credentials without mangling ordinary remotes", () => {
@@ -199,6 +295,38 @@ test("guestRepoView drops the owner's credential bookkeeping + private flags", (
   expect(view.autoCommit).toBe(false);
   expect(view.status!.remote).toBe("https://h/r.git");
   expect(JSON.stringify(view)).not.toContain("owner-login");
+  // `hidden` is flattened for a different reason than the rest: the share's scope already decides
+  // what a guest sees, and passing it through would blank a share that names a hidden repo.
+  expect(view.hidden).toBe(false);
+});
+
+test("guestRepoView KEEPS pinned/starred — the guest gets the owner's layout, not a flat list", () => {
+  // The regression this pins: flattening both flags didn't hide a secret, it silently downgraded
+  // the guest to a different dashboard. RepoList groups on exactly these two, and only labels its
+  // catch-all section (and lets you collapse it) when a section exists above it — so with both
+  // false a share rendered as one unlabelled, uncollapsible list.
+  const base = {
+    id: "r1",
+    name: "n",
+    displayName: null,
+    absPath: "/x",
+    source: "pinned" as const,
+    vcs: "git" as const,
+    isSubmodule: false,
+    identityId: null,
+    syncAccountHost: null,
+    syncAccountLogin: null,
+    hidden: false,
+    autoCommit: false,
+    status: null,
+    updatedAt: 0,
+  };
+  expect(guestRepoView({ ...base, pinned: true, starred: false }).pinned).toBe(true);
+  expect(guestRepoView({ ...base, pinned: false, starred: true }).starred).toBe(true);
+  // ...and an unflagged repo is still unflagged (no accidental promotion into a section).
+  const plain = guestRepoView({ ...base, pinned: false, starred: false });
+  expect(plain.pinned).toBe(false);
+  expect(plain.starred).toBe(false);
 });
 
 // ── wiring ───────────────────────────────────────────────────────────────────────

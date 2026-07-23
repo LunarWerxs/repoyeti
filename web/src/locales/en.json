@@ -1005,11 +1005,11 @@
     "tierViewHint": "See repos, uncommitted files, diffs and history. Changes nothing.",
     "tierControlHint": "Everything in View, plus fetch, pull, push, stage, commit and Smart Commit. Commits are authored as you.",
     "scopeAll": "Share every repo",
-    "scopeAllHint": "Includes repos you add later. Off = pick exactly which repos this link can reach; nothing else is even visible.",
+    "scopeAllHint": "Includes repos you add later, and leaves out any you've hidden. Off = pick exactly which repos this link can reach; nothing else is even visible.",
     "allRepos": "All repos",
     "nRepos": "{n} repo | {n} repos",
     "readyTitle": "\"{label}\" is ready",
-    "readyOnce": "Copy it now: this is the only time it's shown. If you lose it, revoke this link and make another.",
+    "readyOnce": "Copy it now, or use Copy link on this row whenever you need it again.",
     "copy": "Copy link",
     "copied": "Copied",
     "copyFailed": "Couldn't copy. Select the link and copy it manually.",
@@ -1046,6 +1046,8 @@
     "rotate": "Regenerate",
     "rotateConfirm": "Replace link?",
     "rotateFailed": "Couldn't regenerate the link",
-    "staleLink": "Sent on an address that has since changed — regenerate to get a working link."
+    "copyLink": "Copy link",
+    "copyUnavailable": "Made before RepoYeti kept links. Regenerate to get a copyable one (the old link stops working).",
+    "staleLink": "Sent on an address that has since changed. Copy the link and send it again."
   }
 }

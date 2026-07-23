@@ -280,10 +280,10 @@ export const api = {
   authMe: () => req<AuthMe>("GET", "/api/auth/me"),
 
   // ── share links (owner-only; the daemon 403s a guest that tries any of these) ─────
-  /** The owner's live share links. Never carries a link's token — see ShareCreated. */
+  /** The owner's live shares, including a ready-to-copy URL when the daemon retained the token. */
   listShares: () => req<{ shares: Share[] }>("GET", "/api/shares"),
-  /** Mint a link. The ONLY call that returns the secret token, and only this once: show it
-   *  immediately, because nothing can recover it afterwards. */
+  /** Mint a link. Returns the token for the immediate confirmation panel; the daemon also retains
+   *  it so later listShares calls can return the same link as Share.url. */
   createShare: (input: {
     label: string;
     perm: SharePerm;
@@ -304,9 +304,8 @@ export const api = {
       repoIds?: string[];
     },
   ) => req<{ ok: boolean; share: Share }>("PATCH", `/api/shares/${encodeURIComponent(id)}`, patch),
-  /** Re-key a link: returns a NEW token (the second and only other call that carries one) and
-   *  kills the previous URL. The way back to a working link once the original is lost, since the
-   *  daemon only ever stored its hash. */
+  /** Re-key a link: returns and retains a NEW token, and kills the previous URL. For a legacy row
+   *  that predates token retention, this is how it gains a copyable Share.url. */
   rotateShare: (id: string) =>
     req<ShareCreated>("POST", `/api/shares/${encodeURIComponent(id)}/rotate`),
   /** Revoke a link — effective on the guest's very next request. */

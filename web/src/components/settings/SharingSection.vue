@@ -42,10 +42,12 @@ const addressRotates = computed(
 );
 /** Which link's revoke button is armed (inline two-step confirm, as elsewhere in Settings). */
 const confirmRevoke = ref<string | null>(null);
-/** The freshly-minted link. The ONLY moment its token exists client-side — once this clears, it's
- *  gone for good (the daemon stored only a hash), so it stays until the owner dismisses it. */
+/** The freshly-minted link shown prominently once. Dismissing it is safe: the daemon retains the
+ *  secret and the matching row continues to offer Copy link. */
 const minted = ref<{ url: string; label: string } | null>(null);
 const copied = ref(false);
+/** Which row just had its link copied, so only that row shows the check. */
+const copiedRow = ref<string | null>(null);
 /** Pending auto-dismiss of the minted-link panel (armed only once the link has been copied). */
 let dismissTimer: number | null = null;
 /** The create form is disclosed on demand — see the "Create a share link" button. */
@@ -156,12 +158,35 @@ async function copyLink(): Promise<void> {
 }
 
 /**
+ * Copy an EXISTING link's URL, straight from its row.
+ *
+ * The daemon now hands each share back with its `url` (it retains the secret — see Share.token in
+ * src/db.ts), so the panel no longer has to treat the one-shot minted banner as the only chance to
+ * capture a link. A row whose `url` is null is one minted before that, and re-keying is its only
+ * route to a copyable URL; the button stays visible and disabled rather than vanishing, because a
+ * control that is present on every other row and absent on one reads as a bug rather than a rule.
+ */
+async function copyRowLink(s: Share): Promise<void> {
+  if (!s.url) return;
+  try {
+    await navigator.clipboard.writeText(s.url);
+    copiedRow.value = s.id;
+    // Per-row rather than a shared boolean: two rows must never both show the confirming check.
+    setTimeout(() => {
+      if (copiedRow.value === s.id) copiedRow.value = null;
+    }, 2000);
+  } catch {
+    toast.error(t("share.copyFailed"));
+  }
+}
+
+/**
  * Auto-dismiss the minted-link panel.
  *
- * This is only safe because "Regenerate" exists: the daemon stores nothing but a hash, so before
- * that button this panel held the single existing copy of the URL and hiding it on a timer would
- * have destroyed the link. Now losing it costs one click to re-key, so the panel can behave like
- * the transient confirmation it looks like.
+ * Safe to hide on a timer because the link is no longer only here: the row it belongs to carries a
+ * Copy button of its own. (Even before that it was defensible, since "Regenerate" could always mint
+ * a fresh URL, but that cost the recipient their access — the panel timing out is now genuinely
+ * free.) So it can behave like the transient confirmation it looks like.
  */
 function armDismiss(): void {
   if (dismissTimer !== null) clearTimeout(dismissTimer);
@@ -335,7 +360,7 @@ watch(
         <p class="text-[11.5px] leading-snug text-muted-foreground">{{ $t("share.ephemeralHost") }}</p>
       </div>
 
-      <!-- The freshly-minted link: shown once, and only once. -->
+      <!-- The immediate mint confirmation. The row remains copyable after this banner closes. -->
       <div v-if="minted" class="mx-3.5 my-3 flex flex-col gap-2.5 rounded-lg border border-success/30 bg-success/10 p-3">
         <div class="flex items-center gap-1.5">
           <Link2 :size="13" class="shrink-0 text-success" />
@@ -393,10 +418,31 @@ watch(
              destructive AND swaps the tooltip to the explicit confirm wording, so the second
              click is still an informed one. aria-labels mirror the tooltip for screen readers. -->
         <div class="flex shrink-0 items-center gap-0.5">
-          <!-- Edit + Regenerate can be disabled (dead link) — a native-disabled button is
-               pointer-events:none, which would swallow the very tooltip that now carries the
-               button's only label. The span is the hover proxy: IT stays hoverable, so the
-               tooltip explains a greyed icon too. -->
+          <!-- Copy / Edit / Regenerate can be disabled (dead link, or no stored secret) — a
+               native-disabled button is pointer-events:none, which would swallow the very tooltip
+               that now carries the button's only label. The span is the hover proxy: IT stays
+               hoverable, so the tooltip explains a greyed icon too. -->
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <span class="inline-flex">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  :disabled="!s.live || !s.url"
+                  :aria-label="s.url ? $t('share.copyLink') : $t('share.copyUnavailable')"
+                  @click="copyRowLink(s)"
+                >
+                  <Check v-if="copiedRow === s.id" />
+                  <Copy v-else />
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <!-- A greyed Copy needs to say WHY, or it reads as broken: this link predates the
+                 daemon keeping them, and re-keying is the only way to a copyable URL. -->
+            <TooltipContent>
+              {{ copiedRow === s.id ? $t("share.copied") : s.url ? $t("share.copyLink") : $t("share.copyUnavailable") }}
+            </TooltipContent>
+          </Tooltip>
           <Tooltip>
             <TooltipTrigger as-child>
               <span class="inline-flex">

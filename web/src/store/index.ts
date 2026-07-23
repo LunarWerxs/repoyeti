@@ -12,6 +12,7 @@ import type {
   UpdateStatus,
 } from "../types";
 import { useSelfUpdate } from "@/lib/useSelfUpdate";
+import { dismissViewerForRepo } from "@/lib/file-viewer";
 import { useRepoActions, type StatusKey } from "./repo";
 import { useAi } from "./ai";
 import { useGitOps } from "./git-ops";
@@ -576,8 +577,15 @@ export const useStore = defineStore("repoyeti", () => {
             else repos.value.push(repo);
           }
         } else if (event.value === "repo_removed") {
-          // A scan root was removed, or the owner removed this repo. Drop the card live.
-          if (payload.id) repos.value = repos.value.filter((r) => r.id !== payload.id);
+          // A scan root was removed, the owner removed this repo, or — on an all-repos share link —
+          // they hid it and it left this viewer's scope (src/share/events.ts translates the hide
+          // into exactly this event). Drop the card live, and take the file viewer with it if it
+          // was open on that repo: the drawer would otherwise sit there looking live while every
+          // call it makes 404s against a repo this session can no longer reach.
+          if (payload.id) {
+            repos.value = repos.value.filter((r) => r.id !== payload.id);
+            dismissViewerForRepo(payload.id);
+          }
         } else if (event.value === "repo_renamed") {
           // Renamed on another device — adopt the new label live.
           patchRepo(payload.id, { displayName: payload.displayName ?? null });

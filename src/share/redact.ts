@@ -52,8 +52,22 @@ export function guestStatus(status: RepoStatus | null): RepoStatus | null {
  * on the same codebase, the UI shows the path, and hiding it would break the product for no real
  * gain (they already know where the code lives). What's dropped is the owner's private bookkeeping:
  * which commit identity and which GitHub account this repo authenticates as (`identityId`,
- * `syncAccountHost`, `syncAccountLogin`) name the owner's credentials, and the dashboard flags
- * (`hidden`/`pinned`/`starred`/`autoCommit`) are the owner's own organisation, not the guest's.
+ * `syncAccountHost`, `syncAccountLogin`) name the owner's credentials, and `autoCommit` is owner
+ * automation state that drives controls a guest never gets.
+ *
+ * `pinned` / `starred` are KEPT, and that is a deliberate reversal. A guest renders the exact same
+ * component tree as the owner (AppShell → RepoList), which splits the dashboard into Pinned /
+ * Starred / everything-else and hangs the collapse affordance off those section headers. Flattening
+ * both flags to false didn't hide a secret — it silently downgraded the guest to a DIFFERENT
+ * layout: one unlabelled, uncollapsible list, because RepoList only shows the catch-all heading
+ * when a section exists above it. Which repos the owner considers important is emphasis, not a
+ * credential, and the emphasis is most of the value of sending someone the link. One dashboard,
+ * one layout.
+ *
+ * `hidden` stays flattened, and is NOT the same call: the share's scope already decides what a
+ * guest may see, so the flag has no work left to do here — while passing it through would mean a
+ * share naming a repo the owner happens to have hidden renders "No repositories yet" for the guest
+ * and looks broken.
  */
 export function guestRepoView(repo: RepoView): RepoView {
   return {
@@ -62,8 +76,6 @@ export function guestRepoView(repo: RepoView): RepoView {
     syncAccountHost: null,
     syncAccountLogin: null,
     hidden: false,
-    pinned: false,
-    starred: false,
     autoCommit: false,
     status: guestStatus(repo.status),
   };

@@ -350,9 +350,12 @@ onBeforeUnmount(() => {
                 @click.stop="toggleNotif"
               >
                 <Bell />
+                <!-- Red (destructive), NOT the brand green: the whole app leans on green for
+                     buttons / "remote access enabled" / etc., so a green notification dot vanished
+                     into it. Red is the universal unread-count colour and stands out hardest. -->
                 <span
                   v-if="store.unreadCount"
-                  class="absolute top-1 right-1 grid min-w-4 place-items-center rounded-full bg-primary px-1 text-[10px] leading-4 font-semibold text-primary-foreground"
+                  class="absolute top-1 right-1 grid min-w-4 place-items-center rounded-full bg-destructive px-1 text-[10px] leading-4 font-semibold text-destructive-foreground"
                 >{{ store.unreadCount > 9 ? "9+" : store.unreadCount }}</span>
               </Button>
             </TooltipTrigger>

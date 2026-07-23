@@ -173,8 +173,9 @@ export function initDb(): Database {
     -- exactly what a stateless signed token cannot do. Hence rows: every guest request re-reads
     -- its share here, so revoking is a single UPDATE that takes effect on the next request.
     --
-    -- INVARIANT (unchanged): no raw secret bytes land in SQLite. token_hash is sha256(secret);
-    -- the plaintext link is shown to the owner EXACTLY ONCE, at mint, and is unrecoverable after.
+    -- token_hash is the ONLY value redemption consults. The plaintext is also retained in the
+    -- migrated \`token\` column below so the owner can copy an existing link; that deliberately
+    -- makes a database copy bearer-sensitive (see Share.token for the full tradeoff).
     CREATE TABLE IF NOT EXISTS shares (
       id            TEXT PRIMARY KEY,
       token_hash    TEXT NOT NULL UNIQUE,     -- sha256(secret) hex — never the secret itself
@@ -220,6 +221,14 @@ export function initDb(): Database {
     // Which public origin a share link's URL was built against, so the Sharing panel can spot a
     // link whose address no longer exists (a quick tunnel re-hosts itself on every restart).
     handle.exec("ALTER TABLE shares ADD COLUMN origin TEXT;");
+  } catch {
+    /* column already present */
+  }
+  try {
+    // The link's own secret, retained so the Sharing panel can offer "Copy link" on a share it
+    // minted earlier rather than only in the one-shot panel at creation. See the `token` field on
+    // Share for what this costs and why it is nonetheless the owner's call.
+    handle.exec("ALTER TABLE shares ADD COLUMN token TEXT;");
   } catch {
     /* column already present */
   }
@@ -862,7 +871,7 @@ export function setRepoAutoCommit(repoId: string, autoCommit: boolean): void {
 // The storage half of the guest principal. The policy half is src/share/policy.ts; the gate is
 // auth.ts authMiddleware. Nothing here decides what a guest may DO — these are plain rows.
 
-/** A share link as stored. `tokenHash` never leaves this module; the secret itself is never stored. */
+/** A share link as stored. `tokenHash` never leaves this module; `token` is the retained secret. */
 export interface Share {
   id: string;
   label: string;
@@ -886,6 +895,22 @@ export interface Share {
    * the Sharing panel can show and offer to fix.
    */
   origin: string | null;
+  /**
+   * The link's plaintext secret, so the panel can offer **Copy link** on a share it minted earlier.
+   *
+   * This is a deliberate, owner-made reversal of the original "the plaintext is unrecoverable"
+   * stance, and the cost is stated plainly rather than buried: a copy of `repoyeti.db` is now a set
+   * of working share links, where before it was a set of useless sha256 digests. What makes that
+   * acceptable HERE is that the file never leaves the machine (settings sync ships an allowlist of
+   * config keys and no secrets at all, see src/connections-sync.ts) and reading it already requires
+   * running as the owner, who can simply mint a fresh link through the API anyway.
+   *
+   * `token_hash` remains the ONLY thing redemption consults (getShareByTokenHash), so this column
+   * is display state, not an auth path: corrupting or clearing it can cost you the Copy button and
+   * nothing else. NULL for every link minted before this existed, and cleared on revoke, since a
+   * revoked link's secret has no use left and no reason to sit in the file.
+   */
+  token: string | null;
 }
 
 interface ShareRow {
@@ -899,10 +924,11 @@ interface ShareRow {
   last_used_at: number | null;
   use_count: number;
   origin: string | null;
+  token: string | null;
 }
 
 const SHARE_COLS =
-  "id, label, perm, scope_all, created_at, expires_at, revoked_at, last_used_at, use_count, origin";
+  "id, label, perm, scope_all, created_at, expires_at, revoked_at, last_used_at, use_count, origin, token";
 
 function toShare(r: ShareRow): Share {
   return {
@@ -916,6 +942,7 @@ function toShare(r: ShareRow): Share {
     lastUsedAt: r.last_used_at,
     useCount: r.use_count,
     origin: r.origin ?? null,
+    token: r.token ?? null,
   };
 }
 
@@ -928,12 +955,16 @@ export interface ShareInput {
   expiresAt: number | null;
   /** The public origin the link will be handed out on; null when no tunnel is up. */
   origin?: string | null;
+  /** The plaintext secret whose sha256 is `tokenHash`, retained so the panel can re-offer the link
+   *  later (see Share.token). Passed alongside the hash rather than derived here so db.ts never
+   *  grows a second definition of the hashing that redemption depends on. */
+  token?: string | null;
 }
 
 /**
- * Insert a share. `tokenHash` is sha256(secret) computed by the caller (src/share/tokens.ts) —
- * this module never sees the secret, which is what makes "the plaintext link exists exactly once,
- * in the mint response" true by construction rather than by discipline.
+ * Insert a share. `tokenHash` is sha256(secret) computed by the caller (src/share/tokens.ts), and
+ * `input.token` retains that same secret for the owner's Copy link action. Keeping both values
+ * explicit lets tests assert they correspond while leaving redemption dependent on the hash only.
  */
 export function createShare(tokenHash: string, input: ShareInput): Share {
   const id = randomUUID();
@@ -941,8 +972,8 @@ export function createShare(tokenHash: string, input: ShareInput): Share {
   const db2 = getDb();
   db2
     .query(
-      `INSERT INTO shares (id, token_hash, label, perm, scope_all, created_at, expires_at, revoked_at, last_used_at, use_count, origin)
-       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, ?)`,
+      `INSERT INTO shares (id, token_hash, label, perm, scope_all, created_at, expires_at, revoked_at, last_used_at, use_count, origin, token)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, ?, ?)`,
     )
     .run(
       id,
@@ -953,6 +984,7 @@ export function createShare(tokenHash: string, input: ShareInput): Share {
       now,
       input.expiresAt,
       input.origin ?? null,
+      input.token ?? null,
     );
   if (!input.scopeAll) {
     const ins = db2.query(`INSERT OR IGNORE INTO share_repos (share_id, repo_id) VALUES (?, ?)`);
@@ -969,6 +1001,7 @@ export function createShare(tokenHash: string, input: ShareInput): Share {
     lastUsedAt: null,
     useCount: 0,
     origin: input.origin ?? null,
+    token: input.token ?? null,
   };
 }
 
@@ -1051,28 +1084,40 @@ export function updateShare(id: string, patch: ShareUpdate): Share | null {
  * Point a share at a NEW secret, returning the share so the caller can hand back the new link.
  * The old token stops working the instant this lands.
  *
- * This exists because the plaintext link is unrecoverable by design (only its hash is stored), so
- * an owner who loses the URL has no way back to it. Rotating is the honest answer: it keeps
- * "the secret is never at rest" true, and gives them a working link again — at the cost of
- * invalidating whatever they sent before, which the UI has to say plainly.
+ * Originally this was the ONLY way back to a link the owner had lost, because the plaintext was
+ * unrecoverable by design. It no longer is (see Share.token, which powers Copy link), so rotating
+ * has narrowed to what its name says: re-keying, for when the link itself should stop working.
+ * That still costs whoever holds the old URL their access, which the UI has to say plainly.
+ *
+ * `next` is an object rather than positional arguments on purpose: `token` and `origin` are both
+ * optional and both `string | null`, so side by side they would be trivial to transpose and the
+ * mistake would be silent — a link that copies as somebody else's address, or a stored secret that
+ * doesn't match the stored hash.
  */
-export function rotateShareToken(id: string, tokenHash: string, origin?: string | null): Share | null {
+export function rotateShareToken(
+  id: string,
+  next: { tokenHash: string; token?: string | null; origin?: string | null },
+): Share | null {
   const current = getShare(id);
   if (!current || current.revokedAt !== null) return null;
   // The re-keyed URL is handed out fresh, so it belongs to wherever we live NOW — otherwise
   // regenerating a stale link would produce another link still flagged stale.
   getDb()
     .query(
-      `UPDATE shares SET token_hash = ?, last_used_at = NULL, use_count = 0, origin = ? WHERE id = ?`,
+      `UPDATE shares SET token_hash = ?, token = ?, last_used_at = NULL, use_count = 0, origin = ? WHERE id = ?`,
     )
-    .run(tokenHash, origin ?? current.origin ?? null, id);
+    .run(next.tokenHash, next.token ?? null, next.origin ?? current.origin ?? null, id);
   return getShare(id);
 }
 
 /** Revoke a link. Idempotent; returns false when the id is unknown. The row stays (audit trail). */
 export function revokeShare(id: string): boolean {
+  // The retained plaintext goes with the revocation. The row stays for the audit trail, but a
+  // revoked link's secret can never authenticate anything again, so keeping it would be pure
+  // liability: a growing pile of dead credentials in the file, none of which buys the owner a
+  // Copy button they could use. `token_hash` is left alone — it is what marks the digest as spent.
   const r = getDb()
-    .query(`UPDATE shares SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`)
+    .query(`UPDATE shares SET revoked_at = ?, token = NULL WHERE id = ? AND revoked_at IS NULL`)
     .run(Date.now(), id);
   return r.changes > 0;
 }
@@ -1105,7 +1150,13 @@ export function shareRepoIds(shareId: string): string[] {
 
 /** Repos a share exposes, as full rows — the scoped substitute for getRepos() on a guest request. */
 export function getSharedRepos(share: Share): RepoView[] {
-  if (share.scopeAll) return getRepos();
+  // "Share all repositories" means all the repos the owner actually keeps on their dashboard, not
+  // every row in the table. Hiding a repo is how you retire one here, so a hidden repo is one the
+  // owner has already decided they don't want to look at — silently handing it to a guest reads as
+  // a leak, and is the one case where scopeAll would show a stranger something the owner cannot
+  // see themselves. An EXPLICIT per-repo grant is the opposite and is honoured below: naming a
+  // repo in the share list is a decision that outranks a dashboard-declutter flag.
+  if (share.scopeAll) return getRepos().filter((r) => !r.hidden);
   return (
     getDb()
       .query(
@@ -1118,9 +1169,30 @@ export function getSharedRepos(share: Share): RepoView[] {
   ).map(toView);
 }
 
-/** Does this share cover this repo? The scope half of the guest gate. */
+/**
+ * Does this share cover this repo? The scope half of the guest gate.
+ *
+ * This is the single choke point for per-repo access: auth.ts's guestGate 404s every scoped route
+ * on it, and share/events.ts filters the SSE stream through it. So the hidden-repo rule belongs
+ * HERE and not in getSharedRepos alone — filtering only the list would hide a repo from the guest's
+ * dashboard while leaving `/api/repos/<id>/changes` wide open to anyone who kept the id.
+ */
 export function shareCoversRepo(share: Share, repoId: string): boolean {
-  if (share.scopeAll) return true;
+  if (share.scopeAll) {
+    // Same rule as getSharedRepos: for an all-repos share, hidden means out of scope.
+    //
+    // A MISSING row still counts as covered, and that is not sloppiness. `repo_removed` is
+    // broadcast AFTER the row is deleted (service/repo-mgmt.ts deleteRepos → broadcast), so
+    // answering "no" for a row that no longer exists would swallow exactly the event that tells
+    // the guest's dashboard to drop the card, stranding it until a reload. "Not covered" has to
+    // mean deliberately withheld, not merely absent — this branch returned an unconditional
+    // `true` before hidden repos were excluded, and a nonexistent repo keeps that answer, with
+    // the route handler 404ing on its own as it always did.
+    const r = getDb().query(`SELECT hidden FROM repos WHERE id = ?`).get(repoId) as {
+      hidden: number;
+    } | null;
+    return !r || r.hidden === 0;
+  }
   const r = getDb()
     .query(`SELECT 1 AS hit FROM share_repos WHERE share_id = ? AND repo_id = ?`)
     .get(share.id, repoId) as { hit: number } | null;

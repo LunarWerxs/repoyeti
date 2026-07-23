@@ -80,6 +80,27 @@ export async function closeFile(): Promise<void> {
   state.open = false;
 }
 
+/**
+ * Close the viewer because its repo went away, not because anyone asked.
+ *
+ * Two ways that happens: the owner removed the repo, or a share link's guest watched it leave their
+ * scope (on an all-repos link the owner hiding a repo arrives as `repo_removed` — see
+ * src/share/events.ts). Either way the card is already gone from the dashboard, and leaving the
+ * drawer open over it is worse than closing: FileViewerInner's repo-name lookup blanks out and
+ * every call it can still make (diff, content, save) is now scoped out and answers 404, so the
+ * panel LOOKS live while nothing in it works.
+ *
+ * No discard prompt, deliberately. `closeFile` asks before dropping unsaved edits because the user
+ * chose to close and can choose otherwise; here there is nothing to choose. The file cannot be
+ * saved any more, so "keep editing" would only hold an editor open over a save that must fail.
+ */
+export function dismissViewerForRepo(repoId: string): void {
+  if (state.target?.repoId !== repoId) return;
+  editorDirty.value = false;
+  state.open = false;
+  state.target = null;
+}
+
 /** True when this exact file is the one currently shown (drives the row's active tint). */
 export function isViewing(repoId: string, path: string, commit?: string): boolean {
   return (

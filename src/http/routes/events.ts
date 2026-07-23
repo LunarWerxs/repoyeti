@@ -25,12 +25,15 @@ export function register(app: Hono, { cfg }: Deps): void {
       const listener = (event: string, data: string, payload: unknown): void => {
         // A guest sees only events for repos their share covers, and only from an allowlist of
         // event types — the raw bus carries the owner's settings, tunnel URL, and scan activity.
+        // The projection can rename the event as well as rewrite its body (hiding a repo reaches
+        // an all-repos guest as `repo_removed`), so take BOTH fields from it, never just the data.
         if (share) {
           const projected = guestEventData(share, event, payload);
           if (projected === null) return;
-          data = projected;
+          queue.push(projected);
+        } else {
+          queue.push({ event, data });
         }
-        queue.push({ event, data });
         if (queue.length > MAX_SSE_QUEUE) queue.splice(0, queue.length - MAX_SSE_QUEUE);
         wake?.();
         wake = null;

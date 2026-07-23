@@ -613,8 +613,8 @@ export type SharePerm = "view" | "control";
 export type ShareDuration = "hour" | "day" | "week" | "month" | "year" | "never";
 
 /** One share link in the owner's Sharing panel (GET /api/shares).
- *  Note there is no token field, and never will be: only sha256(secret) is stored, so the link
- *  itself is shown exactly once — in the response to creating it — and is unrecoverable after. */
+ *  The raw token is not a field here; the owner-only DTO instead exposes a server-built `url`.
+ *  It is null only for legacy rows minted before plaintext retention. */
 export interface Share {
   id: string;
   label: string;
@@ -634,9 +634,15 @@ export interface Share {
   /** True when that origin is no longer where this daemon lives, so the link now resolves to
    *  nothing on the recipient's end. Decided by the daemon — see toDto() in routes/shares.ts. */
   stale: boolean;
+  /** The link itself, ready to copy, or null when the daemon has no secret for it: a link minted
+   *  before RepoYeti started retaining them. Those can only get a copyable URL by re-keying, which
+   *  breaks whatever the recipient already has — so the panel disables Copy and says why rather
+   *  than silently dropping the button. Built against the CURRENT address, so a `stale` link's
+   *  copy is a working URL to re-send. */
+  url: string | null;
 }
 
-/** POST /api/shares — the ONLY response that ever carries the secret link token. */
+/** POST /api/shares and POST /api/shares/:id/rotate return this immediate mint result. */
 export interface ShareCreated {
   ok: boolean;
   share: Share;
