@@ -6,6 +6,8 @@ All notable changes to RepoYeti are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-07-23
+
 ### Added
 
 - **Live collaboration between RepoYeti installations.** A share can allow collaboration
@@ -22,7 +24,9 @@ All notable changes to RepoYeti are documented here. The format is based on
   remote diff. A separate mutating tool can commit, fast-forward pull, and push the sharer's
   checkout only when the share is still collaborative and control-tier, the local MCP Safety
   Rail approves it, and an opaque owner-computed fingerprint proves the dirty state has remained
-  unchanged under observation for at least ten minutes. It never amends.
+  unchanged under observation for at least ten minutes. It never amends. The general MCP surface
+  also gains `repo_changes`, so agents can inspect dirty paths and their staged/stat state before
+  requesting a diff or commit.
 
 ### Changed
 
@@ -30,6 +34,14 @@ All notable changes to RepoYeti are documented here. The format is based on
   zero-input default. The Access panel can instead expose Cloudflare's generated quick-tunnel
   address directly, or use a named tunnel on a domain the owner controls. The older
   `go.repoyeti.com` address remains routed so previously issued links keep working.
+- **Remote access now uses progressive disclosure.** The stable hosted choice and current address
+  stay visible while the Cloudflare/custom-domain choices fold behind Change. The header dialog
+  uses the stable hosted URL, shows an existing live share link when one is available, and links
+  directly to the full create/edit/revoke screen.
+- **Guest AI use is owner-controlled and bounded.** Share guests use only the owner's selected
+  default provider, receive no provider/model metadata, and are limited per share link to ten
+  requests per minute with at most two running concurrently. The owner can disable guest commit
+  generation altogether.
 
 ### Fixed
 
@@ -40,6 +52,27 @@ All notable changes to RepoYeti are documented here. The format is based on
   already daemon-side, but the guest UI skipped the owner's redacted AI settings and incorrectly
   stopped at a local “no API key” check. Guests now receive only two capability booleans; the
   provider, model, and key remain on the sharer's daemon, which returns only the generated result.
+- **The hosted address no longer loses a startup race to Cloudflare.** Settings now follows the
+  daemon's hosted-by-default state while status hydrates, so it cannot latch onto a temporary
+  `trycloudflare.com` URL. Pending hosted registration and intentionally temporary Cloudflare
+  links also receive different, accurate warnings.
+- **Collaboration views and remote commits revalidate the actual bytes.** Presence snapshots
+  refresh their encrypted patch even when an edit keeps identical line totals, and an MCP-driven
+  remote commit carries the exact owner-observed fingerprint so the sharer's daemon can reject a
+  tree that changed between observation and mutation.
+
+### Security
+
+- **Stable-address relay private keys now live in the OS keychain.** Existing plaintext keys are
+  migrated out of `config.json`; only the public relay identity remains there. Keychain-less
+  systems retain the documented local fallback rather than silently losing their stable address.
+- **Shared file and diff reads cannot escape through links or Git metadata.** RepoYeti resolves
+  symlinks and Windows junctions before reading, confines the real target to the repository, and
+  blocks `.git` path segments case-insensitively across read, write, move, diff, and commit-file
+  routes.
+- **Frontend security dependencies are pinned to patched releases.** DOMPurify, `fast-uri`, and
+  `brace-expansion` receive explicit safe overrides, while Monaco is updated to the current
+  compatible release.
 
 ## [0.12.0] - 2026-07-23
 
@@ -711,7 +744,8 @@ Initial public tag of the daemon + dashboard, before the release-hardening pass.
   fetch / pull (fast-forward only) / push (no force) / commit.
 - cloudflared tunnel (+ QR) and the Vue 3 PWA dashboard.
 
-[Unreleased]: https://github.com/LunarWerxs/RepoYeti/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/LunarWerxs/RepoYeti/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/LunarWerxs/RepoYeti/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/LunarWerxs/RepoYeti/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/LunarWerxs/RepoYeti/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/LunarWerxs/RepoYeti/compare/v0.9.0...v0.10.0
