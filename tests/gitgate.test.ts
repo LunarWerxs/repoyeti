@@ -47,3 +47,11 @@ test("createSemaphore preserves FIFO order for queued tasks", async () => {
   );
   expect(order).toEqual([1, 2, 3]);
 });
+
+test("createSemaphore never deadlocks on a fractional positive limit", async () => {
+  const sem = createSemaphore(0.5);
+
+  expect(await sem.run(async () => "ok")).toBe("ok");
+  expect(sem.active).toBe(0);
+  expect(sem.waiting).toBe(0);
+});

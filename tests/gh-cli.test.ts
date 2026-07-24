@@ -1,5 +1,9 @@
 import { test, expect } from "bun:test";
-import { parseGhAccounts } from "../src/gh-cli.ts";
+import {
+  accountsSnapshot,
+  invalidateAccountsSnapshot,
+  parseGhAccounts,
+} from "../src/gh-cli.ts";
 
 test("parseGhAccounts reads login, active flag, protocol and scopes", () => {
   const accounts = parseGhAccounts(
@@ -57,4 +61,17 @@ test("parseGhAccounts handles multiple hosts (GitHub Enterprise)", () => {
   const work = accounts.find((a) => a.host === "ghe.example.com");
   expect(work?.login).toBe("work");
   expect(work?.gitProtocol).toBe("ssh");
+});
+
+test("concurrent cold account reads share one in-flight snapshot", async () => {
+  invalidateAccountsSnapshot();
+  try {
+    const snapshots = await Promise.all(Array.from({ length: 16 }, () => accountsSnapshot()));
+
+    // Object identity is deliberate here: without singleflight, every cold caller constructs its
+    // own snapshot after launching a gh process plus two git processes.
+    expect(new Set(snapshots).size).toBe(1);
+  } finally {
+    invalidateAccountsSnapshot();
+  }
 });

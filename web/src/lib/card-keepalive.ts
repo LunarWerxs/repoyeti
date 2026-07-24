@@ -46,7 +46,13 @@ export function cardKeepAlive(repoId: string) {
         evict();
       } else {
         const cur = kept.get(repoId);
-        if (cur) cur.expanded = false;
+        if (cur) {
+          cur.expanded = false;
+          // The registry may be temporarily oversized while every retained card is open.
+          // Re-run eviction as soon as one becomes eligible so that oversize does not persist
+          // until an unrelated card happens to expand later.
+          evict();
+        }
       }
     },
     /** Call when the card unmounts (list filtering/removal): a fresh mount starts cold. */

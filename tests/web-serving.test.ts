@@ -1,8 +1,8 @@
-import { test, expect, beforeAll, afterAll } from "bun:test";
-import { readdirSync, existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createApp } from "../src/http/app.ts";
 import type { RepoYetiConfig } from "../src/config.ts";
+import { createApp } from "../src/http/app.ts";
 
 // These guard the static-file serving in src/daemon.ts (mountWeb). The bug they prevent:
 // a request for a hashed JS chunk that no longer exists on disk (an old tab after a rebuild)
@@ -13,7 +13,9 @@ const localCfg = (): RepoYetiConfig => ({ roots: [], port: 7171, maxDepth: 6, ma
 
 const ASSETS = join(import.meta.dir, "..", "web", "dist", "assets");
 const realAsset = (): string => {
-  const js = readdirSync(ASSETS).find((f) => f.endsWith(".js"));
+  const js = readdirSync(ASSETS)
+    .filter((f) => f.endsWith(".js"))
+    .sort((a, b) => statSync(join(ASSETS, b)).size - statSync(join(ASSETS, a)).size)[0];
   if (!js) throw new Error("no built JS asset found — run: bun run --cwd web build:fast");
   return js;
 };
@@ -28,7 +30,7 @@ beforeAll(() => {
   if (existsSync(join(WEB_DIST, "index.html"))) return; // a real build is present — use it
   createdFixture = true;
   mkdirSync(join(WEB_DIST, "assets"), { recursive: true });
-  writeFileSync(join(WEB_DIST, "assets", "app-deadbeef.js"), "export const ok = 1;\n");
+  writeFileSync(join(WEB_DIST, "assets", "app-deadbeef.js"), "// compressible fixture\n".repeat(256));
   writeFileSync(join(WEB_DIST, "index.html"), '<!doctype html><html><body><div id="app"></div></body></html>\n');
   writeFileSync(join(WEB_DIST, "sw.js"), "self.addEventListener('install', () => {});\n");
   writeFileSync(join(WEB_DIST, "manifest.webmanifest"), '{"name":"RepoYeti"}\n');
@@ -42,6 +44,62 @@ test("existing /assets/*.js is served as JS, cached immutable", async () => {
   expect(res.status).toBe(200);
   expect(res.headers.get("content-type") ?? "").toContain("javascript");
   expect(res.headers.get("cache-control")).toContain("immutable");
+});
+
+test("large web assets stream compressed with cache-safe negotiation headers", async () => {
+  const path = `/assets/${realAsset()}`;
+  const app = createApp(localCfg());
+  const identity = await app.request(path);
+  const original = await identity.text();
+  expect(original.length).toBeGreaterThanOrEqual(1024);
+  expect(identity.headers.get("content-encoding")).toBeNull();
+  expect(identity.headers.get("vary") ?? "").toContain("Accept-Encoding");
+
+  const compressed = await app.request(path, { headers: { "accept-encoding": "gzip" } });
+  expect(compressed.status).toBe(200);
+  expect(compressed.headers.get("content-encoding")).toBe("gzip");
+  expect(compressed.headers.get("content-length")).toBeNull();
+  expect(compressed.headers.get("content-type") ?? "").toContain("javascript");
+  expect(compressed.headers.get("cache-control") ?? "").toContain("immutable");
+  expect(compressed.headers.get("vary") ?? "").toContain("Accept-Encoding");
+  expect(compressed.body).not.toBeNull();
+
+  const decoded = await new Response(
+    compressed.body!.pipeThrough(new DecompressionStream("gzip")),
+  ).text();
+  expect(decoded).toBe(original);
+
+  // Unsupported or explicitly disabled encodings must fall back to the identity bytes.
+  const brotliOnly = await app.request(path, { headers: { "accept-encoding": "br" } });
+  expect(brotliOnly.headers.get("content-encoding")).toBeNull();
+  expect(await brotliOnly.text()).toBe(original);
+  const disabled = await app.request(path, {
+    headers: { "accept-encoding": "gzip;q=0, deflate;q=0, identity;q=1" },
+  });
+  expect(disabled.headers.get("content-encoding")).toBeNull();
+  expect(await disabled.text()).toBe(original);
+});
+
+test("compression stays scoped to static files and skips small responses", async () => {
+  const app = createApp(localCfg());
+
+  const small = await app.request("/manifest.webmanifest", {
+    headers: { "accept-encoding": "gzip" },
+  });
+  expect(small.status).toBe(200);
+  expect(Number(small.headers.get("content-length") ?? 0)).toBeLessThan(1024);
+  expect(small.headers.get("content-encoding")).toBeNull();
+  expect(small.headers.get("vary") ?? "").toContain("Accept-Encoding");
+
+  // The static middleware is mounted after API routes; even a large API document retains the API
+  // stack's own transport policy rather than being transformed by the web-asset compressor.
+  const apiDoc = await app.request("/api/openapi.json", {
+    headers: { "accept-encoding": "gzip" },
+  });
+  expect(apiDoc.status).toBe(200);
+  expect((await apiDoc.clone().text()).length).toBeGreaterThan(1024);
+  expect(apiDoc.headers.get("content-encoding")).toBeNull();
+  expect(apiDoc.headers.get("vary")).toBeNull();
 });
 
 test("a MISSING /assets/*.js returns 404 — never the index.html fallback", async () => {

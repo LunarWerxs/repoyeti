@@ -29,6 +29,10 @@ function toLines(s: string): string[] {
 // middle is reported as one "modify" block instead — still a useful gutter, just coarser.
 const MAX_LCS = 2500;
 
+// A per-side cap alone still permitted a 2,500 × 2,500 matrix. Bound the actual work as well:
+// the compact direction map below uses one byte per cell, and this also caps comparisons/CPU.
+export const MAX_LCS_CELLS = 1_000_000;
+
 /** A pure deletion has no modified line of its own; mark the line now sitting just after the gap
  *  (clamped to the file — a deletion at EOF marks the last line). */
 const deleteMarker = (base: number, offset: number, modTotal: number): LineChange => {
@@ -43,16 +47,30 @@ function diffMiddle(a: string[], b: string[], base: number, modTotal: number): L
   if (n === 0 && m === 0) return [];
   if (n === 0) return [{ startLine: base + 1, endLine: base + m, kind: "add" }];
   if (m === 0) return [deleteMarker(base, 0, modTotal)];
-  if (n > MAX_LCS || m > MAX_LCS) return [{ startLine: base + 1, endLine: base + m, kind: "modify" }];
+  if (n > MAX_LCS || m > MAX_LCS || n * m > MAX_LCS_CELLS) {
+    return [{ startLine: base + 1, endLine: base + m, kind: "modify" }];
+  }
 
-  // dp[i][j] = LCS length of a[i..] and b[j..].
-  const dp: Uint32Array[] = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+  // Keep only two LCS-length rows while filling the table. Reconstruction needs only the chosen
+  // direction for each cell, so a one-byte map replaces the old Uint32 matrix (roughly 25 MB at
+  // the former worst case). 0 = equal, 1 = delete from a, 2 = insert from b.
+  const directions = new Uint8Array(n * m);
+  let next = new Uint16Array(m + 1);
+  let row = new Uint16Array(m + 1);
   for (let i = n - 1; i >= 0; i--) {
-    const row = dp[i]!;
-    const next = dp[i + 1]!;
     for (let j = m - 1; j >= 0; j--) {
-      row[j] = a[i] === b[j] ? next[j + 1]! + 1 : Math.max(next[j]!, row[j + 1]!);
+      const at = i * m + j;
+      if (a[i] === b[j]) {
+        row[j] = next[j + 1]! + 1;
+      } else if (next[j]! >= row[j + 1]!) {
+        row[j] = next[j]!;
+        directions[at] = 1;
+      } else {
+        row[j] = row[j + 1]!;
+        directions[at] = 2;
+      }
     }
+    [next, row] = [row, next];
   }
 
   const changes: LineChange[] = [];
@@ -83,7 +101,7 @@ function diffMiddle(a: string[], b: string[], base: number, modTotal: number): L
       flush();
       i++;
       j++;
-    } else if (dp[i + 1]![j]! >= dp[i]![j + 1]!) {
+    } else if (directions[i * m + j] === 1) {
       // Deletion from a (advance i).
       delRun++;
       i++;

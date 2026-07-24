@@ -11,6 +11,7 @@ import { toast } from "vue-sonner";
 import { useStore } from "../../store";
 import { api, ApiError } from "../../api";
 import { cn } from "@/lib/utils";
+import { defaultCommitAction, resolveDefaultCommitAction } from "@/lib/commit-default";
 import { useRepoFeedback } from "@/lib/repo-feedback";
 import { useTooltipConfig } from "@/lib/tooltip-config";
 import { shortcutsActive } from "@/lib/hotkeys";
@@ -39,7 +40,12 @@ const hasRemote = computed(() => !!st.value?.remote);
 const isLore = computed(() => props.repo.vcs === "lore");
 // Lore is centralized — it always has a server to push/sync to — so its remote ops don't
 // hinge on a configured git remote the way git's do.
-const hasUpstream = computed(() => isLore.value || hasRemote.value);
+const canSync = computed(() => isLore.value || hasRemote.value);
+// The stored Commit & Sync preference is only actionable when this repo has somewhere to sync.
+// A local-only git repo gets the conservative plain Commit button instead of a doomed remote op.
+const primaryCommitMode = computed(() =>
+  resolveDefaultCommitAction(defaultCommitAction.value, canSync.value),
+);
 // AI commit message + smart-commit are now VCS-agnostic (the daemon's VcsBackend collects the
 // diff / stages groups via `lore diff` / `lore stage`+`lore commit` for Lore), so they're shown
 // whenever AI is enabled, on git and Lore alike.
@@ -289,13 +295,24 @@ defineExpose({ loadRecentMsgs, recentMsgs });
     <div class="flex shrink-0 items-start gap-1.5">
       <div class="flex">
         <Button
+          data-testid="primary-commit-action"
+          :data-commit-mode="primaryCommitMode"
           class="h-9 rounded-r-none"
           :disabled="!commitMsg.trim() || committing"
-          @click="doCommit()"
+          @click="doCommit(primaryCommitMode)"
         >
           <Loader2 v-if="committing" class="animate-spin" />
+          <RefreshCw v-else-if="primaryCommitMode === 'sync'" />
           <GitCommitHorizontal v-else />
-          <span>{{ selectedCount > 0 ? $t("repo.commit.commitAll") : $t("repo.commit.commit") }}</span>
+          <span>{{
+            primaryCommitMode === "sync"
+              ? selectedCount > 0
+                ? $t("repo.commit.commitAllSync")
+                : $t("repo.commit.commitSync")
+              : selectedCount > 0
+                ? $t("repo.commit.commitAll")
+                : $t("repo.commit.commit")
+          }}</span>
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger as-child>
@@ -317,11 +334,11 @@ defineExpose({ loadRecentMsgs, recentMsgs });
               <Pencil :size="15" />
               <span>{{ $t("repo.commit.amend") }}</span>
             </DropdownMenuItem>
-            <DropdownMenuItem :disabled="!hasUpstream" @select="doCommit('push')">
+            <DropdownMenuItem :disabled="!canSync" @select="doCommit('push')">
               <ArrowUpFromLine :size="15" />
               <span>{{ $t("repo.commit.commitPush") }}</span>
             </DropdownMenuItem>
-            <DropdownMenuItem :disabled="!hasUpstream" @select="doCommit('sync')">
+            <DropdownMenuItem :disabled="!canSync" @select="doCommit('sync')">
               <RefreshCw :size="15" />
               <span>{{ $t("repo.commit.commitSync") }}</span>
             </DropdownMenuItem>
@@ -368,7 +385,7 @@ defineExpose({ loadRecentMsgs, recentMsgs });
               <Sparkles :size="15" />
               <span>{{ $t("repo.smartCommit.menuCommit") }}</span>
             </DropdownMenuItem>
-            <DropdownMenuItem :disabled="!hasUpstream" @select="runSmart(true)">
+            <DropdownMenuItem :disabled="!canSync" @select="runSmart(true)">
               <RefreshCw :size="15" />
               <span>{{ $t("repo.smartCommit.menuSync") }}</span>
             </DropdownMenuItem>

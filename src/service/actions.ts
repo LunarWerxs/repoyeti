@@ -105,23 +105,37 @@ export interface FetchAllResult {
 }
 
 /**
- * Fetch every repo that has a remote. Each goes through `fetchRepo` → the per-repo op-queue
- * and the network gate (`netGate`, default 4 concurrent), so firing them all at once stays
- * bounded — no new concurrency logic needed. Repos with no remote are skipped (not failures).
+ * Fetch every repo that has a remote. The small outer worker pool bounds pending async state;
+ * each worker still goes through `fetchRepo` → the per-repo queue and `netGate` (default 4).
+ * Repos with no remote are skipped (not failures).
  */
 export async function fetchAllRepos(): Promise<FetchAllResult> {
   const repos = getWatchableRepos().filter((r) => r.status?.remote);
-  const results = await Promise.allSettled(repos.map((r) => fetchRepo(r.id)));
-  const failed: FetchAllResult["failed"] = [];
+  const failedByIndex = new Array<FetchAllResult["failed"][number] | undefined>(repos.length);
   let ok = 0;
-  results.forEach((res, i) => {
-    if (res.status === "fulfilled" && res.value.ok) ok++;
-    else {
-      const code = res.status === "fulfilled" ? res.value.code : "ERROR";
-      failed.push({ id: repos[i]!.id, name: repos[i]!.name, code });
-    }
-  });
-  return { total: repos.length, ok, failed };
+  let next = 0;
+  const workers = Math.min(8, repos.length);
+  await Promise.all(
+    Array.from({ length: workers }, async () => {
+      while (true) {
+        const index = next++;
+        if (index >= repos.length) return;
+        const repo = repos[index]!;
+        try {
+          const result = await fetchRepo(repo.id);
+          if (result.ok) ok++;
+          else failedByIndex[index] = { id: repo.id, name: repo.name, code: result.code };
+        } catch {
+          failedByIndex[index] = { id: repo.id, name: repo.name, code: "ERROR" };
+        }
+      }
+    }),
+  );
+  return {
+    total: repos.length,
+    ok,
+    failed: failedByIndex.filter((failure) => failure !== undefined),
+  };
 }
 
 /** Result of discarding one file's working-tree changes (the changes-tree "Discard" action). */

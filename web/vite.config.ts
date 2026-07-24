@@ -1,11 +1,11 @@
-import { defineConfig } from "vite";
-import { fileURLToPath, URL } from "node:url";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import vue from "@vitejs/plugin-vue";
+import { fileURLToPath, URL } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
+import vue from "@vitejs/plugin-vue";
 import Icons from "unplugin-icons/vite";
+import { defineConfig } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
 
 // The daemon serves the built app from `web/dist` at its own origin, so the PWA
@@ -24,6 +24,22 @@ function daemonTarget(): string {
   return "http://127.0.0.1:7171";
 }
 const DAEMON = daemonTarget();
+
+// Give every code-viewer chunk a stable directory, including Monaco's many dynamically imported
+// language grammars. Workbox globs cannot infer that `abap-<hash>.js`, `yaml-<hash>.js`, etc. are
+// lazy Monaco payloads from their filenames alone; a directory marker lets the service-worker
+// install exclude the whole dependency graph without maintaining an ever-drifting language list.
+function isLazyMonacoChunk(moduleIds: readonly string[]): boolean {
+  return moduleIds.some((rawId) => {
+    const id = rawId.replaceAll("\\", "/");
+    return (
+      id.includes("/monaco-editor/") ||
+      id.endsWith("/src/lib/monaco-setup.ts") ||
+      /\/src\/components\/Monaco(?:Diff)?Viewer\.vue(?:\?|$)/.test(id)
+    );
+  });
+}
+
 export default defineConfig({
   resolve: {
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
@@ -68,12 +84,20 @@ export default defineConfig({
         // The Monaco code viewer is lazy-loaded (its language-service workers run several
         // MB); keep those heavy chunks out of the install-time precache and let them load
         // on demand the first time a file is opened.
-        // NB: glob the viewer component chunks (Monaco*.js) and monaco-setup.{js,css} too —
-        // an earlier "monaco-setup-*.js"-only pattern silently let the viewer chunks precache.
-        // vite 8's rolldown-vite bundler emits the Monaco core under "editor.api2-*.js" instead
-        // of bundling it into monaco-setup — exclude that chunk too so it stays out of precache.
+        // The build puts the complete graph under assets/lazy-monaco/ (see chunkFileNames).
+        // Keep the older filename guards as defense in depth for worker/CSS assets whose names
+        // are chosen by Vite's worker/CSS pipelines rather than the normal chunk callback.
         // index.html is excluded to pair with navigateFallback:null above (fresh shell, always).
-        globIgnores: ["**/*.worker-*.js", "**/monaco-setup-*", "**/Monaco*.js", "**/editor.api2-*.js", "**/index.html"],
+        globIgnores: [
+          "**/lazy-monaco/**",
+          "**/editor.worker-*.js",
+          "**/json.worker-*.js",
+          "**/monaco-setup-*",
+          "**/Monaco*",
+          "**/editor.api2-*.js",
+          "**/jsonMode-*",
+          "**/index.html",
+        ],
         runtimeCaching: [
           { urlPattern: /\/api\//, handler: "NetworkOnly" },
           { urlPattern: /\/oauth\//, handler: "NetworkOnly" },
@@ -92,7 +116,16 @@ export default defineConfig({
     // @vueuse/core ships /* #__PURE__ */ comments in positions rolldown can't bind to a call
     // expression (e.g. before an object literal); it flags them as INVALID_ANNOTATION even
     // though the annotation is inert there. Silence that one benign check to keep builds quiet.
-    rollupOptions: { checks: { invalidAnnotation: false } },
+    rollupOptions: {
+      checks: { invalidAnnotation: false },
+      output: {
+        chunkFileNames(chunkInfo) {
+          return isLazyMonacoChunk(chunkInfo.moduleIds)
+            ? "assets/lazy-monaco/[name]-[hash].js"
+            : "assets/[name]-[hash].js";
+        },
+      },
+    },
   },
   server: {
     port: 4319,

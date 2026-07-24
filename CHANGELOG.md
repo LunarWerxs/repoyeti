@@ -6,6 +6,42 @@ All notable changes to RepoYeti are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **The primary commit button is configurable.** Settings → Appearance can now make either
+  **Commit** or **Commit & Sync** the default action. The preference persists locally, updates
+  every repository card immediately, and safely falls back to a plain commit when a repository
+  has no sync target.
+- **History now explains repository activity at a glance.** A compact, accurate 24-hour overview
+  shows commits in the last hour/day, contributors, lines changed, average hourly churn, and an
+  interactive additions/deletions chart. Appearance controls can independently hide the overview
+  or colored branch map and can replace numeric change totals with proportional green/red bars.
+  Commit rows also gain a right-click menu for details, copying commit/author information, and
+  jumping to parents; the Changes, Date, Author, and Commit columns are centered consistently.
+
+### Changed
+
+- **Large installations now put firm bounds around background work.** Startup hydration, scans,
+  GitHub account discovery, identity detection, bulk fetch/pull, and collaboration publishing use
+  small worker pools, coalesce duplicate reads, and cap long-lived caches instead of creating one
+  process or promise chain per repository. Ordinary status refreshes also inspect Git operation
+  markers directly from `.git` metadata rather than launching another Git child.
+- **The dashboard does substantially less work before and during interaction.** Settings,
+  repository bodies, the file viewer, and Monaco load only when first needed; static assets stream
+  compressed; Monaco stays out of the PWA precache; large diff algorithms, history, and detail
+  caches are bounded; stale file/store requests are cancelled or ignored; and off-screen cards and
+  large changed-file trees avoid repeated full-DOM work.
+
+### Fixed
+
+- **Manually resized working trees no longer stop at their current content height.** Dragging the
+  grip can give a short changed-files list as much vertical workspace as desired, the exact
+  per-repository height survives reloads, and double-clicking the grip restores the global
+  content-fitting height preset. A small gap below the final file makes the end of the list
+  visually unambiguous. In automatic mode, live file additions and removals now explicitly
+  remeasure the viewport so it grows and shrinks with the visible rows up to that preset, using
+  a short firm ease-out animation that yields to direct dragging and reduced-motion preferences.
+
 ## [0.13.1] - 2026-07-24
 
 ### Changed

@@ -1,10 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  parsePatch,
-  diffModels,
   collapseContext,
-  renderFileDiff,
+  diffModels,
+  MAX_MODELS_CELLS,
   MAX_MODELS_LINES,
+  parsePatch,
+  renderFileDiff,
 } from "@/lib/unified-diff";
 
 describe("parsePatch", () => {
@@ -57,6 +58,14 @@ describe("diffModels", () => {
     const big = Array.from({ length: MAX_MODELS_LINES + 1 }, (_, i) => `l${i}`).join("\n");
     expect(diffModels(big, "x")).toBeNull();
   });
+
+  it("bails when two individually-valid sides exceed the total cell budget", () => {
+    const side = Math.floor(Math.sqrt(MAX_MODELS_CELLS)) + 1;
+    const original = Array.from({ length: side }, (_, i) => `old-${i}`).join("\n");
+    const modified = Array.from({ length: side }, (_, i) => `new-${i}`).join("\n");
+    expect(side).toBeLessThanOrEqual(MAX_MODELS_LINES);
+    expect(diffModels(original, modified)).toBeNull();
+  });
 });
 
 describe("collapseContext", () => {
@@ -106,4 +115,3 @@ describe("renderFileDiff", () => {
     });
   });
 });
-

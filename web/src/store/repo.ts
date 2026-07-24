@@ -63,6 +63,44 @@ export function useRepoActions(
   /** repoId → { total, truncated } when the server capped an oversized changed-file list
    *  (MAX_CHANGED_FILES); drives the "showing N of M" notice. Absent = not truncated. */
   const changesMeta = reactive<Record<string, { total: number; truncated: boolean }>>({});
+  // Only ACTIVE reads occupy this map. Clearing a repo deletes its token, so a late response is
+  // ignored without retaining one generation counter forever for every repo ever encountered.
+  const changesRequests = new Map<string, symbol>();
+
+  // Status hydration and live SSE can patch thousands of repos in quick succession. A linear
+  // `find()` for every patch made that O(n²) on a large scan. The array is replaced on full
+  // reloads (detected by identity); ordinary updates preserve Repo object identity, so this small
+  // lookup stays correct without a deep watcher over every status field.
+  let lookupSource: Repo[] | null = null;
+  const repoLookup = new Map<string, Repo>();
+  function findRepo(repoId: string): Repo | undefined {
+    if (lookupSource !== repos.value) {
+      lookupSource = repos.value;
+      repoLookup.clear();
+      for (const repo of repos.value) repoLookup.set(repo.id, repo);
+    }
+    const cached = repoLookup.get(repoId);
+    if (cached) return cached;
+    const found = repos.value.find((repo) => repo.id === repoId);
+    if (found) repoLookup.set(repoId, found);
+    return found;
+  }
+
+  /** Insert or refresh a streamed repo in O(1) after the first lookup build. */
+  function upsertRepo(next: Repo): void {
+    if (lookupSource !== repos.value) {
+      lookupSource = repos.value;
+      repoLookup.clear();
+      for (const repo of repos.value) repoLookup.set(repo.id, repo);
+    }
+    const current = repoLookup.get(next.id);
+    if (current) {
+      Object.assign(current, next);
+      return;
+    }
+    repos.value.push(next);
+    repoLookup.set(next.id, next);
+  }
 
   // ── list filters (display-only; drag-reorder is disabled while a filter is active) ──
   const filterQuery = ref("");
@@ -167,9 +205,10 @@ export function useRepoActions(
   });
 
   function patchRepo(id: string, patch: Partial<Repo>): void {
-    const r = repos.value.find((x) => x.id === id);
+    const r = findRepo(id);
     if (r) Object.assign(r, patch);
   }
+  const hasRepo = (repoId: string): boolean => findRepo(repoId) !== undefined;
 
   // ── actions ─────────────────────────────────────────────────────────────────
   // (commit is separate — it needs a message — see `commit()` below)
@@ -188,23 +227,31 @@ export function useRepoActions(
     } catch (e) {
       return asResult(e);
     } finally {
-      busy[repoId] = undefined;
+      delete busy[repoId];
     }
   }
 
   async function loadChanges(repoId: string): Promise<void> {
+    if (!findRepo(repoId)) return;
     if (changesLoading[repoId]) return; // don't stack concurrent reads for the same repo
+    const request = Symbol(repoId);
+    changesRequests.set(repoId, request);
     changesLoading[repoId] = true;
     try {
       const res = await api.changes(repoId);
+      if (changesRequests.get(repoId) !== request || !findRepo(repoId)) return;
       changesByRepo[repoId] = res.files ?? [];
       if (res.truncated) changesMeta[repoId] = { total: res.total ?? res.files.length, truncated: true };
       else delete changesMeta[repoId];
     } catch {
+      if (changesRequests.get(repoId) !== request || !findRepo(repoId)) return;
       changesByRepo[repoId] = [];
       delete changesMeta[repoId];
     } finally {
-      changesLoading[repoId] = false;
+      if (changesRequests.get(repoId) === request) {
+        changesRequests.delete(repoId);
+        delete changesLoading[repoId];
+      }
     }
   }
 
@@ -215,7 +262,7 @@ export function useRepoActions(
     } catch (e) {
       return asResult(e);
     } finally {
-      busy[repoId] = undefined;
+      delete busy[repoId];
     }
   }
 
@@ -233,7 +280,7 @@ export function useRepoActions(
       // selected file vanished out-of-band) this re-syncs the tree so RepoCard's prune watch drops
       // the now-stale path from the selection, instead of leaving it checked in a retry loop.
       await loadChanges(repoId);
-      busy[repoId] = undefined;
+      delete busy[repoId];
     }
   }
 
@@ -255,7 +302,7 @@ export function useRepoActions(
   /** Set/clear a repo's display label (optimistic; rolls back on failure). Never touches the
    *  folder on disk — `repo.name` stays the real basename. */
   async function renameRepo(repoId: string, displayName: string | null): Promise<void> {
-    const prev = repos.value.find((r) => r.id === repoId)?.displayName ?? null;
+    const prev = findRepo(repoId)?.displayName ?? null;
     const next = displayName?.trim() ? displayName.trim() : null;
     patchRepo(repoId, { displayName: next }); // optimistic
     try {
@@ -272,7 +319,7 @@ export function useRepoActions(
    * devices in step. Returns the removed repo so the caller can offer an Undo.
    */
   async function removeRepo(repoId: string): Promise<Repo | null> {
-    const removed = repos.value.find((r) => r.id === repoId) ?? null;
+    const removed = findRepo(repoId) ?? null;
     repos.value = repos.value.filter((r) => r.id !== repoId); // optimistic
     try {
       await api.removeRepo(repoId);
@@ -286,11 +333,7 @@ export function useRepoActions(
   /** Undo a removal: drop the tombstone and re-index the path if it's still on disk. */
   async function restoreRemovedRepo(absPath: string): Promise<void> {
     const r = await api.restoreIgnoredPath(absPath);
-    if (r.repo) {
-      const idx = repos.value.findIndex((x) => x.id === r.repo!.id);
-      if (idx >= 0) repos.value[idx] = r.repo;
-      else repos.value.push(r.repo);
-    }
+    if (r.repo) upsertRepo(r.repo);
   }
 
   /** Hide/unhide a repo from the dashboard (optimistic; rolls back on failure). */
@@ -337,6 +380,29 @@ export function useRepoActions(
     }
   }
 
+  /** Release changed-file state when a repository is removed or leaves a shared scope. */
+  function clearRepoCache(repoId: string): void {
+    changesRequests.delete(repoId);
+    repoLookup.delete(repoId);
+    delete changesByRepo[repoId];
+    delete changesLoading[repoId];
+    delete changesMeta[repoId];
+    delete busy[repoId];
+  }
+
+  /** Drop stale cache keys after a full list refresh (covers removals missed while SSE was down). */
+  function pruneRepoCache(liveRepoIds: ReadonlySet<string>): void {
+    const cachedIds = new Set([
+      ...Object.keys(changesByRepo),
+      ...Object.keys(changesLoading),
+      ...Object.keys(changesMeta),
+      ...changesRequests.keys(),
+    ]);
+    for (const repoId of cachedIds) {
+      if (!liveRepoIds.has(repoId)) clearRepoCache(repoId);
+    }
+  }
+
   return {
     changesByRepo,
     changesLoading,
@@ -360,7 +426,9 @@ export function useRepoActions(
     needsAttentionRepos,
     visibleAttentionRepos,
     dismissAttention,
+    hasRepo,
     patchRepo,
+    upsertRepo,
     doAction,
     commit,
     commitSelected,
@@ -373,5 +441,7 @@ export function useRepoActions(
     setPinned,
     setStarred,
     setAutoCommit,
+    clearRepoCache,
+    pruneRepoCache,
   };
 }

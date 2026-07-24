@@ -283,6 +283,20 @@ test("with no tracking config the operative remote falls back to origin", async 
   expect(await operativeRemoteUrl(dir)).toBe("https://github.com/LunarWerxs/thing.git");
 });
 
+test("account resolution reuses an operative remote already read by the auth preflight", async () => {
+  const dir = await scratchRepo({
+    // Deliberately different: if resolution re-reads Git config it would choose LunarWerXs.
+    "remote.origin.url": "https://github.com/LunarWerXs/thing.git",
+  });
+  const r = await resolveRepoAccount(
+    repoAt(dir),
+    ACCOUNTS,
+    async () => false,
+    "https://github.com/L0garithmic/thing.git",
+  );
+  expect(r).toEqual({ host: "github.com", login: "L0garithmic", source: "remote" });
+});
+
 // ── never send a GitHub token to a host that isn't GitHub ───────────────────────────
 
 test("a pin is refused when the repo's real remote is on a different host", async () => {

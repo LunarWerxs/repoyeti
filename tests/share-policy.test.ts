@@ -125,7 +125,8 @@ test("permSatisfies: control ⊃ view, view ⊅ control", () => {
 test("the guest surface stays small and deliberate", () => {
   // Not a real invariant — a tripwire. If this number climbs, someone widened what a share link
   // can reach, and that should be a conscious diff-time conversation, not a silent drift.
-  // The last two additions are deliberately tiny projections: AI availability is exactly two
-  // booleans, and collaboration-fingerprint is one opaque digest plus a completeness bit.
-  expect(Object.keys(GUEST_ROUTES).length).toBeLessThanOrEqual(26);
+  // The last three additions are deliberately bounded projections: AI availability is exactly
+  // two booleans, collaboration-fingerprint is one opaque digest plus a completeness bit, and
+  // repository activity is a capped 24-hour read-only aggregate.
+  expect(Object.keys(GUEST_ROUTES).length).toBeLessThanOrEqual(27);
 });

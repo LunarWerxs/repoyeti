@@ -144,37 +144,51 @@ function onFolderDrop(e: DragEvent, dir: TreeNode): void {
 // file / toggle a folder). The arrows add tree movement on top: ↑/↓ between visible rows,
 // Home/End to the ends, → to open a folder (or step into it), ← to close it (or jump to its
 // parent). Row order and indent are read straight from the DOM, so this stays correct
-// across the recursion without threading any extra state through the component.
-function visibleRows(from: HTMLElement): HTMLElement[] {
-  const root = from.closest("[data-changes-root]");
-  return root ? [...root.querySelectorAll<HTMLElement>("button[data-tree-row]")] : [from];
+// across the recursion without threading any extra state through the component. A TreeWalker
+// advances from the current row instead of rebuilding an array of all 2,000 rows on every key.
+function rowWalker(from: HTMLElement): { root: HTMLElement; walker: TreeWalker } | null {
+  const root = from.closest<HTMLElement>("[data-changes-root]");
+  if (!root) return null;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
+    acceptNode: (node) =>
+      node instanceof HTMLElement && node.matches("button[data-tree-row]")
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_SKIP,
+  });
+  walker.currentNode = from;
+  return { root, walker };
 }
 function onRowKey(e: KeyboardEvent, n: TreeNode, depth: number): void {
   const btn = e.currentTarget as HTMLElement;
-  const rows = visibleRows(btn);
-  const i = rows.indexOf(btn);
+  const traversal = rowWalker(btn);
+  if (!traversal) return;
+  const { root, walker } = traversal;
   switch (e.key) {
     case "ArrowDown":
       e.preventDefault();
-      rows[i + 1]?.focus();
+      (walker.nextNode() as HTMLElement | null)?.focus();
       break;
     case "ArrowUp":
       e.preventDefault();
-      rows[i - 1]?.focus();
+      (walker.previousNode() as HTMLElement | null)?.focus();
       break;
     case "Home":
       e.preventDefault();
-      rows[0]?.focus();
+      root.querySelector<HTMLElement>("button[data-tree-row]")?.focus();
       break;
-    case "End":
+    case "End": {
       e.preventDefault();
-      rows.at(-1)?.focus();
+      walker.currentNode = root;
+      let last: HTMLElement | null = null;
+      for (let row = walker.nextNode(); row; row = walker.nextNode()) last = row as HTMLElement;
+      last?.focus();
       break;
+    }
     case "ArrowRight":
       if (n.type === "dir") {
         e.preventDefault();
         if (!isOpen(n.path) && !props.forceExpand) collapse.toggle(n.path);
-        else rows[i + 1]?.focus(); // already open → step into the first child
+        else (walker.nextNode() as HTMLElement | null)?.focus(); // open → first child
       }
       break;
     case "ArrowLeft":
@@ -183,9 +197,8 @@ function onRowKey(e: KeyboardEvent, n: TreeNode, depth: number): void {
         collapse.toggle(n.path); // collapse this folder, keep focus on it
       } else {
         // jump to the parent: nearest preceding row at a shallower indent
-        for (let k = i - 1; k >= 0; k--) {
-          const row = rows[k];
-          if (row && Number(row.dataset.depth) < depth) {
+        for (let row = walker.previousNode(); row; row = walker.previousNode()) {
+          if (row instanceof HTMLElement && Number(row.dataset.depth) < depth) {
             row.focus();
             break;
           }
@@ -204,31 +217,50 @@ function onRowKey(e: KeyboardEvent, n: TreeNode, depth: number): void {
 const isRoot = props.depth === undefined;
 const rootRef = useTemplateRef<HTMLElement>("rootRef");
 let rovingObserver: MutationObserver | null = null;
-function treeRows(): HTMLElement[] {
-  return rootRef.value
-    ? [...rootRef.value.querySelectorAll<HTMLElement>("button[data-tree-row]")]
-    : [];
+let rovingAnchor: HTMLElement | null = null;
+
+function setRovingAnchor(next: HTMLElement | null): void {
+  if (rovingAnchor === next) return;
+  if (rovingAnchor) rovingAnchor.tabIndex = -1;
+  rovingAnchor = next;
+  if (next) next.tabIndex = 0;
 }
-function syncRoving(anchor?: HTMLElement | null): void {
-  const list = treeRows();
-  if (!list.length) return;
-  const current = list.find((r) => r.tabIndex === 0);
-  const active = anchor && list.includes(anchor) ? anchor : (current ?? list[0]);
-  for (const r of list) r.tabIndex = r === active ? 0 : -1;
+
+function syncRovingAfterMutation(): void {
+  const root = rootRef.value;
+  if (!root) return;
+  if (rovingAnchor && root.contains(rovingAnchor)) {
+    rovingAnchor.tabIndex = 0;
+    return;
+  }
+  const focused =
+    document.activeElement instanceof HTMLElement &&
+    document.activeElement.matches("button[data-tree-row]") &&
+    root.contains(document.activeElement)
+      ? document.activeElement
+      : null;
+  setRovingAnchor(
+    focused ?? root.querySelector<HTMLElement>("button[data-tree-row]"),
+  );
 }
 function onFocusIn(e: FocusEvent): void {
   if (!isRoot) return;
   const t = e.target as HTMLElement | null;
-  if (t?.matches?.("button[data-tree-row]")) syncRoving(t);
+  if (t?.matches?.("button[data-tree-row]")) setRovingAnchor(t);
 }
 onMounted(() => {
   if (!isRoot || !rootRef.value) return;
-  syncRoving();
+  setRovingAnchor(rootRef.value.querySelector<HTMLElement>("button[data-tree-row]"));
   // Expand / collapse / search add and remove rows; keep exactly one row tabbable.
-  rovingObserver = new MutationObserver(() => syncRoving());
+  // Every row is declaratively -1 below; the observer only has work when the current anchor was
+  // removed. Focus changes are O(1), with no full-tree rewrite on mount, expand, or arrow keys.
+  rovingObserver = new MutationObserver(() => syncRovingAfterMutation());
   rovingObserver.observe(rootRef.value, { childList: true, subtree: true });
 });
-onBeforeUnmount(() => rovingObserver?.disconnect());
+onBeforeUnmount(() => {
+  rovingObserver?.disconnect();
+  rovingAnchor = null;
+});
 </script>
 
 <template>
@@ -250,6 +282,7 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
         :style="{ paddingLeft: (depth ?? 0) * 14 + 8 + 'px' }"
         :title="n.path"
         :aria-expanded="isOpen(n.path)"
+        tabindex="-1"
         data-tree-row
         :data-depth="depth ?? 0"
         @click="collapse.toggle(n.path)"
@@ -309,6 +342,7 @@ onBeforeUnmount(() => rovingObserver?.disconnect());
           :class="[isViewing(repoId, n.path) && 'bg-accent/80 ring-1 ring-primary/30', draggingPath === n.path && 'opacity-40']"
           :style="{ paddingLeft: (depth ?? 0) * 14 + 8 + 'px' }"
           :title="n.path"
+          tabindex="-1"
           data-tree-row
           :data-depth="depth ?? 0"
           @click="open(n)"

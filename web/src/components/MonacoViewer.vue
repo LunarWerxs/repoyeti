@@ -22,7 +22,7 @@ const props = withDefaults(
     /** Explicit Monaco language id (e.g. "diff" for the compact-diff patch view). When
      *  omitted, Monaco infers the grammar from `filename`'s extension. */
     language?: string;
-    /** When true the editor is writable and emits `change` on every edit. */
+    /** When true the editor is writable and emits a cheap dirty-state `change` on every edit. */
     editable?: boolean;
     /** Soft-wrap long lines (Monaco wordWrap "on"/"off"). */
     wordWrap?: boolean;
@@ -32,13 +32,46 @@ const props = withDefaults(
   }>(),
   { editable: false, wordWrap: false },
 );
-const emit = defineEmits<{ change: [value: string] }>();
+const emit = defineEmits<{ change: [dirty: boolean] }>();
 
 const host = useTemplateRef<HTMLElement>("host");
 let monaco: MonacoApi | null = null;
 let editor: CodeEditor | null = null;
 let model: TextModel | null = null;
 let gutterIds: string[] = []; // dirty-diff decoration ids (deltaDecorations tracking)
+let cleanAlternativeVersionId = 0;
+let suppressChange = false;
+
+/** Monaco's alternative version id returns to its earlier value when Undo returns to the saved
+ *  state. Comparing this small integer avoids allocating/copying the entire model on each key. */
+function emitDirty(): void {
+  if (!model || suppressChange) return;
+  emit("change", model.getAlternativeVersionId() !== cleanAlternativeVersionId);
+}
+
+function markClean(alternativeVersionId = model?.getAlternativeVersionId() ?? 0): boolean {
+  if (!model) return false;
+  cleanAlternativeVersionId = alternativeVersionId;
+  const dirty = model.getAlternativeVersionId() !== cleanAlternativeVersionId;
+  emit("change", dirty);
+  return dirty;
+}
+
+/** The parent pulls the full buffer only when Save is requested. */
+function getValue(): string {
+  return model?.getValue() ?? props.value;
+}
+
+/** Capture text and its Monaco version atomically in the same JavaScript turn. If the user keeps
+ *  typing while the save request is in flight, that newer version remains correctly dirty. */
+function getSnapshot(): { value: string; alternativeVersionId: number } {
+  return {
+    value: getValue(),
+    alternativeVersionId: model?.getAlternativeVersionId() ?? cleanAlternativeVersionId,
+  };
+}
+
+defineExpose({ getValue, getSnapshot, markClean });
 
 /** Paint the dirty-diff gutter markers from `changedLines`. Re-applied whenever the model or the
  *  ranges change; cleared when there are none (or the editor is editable — a live edit's line
@@ -94,6 +127,7 @@ onMounted(async () => {
   monaco = await getMonaco();
   if (!host.value) return; // unmounted while monaco loaded
   model = makeModel(monaco);
+  cleanAlternativeVersionId = model.getAlternativeVersionId();
   editor = monaco.editor.create(host.value, {
     model,
     readOnly: !props.editable,
@@ -111,8 +145,8 @@ onMounted(async () => {
     padding: { top: 10, bottom: 10 },
     scrollbar: { useShadows: false },
   });
-  // Surface every edit to the parent, which owns the dirty/draft state.
-  editor.onDidChangeModelContent(() => emit("change", editor!.getValue()));
+  // Surface dirty state, not a freshly-copied full buffer. The parent reads once when saving.
+  editor.onDidChangeModelContent(emitDirty);
   applyGutter();
   revealNextFrame();
 });
@@ -124,10 +158,20 @@ watch(
   () => [props.value, props.filename] as const,
   ([val, file], [, oldFile]) => {
     if (!editor || !monaco) return;
-    if (file === oldFile && model && model.getValue() === val) return;
+    if (file === oldFile && model) {
+      if (model.getValue() === val) {
+        markClean();
+        return;
+      }
+      // A successful save updates `value` to the snapshot that reached disk. Preserve any newer
+      // keystrokes in Monaco; markClean(savedVersion) keeps them dirty against that new baseline.
+      if (props.editable) return;
+    }
     const old = model;
     model = makeModel(monaco);
+    cleanAlternativeVersionId = model.getAlternativeVersionId();
     editor.setModel(model);
+    emit("change", false);
     gutterIds = []; // decorations belonged to the old model
     applyGutter();
     revealNextFrame();
@@ -144,8 +188,20 @@ watch(
   () => props.editable,
   (on) => {
     editor?.updateOptions({ readOnly: !on, domReadOnly: !on });
-    if (!on && model && model.getValue() !== props.value) model.setValue(props.value);
-    if (on) editor?.focus();
+    if (!on && model) {
+      if (model.getValue() !== props.value) {
+        suppressChange = true;
+        try {
+          model.setValue(props.value);
+        } finally {
+          suppressChange = false;
+        }
+      }
+      markClean();
+    } else if (on) {
+      markClean();
+      editor?.focus();
+    }
     applyGutter(); // hide the (now line-mismatched) gutter while editing; restore after
   },
 );

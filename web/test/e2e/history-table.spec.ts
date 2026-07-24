@@ -48,6 +48,14 @@ test("history column titles line up with their columns", async ({ page }) => {
   });
   const [first, ...rest] = edges;
   for (const row of rest) expect(row).toEqual(first);
+
+  // Description stays reading-aligned; the four compact metadata headers are visually centered
+  // over their fixed tracks.
+  const headerAlignments = await header
+    .locator(":scope > span")
+    .evaluateAll((cells) => cells.map((cell) => getComputedStyle(cell).textAlign));
+  expect(headerAlignments[0]).not.toBe("center");
+  expect(headerAlignments.slice(1)).toEqual(["center", "center", "center", "center"]);
 });
 
 test("each commit shows its files/lines total", async ({ page }) => {

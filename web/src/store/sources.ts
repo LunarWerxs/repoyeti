@@ -14,6 +14,7 @@ export function useSources(
   scanNew: Ref<number>,
   scanDone: Ref<boolean>,
   lastScanCancelled: Ref<boolean>,
+  upsertRepo: (repo: Repo) => void,
 ) {
   // Scan roots (discovery directories) — lazily loaded when Settings opens.
   const roots = ref<string[]>([]);
@@ -88,9 +89,7 @@ export function useSources(
   /** Clone a repo from a registered Lore server into a folder under a scan root. */
   async function cloneFromServer(input: { url: string; parentPath: string; name?: string }): Promise<Repo> {
     const repo = await api.cloneFromServer(input);
-    const idx = repos.value.findIndex((r) => r.id === repo.id);
-    if (idx >= 0) repos.value[idx] = repo;
-    else repos.value.push(repo);
+    upsertRepo(repo);
     return repo;
   }
 
@@ -121,9 +120,7 @@ export function useSources(
 
   async function addRepo(mode: "register" | "create", path: string): Promise<Repo> {
     const repo = mode === "register" ? await api.registerRepo(path) : await api.createRepo(path);
-    const idx = repos.value.findIndex((r) => r.id === repo.id);
-    if (idx >= 0) repos.value[idx] = repo;
-    else repos.value.push(repo);
+    upsertRepo(repo);
     return repo;
   }
 
@@ -135,9 +132,7 @@ export function useSources(
     identityId?: string | null;
   }): Promise<Repo> {
     const repo = await api.cloneRepo(input);
-    const idx = repos.value.findIndex((r) => r.id === repo.id);
-    if (idx >= 0) repos.value[idx] = repo;
-    else repos.value.push(repo);
+    upsertRepo(repo);
     return repo;
   }
 

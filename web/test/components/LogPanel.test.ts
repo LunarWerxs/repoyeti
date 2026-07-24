@@ -2,7 +2,7 @@
 // api.commitDetail once; collapsing and re-expanding the SAME commit must be a cache hit (no
 // second fetch); a DIFFERENT commit must still fetch.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mount } from "@vue/test-utils";
+import { enableAutoUnmount, mount } from "@vue/test-utils";
 import { setActivePinia, createPinia } from "pinia";
 import { i18n } from "@/i18n";
 import { useStore } from "@/store";
@@ -10,8 +10,13 @@ import { api } from "@/api";
 import LogPanel from "@/components/LogPanel.vue";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { fileViewer } from "@/lib/file-viewer";
+import {
+  historyActivityEnabled,
+  historyChangesDisplay,
+  historyGraphEnabled,
+} from "@/lib/history-appearance";
 import { historyFilesView } from "@/lib/history-view";
-import type { CommitDetail } from "@/types";
+import type { CommitDetail, HistoryActivity } from "@/types";
 
 // CommitFilesTree resolves per-file glyphs via @/lib/file-icons, which imports ~icons/* virtual
 // modules (unplugin-icons) — a plugin the test pipeline deliberately omits (see vitest.config.ts).
@@ -19,6 +24,7 @@ import type { CommitDetail } from "@/types";
 vi.mock("@/lib/file-icons", () => ({ fileVisual: () => "span" }));
 
 const repoId = "repo-1";
+enableAutoUnmount(afterEach);
 
 function detailFor(hash: string): CommitDetail {
   return {
@@ -47,9 +53,47 @@ function entry(hash: string, subject: string) {
   return { hash, shortHash: hash.slice(0, 7), subject, authorName: "a", authorEmail: "e", date: 0, refs: "", parents: [], isMerge: false };
 }
 
+function activitySummary(): HistoryActivity {
+  const until = Date.now();
+  return {
+    ok: true,
+    code: "OK",
+    windowHours: 24,
+    since: until - 24 * 60 * 60 * 1000,
+    until,
+    commits: 3,
+    commitsLastHour: 1,
+    contributors: 2,
+    filesChanged: 7,
+    addedLines: 120,
+    removedLines: 24,
+    authors: [
+      { name: "Ada", email: "ada@example.com", commits: 2, addedLines: 100, removedLines: 20 },
+      { name: "Sam", email: "sam@example.com", commits: 1, addedLines: 20, removedLines: 4 },
+    ],
+    buckets: Array.from({ length: 24 }, (_, i) => ({
+      start: until - (24 - i) * 60 * 60 * 1000,
+      commits: i === 23 ? 1 : 0,
+      filesChanged: i === 23 ? 2 : 0,
+      addedLines: i === 23 ? 12 : 0,
+      removedLines: i === 23 ? 3 : 0,
+    })),
+    truncated: false,
+  };
+}
+
 describe("LogPanel.vue", () => {
-  beforeEach(() => setActivePinia(createPinia()));
-  afterEach(() => vi.restoreAllMocks());
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    historyActivityEnabled.value = false;
+    historyGraphEnabled.value = true;
+    historyChangesDisplay.value = "numbers";
+    vi.spyOn(api, "historyActivity").mockResolvedValue(activitySummary());
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
 
   it("#20 fetches commitDetail on first expand, and caches on collapse/re-expand", async () => {
     const store = useStore();
@@ -135,6 +179,156 @@ describe("LogPanel.vue", () => {
     await flush();
     expect(detailSpy).toHaveBeenCalledTimes(2);
     expect(detailSpy).toHaveBeenLastCalledWith(repoId, "bbb222");
+  });
+
+  it("loads the scoped 24-hour activity overview when History opens", async () => {
+    historyActivityEnabled.value = true;
+    const store = useStore();
+    store.logByRepo[repoId] = {
+      ok: true,
+      code: "OK",
+      hasMore: false,
+      commits: [entry("abc123", "activity commit")],
+    };
+    const activitySpy = vi.mocked(api.historyActivity);
+    activitySpy.mockClear();
+
+    const wrapper = mount(
+      {
+        components: { LogPanel, TooltipProvider },
+        props: ["repoId"],
+        template: '<TooltipProvider><LogPanel :repo-id="repoId" /></TooltipProvider>',
+      },
+      { props: { repoId }, global: { plugins: [i18n] } },
+    );
+
+    await wrapper.findAll("button").find((b) => b.text().includes("History"))!.trigger("click");
+    await flush();
+
+    expect(activitySpy).toHaveBeenCalledOnce();
+    expect(activitySpy).toHaveBeenCalledWith(repoId, "all");
+    const overview = wrapper.get('[data-testid="history-activity"]');
+    expect(overview.text()).toContain("144");
+    expect(overview.text()).toContain("Ada");
+  });
+
+  it("removes the branch-map gutter when its appearance preference is off", async () => {
+    historyGraphEnabled.value = false;
+    const store = useStore();
+    store.logByRepo[repoId] = {
+      ok: true,
+      code: "OK",
+      hasMore: false,
+      commits: [entry("abc123", "text-only history")],
+    };
+
+    const wrapper = mount(
+      {
+        components: { LogPanel, TooltipProvider },
+        props: ["repoId"],
+        template: '<TooltipProvider><LogPanel :repo-id="repoId" /></TooltipProvider>',
+      },
+      { props: { repoId }, global: { plugins: [i18n] } },
+    );
+    await wrapper.findAll("button").find((b) => b.text().includes("History"))!.trigger("click");
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.get('div[aria-label="Commit: text-only history"]').find("svg").exists()).toBe(false);
+  });
+
+  it("opens a commit-row context menu without toggling the row", async () => {
+    const store = useStore();
+    store.logByRepo[repoId] = {
+      ok: true,
+      code: "OK",
+      hasMore: false,
+      commits: [
+        {
+          ...entry("abc123def", "right-click me"),
+          authorEmail: "ada@example.com",
+          parents: ["parent123"],
+        },
+      ],
+    };
+
+    const wrapper = mount(
+      {
+        components: { LogPanel, TooltipProvider },
+        props: ["repoId"],
+        template: '<TooltipProvider><LogPanel :repo-id="repoId" /></TooltipProvider>',
+      },
+      {
+        attachTo: document.body,
+        props: { repoId },
+        global: { plugins: [i18n] },
+      },
+    );
+    await wrapper.findAll("button").find((b) => b.text().includes("History"))!.trigger("click");
+    const row = wrapper.get('div[aria-label="Commit: right-click me"]');
+    expect(row.attributes("aria-expanded")).toBe("false");
+
+    await row.trigger("contextmenu", { button: 2, clientX: 20, clientY: 20 });
+    await flush();
+
+    const menuText = [...document.body.querySelectorAll('[role="menuitem"]')]
+      .map((item) => item.textContent ?? "")
+      .join(" ");
+    expect(menuText).toContain("View commit details");
+    expect(menuText).toContain("Copy commit hash");
+    expect(menuText).toContain("Copy commit message");
+    expect(menuText).toContain("Copy author email");
+    expect(menuText).toContain("Jump to parent parent12");
+    expect(row.attributes("aria-expanded")).toBe("false");
+  });
+
+  it("renders proportional additions/deletions bars in the wide Changes column", async () => {
+    historyChangesDisplay.value = "bars";
+    let resizeCallback: ResizeObserverCallback | null = null;
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallback = callback;
+        }
+        observe(): void {
+          resizeCallback?.(
+            [{ contentRect: { width: 900 } } as ResizeObserverEntry],
+            this as unknown as ResizeObserver,
+          );
+        }
+        disconnect(): void {}
+        unobserve(): void {}
+      },
+    );
+    const store = useStore();
+    store.logByRepo[repoId] = {
+      ok: true,
+      code: "OK",
+      hasMore: false,
+      commits: [
+        {
+          ...entry("abc123", "visual changes"),
+          stat: { filesChanged: 4, addedLines: 120, removedLines: 30 },
+        },
+      ],
+    };
+
+    const wrapper = mount(
+      {
+        components: { LogPanel, TooltipProvider },
+        props: ["repoId"],
+        template: '<TooltipProvider><LogPanel :repo-id="repoId" /></TooltipProvider>',
+      },
+      { props: { repoId }, global: { plugins: [i18n] } },
+    );
+    await wrapper.findAll("button").find((b) => b.text().includes("History"))!.trigger("click");
+    await wrapper.vm.$nextTick();
+
+    const cell = wrapper.get('[data-history-changes="bars"]');
+    expect(cell.text()).toContain("4");
+    expect(cell.find(".bg-success\\/80").exists()).toBe(true);
+    expect(cell.find(".bg-destructive\\/75").exists()).toBe(true);
+    expect(cell.get("[aria-label]").attributes("aria-label")).toContain("120 added");
   });
 
   it("expanded detail shows the message + a file list that opens the Monaco viewer at this commit", async () => {

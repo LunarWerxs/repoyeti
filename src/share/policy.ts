@@ -78,6 +78,7 @@ export const GUEST_ROUTES: Record<string, RoutePolicy> = {
   "GET /api/repos/:id/search": { need: "view", scoped: true },
   "GET /api/repos/:id/branches": { need: "view", scoped: true },
   "GET /api/repos/:id/log": { need: "view", scoped: true },
+  "GET /api/repos/:id/activity": { need: "view", scoped: true },
   "GET /api/repos/:id/commit/:hash": { need: "view", scoped: true },
   "GET /api/repos/:id/commit/:hash/file": { need: "view", scoped: true },
   "GET /api/repos/:id/stashes": { need: "view", scoped: true },

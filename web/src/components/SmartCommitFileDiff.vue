@@ -61,19 +61,27 @@ const patch = ref(""); // unified git-diff text (large modified files)
 const patchMode = ref(false); // server sent a compact patch instead of both whole sides
 const binary = ref(false);
 const truncated = ref(false);
+let activeController: AbortController | null = null;
 
 // Re-fetch whenever the target file changes. A returning request bails if a newer path
 // superseded it (the parent re-keys on path, so in practice each mount sees one path).
 watch(
   () => `${props.repoId}::${props.path}`,
-  async (key) => {
+  async (key, _oldKey, onCleanup) => {
+    const controller = new AbortController();
+    activeController = controller;
+    onCleanup(() => {
+      controller.abort();
+      if (activeController === controller) activeController = null;
+    });
     loading.value = true;
     errorMsg.value = null;
     binary.value = false;
     truncated.value = false;
     patchMode.value = false;
     try {
-      const res = await api.fileDiff(props.repoId, props.path);
+      const res = await api.fileDiff(props.repoId, props.path, controller.signal);
+      if (controller.signal.aborted) return;
       if (`${props.repoId}::${props.path}` !== key) return; // superseded mid-flight
       original.value = res.original ?? "";
       modified.value = res.modified ?? "";
@@ -82,11 +90,15 @@ watch(
       binary.value = !!res.binary;
       truncated.value = !!res.truncated;
     } catch (e) {
+      if (controller.signal.aborted) return;
       if (`${props.repoId}::${props.path}` === key) {
         errorMsg.value = e instanceof ApiError ? e.message : t("fileViewer.error");
       }
     } finally {
-      if (`${props.repoId}::${props.path}` === key) loading.value = false;
+      if (activeController === controller) {
+        activeController = null;
+        loading.value = false;
+      }
     }
   },
   { immediate: true },

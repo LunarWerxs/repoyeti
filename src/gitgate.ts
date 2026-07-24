@@ -23,6 +23,9 @@ export interface Semaphore {
 }
 
 export function createSemaphore(max: number): Semaphore {
+  // Configuration values arrive as numbers from environment strings. Never let a fractional
+  // positive value floor to zero and permanently strand every caller in the wait queue.
+  const limit = Number.isFinite(max) && max > 0 ? Math.max(1, Math.floor(max)) : 1;
   let active = 0;
   const queue: Array<() => void> = [];
   let queueHead = 0;
@@ -50,7 +53,7 @@ export function createSemaphore(max: number): Semaphore {
     },
     run<T>(fn: () => Promise<T>): Promise<T> {
       let slot: Promise<void>;
-      if (active < max) {
+      if (active < limit) {
         active++;
         slot = Promise.resolve();
       } else {

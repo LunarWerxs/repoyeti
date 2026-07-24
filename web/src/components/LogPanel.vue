@@ -8,7 +8,23 @@
 // the graph's toggle. Detail (files + bounded diff) is fetched per-commit on tap, cached by hash.
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, useTemplateRef } from "vue";
 import { useI18n } from "vue-i18n";
-import { History, ChevronDown, Loader2, RefreshCw, GitMerge, Copy, CornerDownRight, Tag, FileEdit, Files, Eye, SquarePen, FolderOpen } from "@lucide/vue";
+import {
+  History,
+  ChevronDown,
+  Loader2,
+  RefreshCw,
+  GitMerge,
+  Copy,
+  CornerDownRight,
+  Tag,
+  FileEdit,
+  Files,
+  Eye,
+  SquarePen,
+  FolderOpen,
+  MessageSquareText,
+  Mail,
+} from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { useStore } from "../store";
 import { api, ApiError } from "../api";
@@ -19,7 +35,13 @@ import { computeGraph, type GraphCommit, type GraphLink } from "@/lib/git-graph"
 import { statusColor } from "@/lib/git-status-colors";
 import { openFile, isViewing } from "@/lib/file-viewer";
 import { historyFilesView } from "@/lib/history-view";
+import {
+  historyActivityEnabled,
+  historyChangesDisplay,
+  historyGraphEnabled,
+} from "@/lib/history-appearance";
 import CommitFilesTree from "./CommitFilesTree.vue";
+import HistoryActivity from "./HistoryActivity.vue";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   ContextMenu,
@@ -28,7 +50,13 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
 } from "@/components/ui/context-menu";
-import type { ChangedFile, CommitDetail, LogEntry, TreeNode } from "../types";
+import type {
+  ChangedFile,
+  CommitDetail,
+  HistoryActivity as HistoryActivityResult,
+  LogEntry,
+  TreeNode,
+} from "../types";
 
 const props = defineProps<{ repoId: string }>();
 const store = useStore();
@@ -42,6 +70,10 @@ const showHistory = ref(false);
 const scope = ref<Scope>("all"); // default to the full multi-branch DAG (owner's pick)
 const logResult = computed(() => store.logByRepo[props.repoId]);
 const loadingLog = ref(false);
+let logRequest = 0;
+const activity = ref<HistoryActivityResult | null>(null);
+const loadingActivity = ref(false);
+let activityRequest = 0;
 
 const repo = computed(() => store.repos.find((r) => r.id === props.repoId));
 const dirtyCount = computed(() => repo.value?.status?.dirty ?? 0);
@@ -101,6 +133,8 @@ const graph = computed(() => {
   return { items, laneCount: layout.laneCount };
 });
 const gutterW = computed(() => Math.min(graph.value.laneCount, LANE_CAP) * lanePx.value || lanePx.value);
+/** Appearance can hide the branch map without changing row content or the underlying DAG. */
+const visibleGutterW = computed(() => (historyGraphEnabled.value ? gutterW.value : 0));
 // ONE column template, shared verbatim by the wide-mode header and every commit row. The header
 // and each row are SEPARATE grids, so content-sized tracks (auto / minmax) resolve independently
 // per grid — the header sizing to the word "AUTHOR", each row to its own author name — which is
@@ -143,33 +177,97 @@ function statTitle(c: LogEntry): string {
   if (!s) return "";
   return `${t("repo.history.filesChanged", { count: s.filesChanged }, s.filesChanged)} · ${t("repo.diffStat.lines", { added: s.addedLines, removed: s.removedLines })}`;
 }
+const changeChurn = (c: LogEntry): number =>
+  (c.stat?.addedLines ?? 0) + (c.stat?.removedLines ?? 0);
+const maxChangeChurn = computed(() =>
+  Math.max(1, ...(logResult.value?.commits ?? []).map(changeChurn)),
+);
+/** Square-root scaling keeps small commits legible when one generated-file commit is enormous. */
+function changeBarWidth(c: LogEntry): string {
+  const total = changeChurn(c);
+  if (!total) return "0%";
+  return `${Math.max(7, Math.sqrt(total / maxChangeChurn.value) * 100)}%`;
+}
+function changeShare(c: LogEntry, kind: "added" | "removed"): string {
+  const s = c.stat;
+  const total = changeChurn(c);
+  if (!s || !total) return "0%";
+  const lines = kind === "added" ? s.addedLines : s.removedLines;
+  return `${(lines / total) * 100}%`;
+}
 
 // ── data loading + scope switching ───────────────────────────────────────────────────
-async function reload(): Promise<void> {
-  loadingLog.value = true;
+function failedActivity(message: string): HistoryActivityResult {
+  const until = Date.now();
+  return {
+    ok: false,
+    code: "ERROR",
+    message,
+    windowHours: 24,
+    since: until - 24 * 60 * 60 * 1000,
+    until,
+    commits: 0,
+    commitsLastHour: 0,
+    contributors: 0,
+    filesChanged: 0,
+    addedLines: 0,
+    removedLines: 0,
+    authors: [],
+    buckets: [],
+    truncated: false,
+  };
+}
+
+async function loadActivity(): Promise<void> {
+  if (!historyActivityEnabled.value) return;
+  const request = ++activityRequest;
+  loadingActivity.value = true;
   try {
-    await store.loadLog(props.repoId, 50, 0, scope.value);
+    const next = await api.historyActivity(props.repoId, scope.value);
+    if (request === activityRequest) activity.value = next;
+  } catch (e) {
+    if (request !== activityRequest) return;
+    const message =
+      e instanceof ApiError
+        ? friendly(e.code ?? "ERROR") || e.message
+        : t("repo.history.activityUnavailable");
+    activity.value = failedActivity(message);
   } finally {
-    loadingLog.value = false;
+    if (request === activityRequest) loadingActivity.value = false;
+  }
+}
+
+async function reload(): Promise<void> {
+  const request = ++logRequest;
+  loadingLog.value = true;
+  const activityLoad = historyActivityEnabled.value ? loadActivity() : Promise.resolve();
+  try {
+    await Promise.all([store.loadLog(props.repoId, 50, 0, scope.value), activityLoad]);
+  } finally {
+    if (request === logRequest) loadingLog.value = false;
   }
 }
 async function toggleHistory(): Promise<void> {
   showHistory.value = !showHistory.value;
-  if (showHistory.value && !logResult.value) await reload();
+  if (!showHistory.value) return;
+  if (!logResult.value) await reload();
+  else if (historyActivityEnabled.value && !activity.value) await loadActivity();
 }
 async function setScope(s: Scope): Promise<void> {
   if (scope.value === s) return;
   scope.value = s;
   expandedCommit.value = null;
+  activity.value = null;
   await reload();
 }
 async function loadMoreLog(): Promise<void> {
   if (loadingLog.value) return;
+  const request = ++logRequest;
   loadingLog.value = true;
   try {
     await store.loadLog(props.repoId, 50, logResult.value?.commits.length ?? 0, scope.value);
   } finally {
-    loadingLog.value = false;
+    if (request === logRequest) loadingLog.value = false;
   }
 }
 
@@ -192,8 +290,36 @@ watch(sentinelEl, (el) => {
 
 // ── per-commit detail (files + bounded diff), lazy + cached by hash ──────────────────
 const expandedCommit = ref<string | null>(null);
+const COMMIT_DETAIL_CACHE_LIMIT = 20;
 const commitCache = ref<Record<string, CommitDetail>>({});
+const commitCacheOrder: string[] = [];
 const loadingCommit = ref<string | null>(null);
+
+function rememberCommitDetail(hash: string, detail: CommitDetail): void {
+  const previous = commitCacheOrder.indexOf(hash);
+  if (previous >= 0) commitCacheOrder.splice(previous, 1);
+  commitCacheOrder.push(hash);
+
+  const next = { ...commitCache.value, [hash]: detail };
+  while (commitCacheOrder.length > COMMIT_DETAIL_CACHE_LIMIT) {
+    // Context-menu "Copy message" reads also populate this LRU. Never evict the detail the owner
+    // is currently reading just because those background reads reached the cap.
+    const evictAt = commitCacheOrder.findIndex((candidate) => candidate !== expandedCommit.value);
+    if (evictAt < 0) break;
+    const [oldest] = commitCacheOrder.splice(evictAt, 1);
+    if (oldest) delete next[oldest];
+  }
+  commitCache.value = next;
+}
+
+function touchCommitDetail(hash: string): CommitDetail | undefined {
+  const detail = commitCache.value[hash];
+  if (!detail) return undefined;
+  const previous = commitCacheOrder.indexOf(hash);
+  if (previous >= 0) commitCacheOrder.splice(previous, 1);
+  commitCacheOrder.push(hash);
+  return detail;
+}
 /** Nearest ancestor that actually scrolls vertically — the history list has its own
  *  overflow-y container, so corrections must land on it, not on the window. Resolved per
  *  frame because a collapse can shrink the list below its max-height cap mid-animation,
@@ -215,7 +341,9 @@ function scrollParentOf(el: HTMLElement): HTMLElement | null {
  * 200ms grid-rows transition, so the layout keeps moving after the click. This re-pins every
  * frame until it settles, which also makes the collapse look anchored rather than jumpy.
  */
+let holdRowRaf = 0;
 function holdRowInPlace(el: HTMLElement, targetTop: number, ms = 260): void {
+  cancelAnimationFrame(holdRowRaf);
   const started = performance.now();
   const step = (): void => {
     const drift = el.getBoundingClientRect().top - targetTop;
@@ -226,10 +354,12 @@ function holdRowInPlace(el: HTMLElement, targetTop: number, ms = 260): void {
       if (scroller) scroller.scrollTop += drift;
       else window.scrollBy(0, drift);
     }
-    if (performance.now() - started < ms) requestAnimationFrame(step);
+    if (performance.now() - started < ms) holdRowRaf = requestAnimationFrame(step);
+    else holdRowRaf = 0;
   };
   step();
 }
+onBeforeUnmount(() => cancelAnimationFrame(holdRowRaf));
 
 async function toggleCommit(hash: string): Promise<void> {
   if (expandedCommit.value === hash) {
@@ -249,23 +379,20 @@ async function toggleCommit(hash: string): Promise<void> {
     await nextTick();
     holdRowInPlace(row, targetTop);
   }
-  if (commitCache.value[hash]) return;
+  if (touchCommitDetail(hash)) return;
   loadingCommit.value = hash;
   try {
-    commitCache.value = { ...commitCache.value, [hash]: await api.commitDetail(props.repoId, hash) };
+    rememberCommitDetail(hash, await api.commitDetail(props.repoId, hash));
   } catch (e) {
     const message = e instanceof ApiError ? friendly(e.code ?? "ERROR") || e.message : t("repo.history.detailUnavailable");
-    commitCache.value = {
-      ...commitCache.value,
-      [hash]: {
-        ok: false, code: "ERROR", message,
-        hash, shortHash: hash.slice(0, 12), subject: "", body: "", authorName: "", authorEmail: "", date: 0,
-        parents: [], isMerge: false, committerName: "", committerEmail: "", committerDate: 0,
-        files: [], filesTotal: 0,
-      },
-    };
+    rememberCommitDetail(hash, {
+      ok: false, code: "ERROR", message,
+      hash, shortHash: hash.slice(0, 12), subject: "", body: "", authorName: "", authorEmail: "", date: 0,
+      parents: [], isMerge: false, committerName: "", committerEmail: "", committerDate: 0,
+      files: [], filesTotal: 0,
+    });
   } finally {
-    loadingCommit.value = null;
+    if (loadingCommit.value === hash) loadingCommit.value = null;
   }
 }
 
@@ -367,14 +494,35 @@ async function toggleWorktree(): Promise<void> {
 }
 const wtFiles = computed(() => store.changesByRepo[props.repoId] ?? []);
 
-// ── copy hash + jump-to-parent (scroll + flash the target row) ───────────────────────
-async function copyHash(hash: string): Promise<void> {
+// ── commit-row actions + jump-to-parent (scroll + flash the target row) ──────────────
+async function copyCommitText(text: string, successMessage: string): Promise<void> {
   try {
-    await navigator.clipboard.writeText(hash);
-    toast.success(t("repo.history.copied"));
+    await navigator.clipboard.writeText(text);
+    toast.success(successMessage);
   } catch {
     /* clipboard blocked — non-critical */
   }
+}
+async function copyHash(hash: string): Promise<void> {
+  await copyCommitText(hash, t("repo.history.copied"));
+}
+async function copyMessage(c: LogEntry): Promise<void> {
+  let detail = touchCommitDetail(c.hash);
+  if (!detail) {
+    try {
+      detail = await api.commitDetail(props.repoId, c.hash);
+      rememberCommitDetail(c.hash, detail);
+    } catch {
+      // The subject is already available in the row, so copying still has a useful fallback.
+    }
+  }
+  const message = detail?.ok && detail.body
+    ? `${detail.subject}\n\n${detail.body}`
+    : c.subject;
+  await copyCommitText(message, t("repo.history.messageCopied"));
+}
+async function copyAuthorEmail(email: string): Promise<void> {
+  await copyCommitText(email, t("repo.history.authorEmailCopied"));
 }
 
 // ── file-row context-menu actions (right-click a file in a commit or the working tree) ──
@@ -422,17 +570,34 @@ function jumpToParent(hash: string): void {
   if (flashTimer) clearTimeout(flashTimer);
   flashTimer = setTimeout(() => (flashHash.value = null), 1200);
 }
+onBeforeUnmount(() => {
+  if (flashTimer) clearTimeout(flashTimer);
+});
 
 // Reset caches when the repo changes underneath us.
 watch(
   () => props.repoId,
   () => {
+    logRequest += 1;
+    loadingLog.value = false;
+    activityRequest += 1;
+    activity.value = null;
+    loadingActivity.value = false;
     expandedCommit.value = null;
     commitCache.value = {};
+    commitCacheOrder.length = 0;
     wtOpen.value = false;
     rowEls.clear();
   },
 );
+watch(historyActivityEnabled, (enabled) => {
+  activityRequest += 1; // retire any response started under the old visibility choice
+  loadingActivity.value = false;
+  if (enabled && showHistory.value) {
+    activity.value = null;
+    void loadActivity();
+  }
+});
 </script>
 
 <template>
@@ -496,6 +661,13 @@ watch(
         </Tooltip>
       </div>
 
+      <HistoryActivity
+        v-if="historyActivityEnabled"
+        class="mb-2"
+        :activity="activity"
+        :loading="loadingActivity"
+      />
+
       <!-- loading / error / empty -->
       <div v-if="loadingLog && !logResult" class="flex items-center gap-2 px-1 py-1.5 text-[12px] text-muted-foreground">
         <Loader2 :size="13" class="animate-spin" />{{ $t("repo.history.loading") }}
@@ -512,25 +684,39 @@ watch(
              gutter-width spacer, then the SAME grid template with the SAME per-cell padding and
              alignment — so every title sits over the column it names. -->
         <div v-if="!compact" class="flex items-stretch border-b border-border/40 pb-1">
-          <span :style="{ width: `${gutterW}px` }" class="shrink-0" aria-hidden="true" />
+          <span :style="{ width: `${visibleGutterW}px` }" class="shrink-0" aria-hidden="true" />
           <div
             class="grid min-w-0 flex-1 items-center pr-1 text-[10.5px] font-medium tracking-wide uppercase text-muted-foreground/70"
             :style="{ gridTemplateColumns: COLS }"
           >
             <span class="truncate">{{ $t("repo.history.colDescription") }}</span>
-            <span class="truncate pl-2 text-right">{{ $t("repo.history.colChanges") }}</span>
-            <span class="truncate pl-2 text-right">{{ $t("repo.history.colDate") }}</span>
-            <span class="truncate pl-2">{{ $t("repo.history.colAuthor") }}</span>
-            <span class="truncate pl-2 text-right">{{ $t("repo.history.colCommit") }}</span>
+            <span class="truncate px-1 text-center">{{ $t("repo.history.colChanges") }}</span>
+            <span class="truncate px-1 text-center">{{ $t("repo.history.colDate") }}</span>
+            <span class="truncate px-1 text-center">{{ $t("repo.history.colAuthor") }}</span>
+            <span class="truncate px-1 text-center">{{ $t("repo.history.colCommit") }}</span>
           </div>
         </div>
 
         <div ref="scrollEl" class="scroll-slim max-h-104 overflow-y-auto">
-          <div v-for="item in graph.items" :key="item.kind === 'wt' ? WORKTREE : item.commit!.hash">
+          <div
+            v-for="item in graph.items"
+            :key="item.kind === 'wt' ? WORKTREE : item.commit!.hash"
+          >
             <!-- ══ uncommitted-changes row ══ -->
             <template v-if="item.kind === 'wt'">
-              <div class="group/r flex cursor-pointer items-stretch rounded-md hover:bg-accent/30" @click="toggleWorktree">
-                <svg :width="gutterW" :height="rowPx" class="shrink-0" :viewBox="`0 0 ${gutterW} ${rowPx}`" aria-hidden="true">
+              <div
+                class="history-row-visibility group/r flex cursor-pointer items-stretch rounded-md hover:bg-accent/30"
+                :class="compact && 'history-row-compact'"
+                @click="toggleWorktree"
+              >
+                <svg
+                  v-if="historyGraphEnabled"
+                  :width="visibleGutterW"
+                  :height="rowPx"
+                  class="shrink-0"
+                  :viewBox="`0 0 ${visibleGutterW} ${rowPx}`"
+                  aria-hidden="true"
+                >
                   <path
                     v-for="(lk, i) in item.row.links"
                     :key="i"
@@ -568,7 +754,7 @@ watch(
                   <div class="min-h-0 overflow-hidden">
                     <div
                       class="mb-1 border-l-2 border-warning/40 py-1 pl-2 text-[11px]"
-                      :style="{ marginLeft: `${gutterW}px` }"
+                      :style="{ marginLeft: `${visibleGutterW}px` }"
                     >
                       <div v-if="!wtFiles.length" class="text-muted-foreground">{{ $t("repo.history.noUncommitted") }}</div>
                       <template v-else>
@@ -624,23 +810,33 @@ watch(
                    with Enter. Same treatment the repo-card header row uses. It stays a div rather
                    than a <button> because it contains its own copy-hash control, and a button
                    cannot legally contain another button. -->
-              <div
-                :ref="setRowEl(item.commit!.hash)"
-                role="button"
-                tabindex="0"
-                class="group/r flex cursor-pointer items-stretch rounded-md outline-none transition-colors hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring/40"
-                :class="[
-                  expandedCommit === item.commit!.hash && 'bg-accent/40',
-                  flashHash === item.commit!.hash && 'flash',
-                ]"
-                :aria-expanded="expandedCommit === item.commit!.hash"
-                :aria-label="t('repo.history.commitRowLabel', { subject: item.commit!.subject })"
-                @click="toggleCommit(item.commit!.hash)"
-                @keydown.enter.prevent="toggleCommit(item.commit!.hash)"
-                @keydown.space.prevent="toggleCommit(item.commit!.hash)"
-              >
+              <ContextMenu>
+                <ContextMenuTrigger as-child>
+                  <div
+                    :ref="setRowEl(item.commit!.hash)"
+                    role="button"
+                    tabindex="0"
+                    class="history-row-visibility group/r flex cursor-pointer items-stretch rounded-md outline-none transition-colors hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring/40"
+                    :class="[
+                      compact && 'history-row-compact',
+                      expandedCommit === item.commit!.hash && 'bg-accent/40',
+                      flashHash === item.commit!.hash && 'flash',
+                    ]"
+                    :aria-expanded="expandedCommit === item.commit!.hash"
+                    :aria-label="t('repo.history.commitRowLabel', { subject: item.commit!.subject })"
+                    @click="toggleCommit(item.commit!.hash)"
+                    @keydown.enter.prevent="toggleCommit(item.commit!.hash)"
+                    @keydown.space.prevent="toggleCommit(item.commit!.hash)"
+                  >
                 <!-- graph gutter -->
-                <svg :width="gutterW" :height="rowPx" class="shrink-0" :viewBox="`0 0 ${gutterW} ${rowPx}`" aria-hidden="true">
+                <svg
+                  v-if="historyGraphEnabled"
+                  :width="visibleGutterW"
+                  :height="rowPx"
+                  class="shrink-0"
+                  :viewBox="`0 0 ${visibleGutterW} ${rowPx}`"
+                  aria-hidden="true"
+                >
                   <path
                     v-for="(lk, i) in item.row.links"
                     :key="i"
@@ -701,26 +897,70 @@ watch(
                     </span>
                     <span class="truncate text-[12.5px] text-foreground" :title="item.commit!.subject">{{ item.commit!.subject }}</span>
                   </div>
-                  <!-- total change: +added / −removed / files touched. Abbreviated (1.2k) so a
-                       huge commit can't widen the column; exact figures ride on the title. -->
-                  <span
-                    class="mono flex items-center justify-end gap-1 overflow-hidden pl-2 text-[10.5px] whitespace-nowrap"
-                    :title="statTitle(item.commit!)"
+                  <!-- Changes can stay numeric or become a GitKraken-style proportional bar.
+                       Both modes keep exact figures available on hover and in accessible text. -->
+                  <div
+                    class="mono flex min-w-0 items-center justify-center overflow-hidden px-1 text-[10.5px] whitespace-nowrap"
+                    :data-history-changes="historyChangesDisplay"
                   >
-                    <template v-if="hasStat(item.commit!)">
-                      <span class="text-success">+{{ compactN(item.commit!.stat!.addedLines) }}</span>
-                      <span class="text-destructive">−{{ compactN(item.commit!.stat!.removedLines) }}</span>
-                      <span class="inline-flex items-center gap-0.5 text-muted-foreground/70">
-                        <Files :size="9" />{{ compactN(item.commit!.stat!.filesChanged) }}
-                      </span>
+                    <template v-if="historyChangesDisplay === 'bars'">
+                      <Tooltip v-if="hasStat(item.commit!)">
+                        <TooltipTrigger as-child>
+                          <span
+                            class="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                            :aria-label="statTitle(item.commit!)"
+                            :title="statTitle(item.commit!)"
+                          >
+                            <span class="inline-flex w-7 shrink-0 items-center justify-end gap-0.5 text-muted-foreground/75">
+                              <Files :size="10" />{{ compactN(item.commit!.stat!.filesChanged) }}
+                            </span>
+                            <span class="flex h-2 w-16 shrink-0 overflow-hidden rounded-full bg-muted/55">
+                              <span
+                                class="flex h-full min-w-px overflow-hidden rounded-full"
+                                :style="{ width: changeChurn(item.commit!) ? changeBarWidth(item.commit!) : '7%' }"
+                              >
+                                <span
+                                  v-if="item.commit!.stat!.addedLines"
+                                  class="h-full bg-success/80"
+                                  :style="{ width: changeShare(item.commit!, 'added') }"
+                                />
+                                <span
+                                  v-if="item.commit!.stat!.removedLines"
+                                  class="h-full bg-destructive/75"
+                                  :style="{ width: changeShare(item.commit!, 'removed') }"
+                                />
+                                <span
+                                  v-if="!changeChurn(item.commit!)"
+                                  class="h-full w-full bg-muted-foreground/35"
+                                />
+                              </span>
+                            </span>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>{{ statTitle(item.commit!) }}</TooltipContent>
+                      </Tooltip>
+                      <span v-else class="text-muted-foreground/35">·</span>
                     </template>
-                    <span v-else class="text-muted-foreground/35">·</span>
-                  </span>
-                  <span class="pl-2 text-right text-[11px] whitespace-nowrap text-muted-foreground">{{ fromNow(item.commit!.date) }}</span>
-                  <span class="truncate pl-2 text-[11.5px] text-muted-foreground" :title="item.commit!.authorEmail">{{ item.commit!.authorName }}</span>
+                    <span
+                      v-else
+                      class="flex items-center justify-center gap-1"
+                      :title="statTitle(item.commit!)"
+                    >
+                      <template v-if="hasStat(item.commit!)">
+                        <span class="text-success">+{{ compactN(item.commit!.stat!.addedLines) }}</span>
+                        <span class="text-destructive">−{{ compactN(item.commit!.stat!.removedLines) }}</span>
+                        <span class="inline-flex items-center gap-0.5 text-muted-foreground/70">
+                          <Files :size="9" />{{ compactN(item.commit!.stat!.filesChanged) }}
+                        </span>
+                      </template>
+                      <span v-else class="text-muted-foreground/35">·</span>
+                    </span>
+                  </div>
+                  <span class="px-1 text-center text-[11px] whitespace-nowrap text-muted-foreground">{{ fromNow(item.commit!.date) }}</span>
+                  <span class="truncate px-1 text-center text-[11.5px] text-muted-foreground" :title="item.commit!.authorEmail">{{ item.commit!.authorName }}</span>
                   <button
                     type="button"
-                    class="mono pl-2 text-right text-[11px] text-info/80 outline-none hover:underline focus-visible:underline"
+                    class="mono px-1 text-center text-[11px] text-info/80 outline-none hover:underline focus-visible:underline"
                     :title="$t('repo.history.copyHash')"
                     @click.stop="copyHash(item.commit!.hash)"
                   >
@@ -761,8 +1001,46 @@ watch(
                       </span>
                     </template>
                   </div>
-                </div>
-              </div>
+                    </div>
+                  </div>
+                </ContextMenuTrigger>
+                <ContextMenuContent class="w-60">
+                  <ContextMenuItem @select="toggleCommit(item.commit!.hash)">
+                    <Eye :size="15" />
+                    <span>
+                      {{
+                        expandedCommit === item.commit!.hash
+                          ? $t("repo.history.ctxHideDetails")
+                          : $t("repo.history.ctxViewDetails")
+                      }}
+                    </span>
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem @select="copyHash(item.commit!.hash)">
+                    <Copy :size="15" /><span>{{ $t("repo.history.copyHash") }}</span>
+                  </ContextMenuItem>
+                  <ContextMenuItem @select="copyMessage(item.commit!)">
+                    <MessageSquareText :size="15" /><span>{{ $t("repo.history.ctxCopyMessage") }}</span>
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    v-if="item.commit!.authorEmail"
+                    @select="copyAuthorEmail(item.commit!.authorEmail)"
+                  >
+                    <Mail :size="15" /><span>{{ $t("repo.history.ctxCopyAuthorEmail") }}</span>
+                  </ContextMenuItem>
+                  <template v-if="item.commit!.parents.length">
+                    <ContextMenuSeparator />
+                    <ContextMenuItem
+                      v-for="parent in item.commit!.parents"
+                      :key="parent"
+                      @select="jumpToParent(parent)"
+                    >
+                      <CornerDownRight :size="15" />
+                      <span>{{ $t("repo.history.ctxJumpToParent", { hash: parent.slice(0, 8) }) }}</span>
+                    </ContextMenuItem>
+                  </template>
+                </ContextMenuContent>
+              </ContextMenu>
 
               <!-- commit detail (files + bounded diff), indented past the gutter -->
               <Transition name="expand">
@@ -770,7 +1048,10 @@ watch(
                   <div class="min-h-0 overflow-hidden">
                     <div
                       class="mb-1 mt-0.5 rounded-md border-l-2 py-1.5 pl-2.5 pr-2"
-                      :style="{ marginLeft: `${gutterW}px`, borderColor: laneColor(item.row.node.color) }"
+                      :style="{
+                        marginLeft: `${visibleGutterW}px`,
+                        borderColor: historyGraphEnabled ? laneColor(item.row.node.color) : 'var(--border)',
+                      }"
                     >
                 <div v-if="loadingCommit === item.commit!.hash" class="flex items-center gap-2 text-[12px] text-muted-foreground">
                   <Loader2 :size="13" class="animate-spin" />{{ $t("repo.history.loading") }}
@@ -928,6 +1209,16 @@ watch(
 </template>
 
 <style scoped>
+/* Loaded history is bounded in the store, and offscreen rows also skip layout/paint. `auto`
+   remembers an expanded row's real height after first render; 34px is the cold wide-row estimate. */
+.history-row-visibility {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 34px;
+}
+.history-row-visibility.history-row-compact {
+  contain-intrinsic-size: auto 46px;
+}
+
 /* Smooth height animation for a commit's detail expand/collapse (grid-rows technique — animates
    0fr↔1fr with no need to measure the content height; the inner min-h-0/overflow-hidden clips it). */
 .expand-grid {

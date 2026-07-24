@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, ref, computed, watch } from "vue";
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Plus, Loader2, LogOut } from "@lucide/vue";
 import { useStore } from "./store";
 import { Button } from "@/components/ui/button";
@@ -17,12 +17,24 @@ import ScanProjects from "./components/ScanProjects.vue";
 import Settings from "./components/Settings.vue";
 import SignIn from "./components/SignIn.vue";
 import RemoteAccess from "./components/RemoteAccess.vue";
-import FileViewer from "./components/FileViewer.vue";
 import { pageShiftPx, fileViewer, closeFile } from "@/lib/file-viewer";
 import { selectionActive } from "@/lib/repo-selection";
 import { usePushPanel } from "@/shell/usePushPanel";
 import AppContainer from "@/shell/AppContainer.vue";
 import AppFooter from "@/shell/AppFooter.vue";
+
+// FileViewer brings Monaco's shell plus the full VS Code file-icon catalog. Do not parse that
+// graph for a dashboard session that never opens a file. Once visited, retain the component so
+// its close transition and edit/discard state keep the same mounted-once behavior as before.
+const FileViewer = defineAsyncComponent(() => import("./components/FileViewer.vue"));
+const fileViewerVisited = ref(fileViewer.open);
+watch(
+  () => fileViewer.open,
+  (open) => {
+    if (open) fileViewerVisited.value = true;
+  },
+  { immediate: true },
+);
 
 const store = useStore();
 const leftSharedWorkspace = new URLSearchParams(window.location.search).get("leftShare") === "1";
@@ -85,18 +97,19 @@ function scheduleIdle(fn: () => void): void {
 onMounted(async () => {
   await store.loadAuth();
   if (needsSignIn.value) return; // show the sign-in gate instead of loading data
-  void store.loadAll();
-  // GET /api/accounts is owner-only (it lists the machine's GitHub logins), so a share-link guest
-  // is 403'd by design. It's best-effort and swallows the error, but asking anyway would write a
-  // "denied" row into that link's audit trail on every page load — burying the entries the owner
-  // actually opens the trail to read ("did my brother push this?") under the app probing itself.
-  if (!store.isGuest) void store.loadAccounts();
+  const startup = store.loadAll();
+  // loadAll owns account hydration. Keeping one owner avoids launching duplicate `gh auth` probes
+  // during startup (and it already skips the owner-only endpoint for a share-link guest).
   store.connect();
   // Sweep the whole machine for repos on launch, if the owner opted in — deferred so it never
   // competes with the initial paint. Found repos stream in live (repo_added) and a finished scan
   // raises the "new projects" notification via notifyNewProjects() — both already wired in connect().
   scheduleIdle(() => {
-    if (store.autoScan) void store.startScan();
+    // autoScan is hydrated by loadAll's runtime-status read. Waiting for startup avoids racing its
+    // default `false` and silently skipping an enabled launch scan on a very fast idle callback.
+    void startup.then(() => {
+      if (store.autoScan) void store.startScan();
+    }).catch(() => undefined);
   });
 
   // Sign-in opens in a NEW tab (see RemoteAccess / AccessSection), so this tab never navigates
@@ -216,6 +229,6 @@ onBeforeUnmount(() => window.removeEventListener("focus", onWindowFocus));
     <!-- "I want to share ONE repo, not my whole dashboard" — the remote modal hands off to
          Settings → Access, where share links live. -->
     <RemoteAccess v-model:open="showRemote" @share-links="onSettings('open', 'access')" />
-    <FileViewer />
+    <FileViewer v-if="fileViewerVisited" />
   </div>
 </template>

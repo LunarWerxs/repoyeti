@@ -1,9 +1,10 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { $ } from "bun";
 import { readStatus } from "../src/read/status.ts";
+import { currentGitOperation } from "../src/git.ts";
 
 async function gitRepo(prefix = "gm-status-"): Promise<string> {
   const dir = mkdtempSync(join(tmpdir(), prefix));
@@ -35,4 +36,28 @@ test("readStatus re-resolves the remote after .git/config changes (cache invalid
 
   const s2 = await readStatus(dir);
   expect(s2.remote).toContain("a-much-longer-remote-name.git");
+});
+
+test("readStatus reports operation markers from an ordinary .git directory", async () => {
+  const dir = await gitRepo("gm-status-operation-");
+  writeFileSync(join(dir, ".git", "MERGE_HEAD"), "0123456789012345678901234567890123456789\n");
+
+  const status = await readStatus(dir);
+
+  expect(status.error).toBeNull();
+  expect(status.gitOperation).toBe("MERGE_HEAD");
+});
+
+test("currentGitOperation follows a linked worktree's .git pointer without a Git lookup", async () => {
+  const main = await gitRepo("gm-status-main-");
+  const worktree = mkdtempSync(join(tmpdir(), "gm-status-worktree-parent-"));
+  const checkout = join(worktree, "checkout");
+  await $`git -C ${main} worktree add -q -b operation-test ${checkout}`.quiet();
+  const rawGitDir = (
+    await $`git -C ${checkout} rev-parse --git-dir`.quiet()
+  ).stdout.toString().trim();
+  const gitDir = isAbsolute(rawGitDir) ? rawGitDir : resolve(checkout, rawGitDir);
+  mkdirSync(join(gitDir, "rebase-merge"));
+
+  expect(await currentGitOperation(checkout)).toBe("rebase-merge");
 });

@@ -14,6 +14,8 @@ import { provideTreeCollapse } from "@/lib/changes-tree";
 import { cn } from "@/lib/utils";
 import { useRepoFeedback } from "@/lib/repo-feedback";
 import {
+  CHANGES_SIZE_PX,
+  changesViewSize,
   changesTreeStyle,
   setChangesOverride,
   clearChangesOverride,
@@ -21,7 +23,6 @@ import {
   changesDisplayMode,
   setChangesDisplayMode,
   MIN_CHANGES_PX,
-  MAX_CHANGES_PX,
 } from "@/lib/changes-view";
 import { shortcutsActive } from "@/lib/hotkeys";
 import { useGripDrag } from "@/lib/grip-drag";
@@ -212,16 +213,54 @@ const flatFiles = computed(() =>
 // The grip below the tree pins an explicit height (persisted per repo); double-click
 // it (or press Delete) to fall back to the global Settings preset. See @/lib/changes-view.
 const treeScroll = useTemplateRef<HTMLElement>("treeScroll");
+const treeContent = useTemplateRef<HTMLElement>("treeContent");
 // Live px while a drag is in flight; persisted once on release so we don't thrash
-// localStorage (the deep useLocalStorage watcher serialises on every mutation). This is a CAP
-// like the stored value, not a fixed height — see @/lib/changes-view.
+// localStorage (the deep useLocalStorage watcher serialises on every mutation).
 const dragHeight = ref<number | null>(null);
-const treeStyle = computed(() =>
-  dragHeight.value != null ? { maxHeight: `${dragHeight.value}px` } : changesTreeStyle(props.repo.id),
-);
 const resized = computed(() => hasChangesOverride(props.repo.id));
-const clampPx = (px: number): number =>
-  Math.min(MAX_CHANGES_PX, Math.max(MIN_CHANGES_PX, Math.round(px)));
+// In automatic mode, explicitly mirror the rendered content height. CSS `height:auto` normally
+// does this, but a capped overflow viewport can occasionally keep its former smaller used height
+// when a live tree gains rows. Observing the inner content makes both directions deterministic.
+const autoContentHeight = ref<number | null>(null);
+const treeStyle = computed(() => {
+  if (dragHeight.value != null) return { height: `${dragHeight.value}px` };
+  const base = changesTreeStyle(props.repo.id);
+  if (resized.value || autoContentHeight.value == null) return base;
+  const presetMax = CHANGES_SIZE_PX[changesViewSize.value];
+  return {
+    ...base,
+    height: `${Math.min(autoContentHeight.value, presetMax)}px`,
+  };
+});
+
+let contentResizeObserver: ResizeObserver | null = null;
+function measureTreeContent(): void {
+  const content = treeContent.value;
+  if (!content) return;
+  // scrollHeight includes the 10px end gap and top padding on the inner wrapper. The bounding
+  // height is a useful fallback for engines that round scrollHeight during a layout update.
+  const height = Math.ceil(
+    Math.max(content.scrollHeight, content.getBoundingClientRect().height),
+  );
+  if (height > 0) autoContentHeight.value = height;
+}
+watch(
+  treeContent,
+  (content) => {
+    contentResizeObserver?.disconnect();
+    contentResizeObserver = null;
+    autoContentHeight.value = null;
+    if (!content) return;
+    measureTreeContent();
+    if (typeof ResizeObserver === "undefined") return;
+    contentResizeObserver = new ResizeObserver(measureTreeContent);
+    contentResizeObserver.observe(content);
+  },
+  { flush: "post", immediate: true },
+);
+onBeforeUnmount(() => contentResizeObserver?.disconnect());
+
+const clampPx = (px: number): number => Math.max(MIN_CHANGES_PX, Math.round(px));
 let dragStartY = 0;
 let dragStartH = 0;
 
@@ -234,12 +273,9 @@ const onGripDown = useGripDrag({
     dragStartH = treeScroll.value.clientHeight;
   },
   onMove: (e) => {
-    // Since the value is a CAP, dragging past the content's own height would look frozen (the
-    // box can't grow beyond what's in it). Stop at the content height so the grip always tracks
-    // the pointer while it's doing something, and visibly stops when there's nothing left to
-    // reveal. `scrollHeight` is the full content height even while the box is capped shorter.
-    const contentH = treeScroll.value?.scrollHeight ?? MAX_CHANGES_PX;
-    dragHeight.value = Math.min(clampPx(dragStartH + (e.clientY - dragStartY)), Math.max(MIN_CHANGES_PX, contentH));
+    // A manual resize is an exact workspace height, not another content cap. Let the grip move
+    // past a short tree's scrollHeight; the empty room is intentional and persists on release.
+    dragHeight.value = clampPx(dragStartH + (e.clientY - dragStartY));
   },
   onEnd: () => {
     if (dragHeight.value != null) {
@@ -501,7 +537,15 @@ async function onCopyPath(path: string): Promise<void> {
         </TooltipContent>
       </Tooltip>
     </div>
-    <div ref="treeScroll" class="scroll-slim overflow-y-auto px-1 py-0.5" :style="treeStyle">
+    <div
+      ref="treeScroll"
+      class="changes-tree-viewport scroll-slim overflow-y-auto"
+      :class="dragHeight != null && 'changes-tree-viewport--dragging'"
+      :style="treeStyle"
+    >
+      <!-- The measured inner wrapper lets automatic mode follow rows added or removed. Its 10px
+           bottom padding also keeps the resize bar from reading like it hides one more item. -->
+      <div ref="treeContent" class="changes-tree-content px-1 pt-0.5 pb-2.5">
       <!-- Spinner only before the FIRST load: changesLoading also flips on every background
            refresh, and swapping the whole (possibly huge) tree for a spinner and back would
            unmount/remount thousands of rows on each refresh. Once data exists, the old tree
@@ -546,6 +590,7 @@ async function onCopyPath(path: string): Promise<void> {
             total: store.changesMeta[repo.id]?.total,
           })
         }}
+      </div>
       </div>
     </div>
     <!-- resize grip: drag (or ↑/↓) to set an explicit height; double-click / Delete to reset -->
@@ -600,3 +645,19 @@ async function onCopyPath(path: string): Promise<void> {
     </DialogContent>
   </Dialog>
 </template>
+
+<style scoped>
+/* Quick ease-out: enough motion to make file-driven height changes legible without a soft,
+   floaty finish. Pointer dragging stays 1:1 with the hand, and accessibility wins outright. */
+.changes-tree-viewport {
+  transition: height 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.changes-tree-viewport--dragging {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .changes-tree-viewport {
+    transition: none;
+  }
+}
+</style>

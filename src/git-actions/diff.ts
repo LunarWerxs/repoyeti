@@ -6,6 +6,7 @@
  * index.
  */
 import { safeGitEnv } from "../git.ts";
+import { readGate } from "../gitgate.ts";
 import { readChanges } from "../read/status.ts";
 import { normalizeRelPath } from "../paths.ts";
 import type { CommitPlanInput, PlanInputFile } from "../ai.ts";
@@ -24,40 +25,52 @@ const DIFF_TIMEOUT_MS = 30_000;
  * daemon-safe git env as gitFor() (no pager, no prompts, GIT_OPTIONAL_LOCKS=0). Read-only.
  */
 async function boundedGit(absPath: string, args: string[], cap: number): Promise<string> {
-  const proc = Bun.spawn(["git", ...args], {
-    cwd: absPath,
-    env: safeGitEnv(),
-    stdout: "pipe",
-    stderr: "ignore",
+  // These reads are called by independent AI, collaboration, file-viewer, and content-search
+  // requests, so a per-request byte cap alone does not bound how many Git children can coexist.
+  // Take one daemon-wide read slot per invocation (never around a caller that itself holds one).
+  return readGate.run(async () => {
+    const proc = Bun.spawn(["git", ...args], {
+      cwd: absPath,
+      env: safeGitEnv(),
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const kill = (): void => {
+      try {
+        proc.kill();
+      } catch {
+        /* already exited */
+      }
+    };
+    const killTimer = setTimeout(kill, DIFF_TIMEOUT_MS);
+    const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
+    const decoder = new TextDecoder("utf-8", { fatal: false });
+    let out = "";
+    try {
+      while (out.length < cap) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        out += decoder.decode(value, { stream: true });
+      }
+      if (out.length > cap) out = out.slice(0, cap);
+    } catch {
+      /* child killed or stream errored — keep whatever we read */
+    } finally {
+      clearTimeout(killTimer);
+      try {
+        await reader.cancel();
+      } catch {
+        /* already closed */
+      }
+      kill(); // no-op if it already exited; stops a still-streaming huge diff
+      try {
+        await proc.exited;
+      } catch {
+        /* ignore */
+      }
+    }
+    return out;
   });
-  const killTimer = setTimeout(() => proc.kill(), DIFF_TIMEOUT_MS);
-  const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
-  const decoder = new TextDecoder("utf-8", { fatal: false });
-  let out = "";
-  try {
-    while (out.length < cap) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      out += decoder.decode(value, { stream: true });
-    }
-    if (out.length > cap) out = out.slice(0, cap);
-  } catch {
-    /* child killed or stream errored — keep whatever we read */
-  } finally {
-    clearTimeout(killTimer);
-    try {
-      await reader.cancel();
-    } catch {
-      /* already closed */
-    }
-    proc.kill(); // no-op if it already exited; stops a still-streaming huge diff
-    try {
-      await proc.exited;
-    } catch {
-      /* ignore */
-    }
-  }
-  return out;
 }
 
 /**

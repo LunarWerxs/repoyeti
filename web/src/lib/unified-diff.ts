@@ -21,6 +21,10 @@ export interface DiffRow {
  *  this only guards a pathologically large newly-added / deleted file. */
 export const MAX_MODELS_LINES = 1200;
 
+/** Cap the actual LCS work too: two individually-valid sides could otherwise still allocate and
+ *  process a 1.44-million-cell matrix. The implementation stores one direction byte per cell. */
+export const MAX_MODELS_CELLS = 500_000;
+
 /** Split text into lines, dropping a single trailing newline so a file doesn't render a phantom
  *  blank last line. Empty string → no lines (an added file's empty original, etc.). */
 function splitLines(s: string): string[] {
@@ -72,17 +76,28 @@ export function diffModels(original: string, modified: string): DiffRow[] | null
   const b = splitLines(modified);
   const n = a.length;
   const m = b.length;
-  if (n > MAX_MODELS_LINES || m > MAX_MODELS_LINES) return null;
+  if (n > MAX_MODELS_LINES || m > MAX_MODELS_LINES || n * m > MAX_MODELS_CELLS) return null;
 
-  // dp[i][j] = LCS length of a[i:] and b[j:]. Filled bottom-up; Int32Array keeps it compact.
-  const dp: Int32Array[] = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+  // Two rolling LCS-length rows plus a one-byte direction map preserve the same edit script while
+  // avoiding a full Int32 matrix. 0 = equal, 1 = delete from a, 2 = insert from b.
+  const directions = new Uint8Array(n * m);
+  let next = new Uint16Array(m + 1);
+  let row = new Uint16Array(m + 1);
   for (let i = n - 1; i >= 0; i--) {
-    const di = dp[i]!;
-    const di1 = dp[i + 1]!;
     const ai = a[i]!;
     for (let j = m - 1; j >= 0; j--) {
-      di[j] = ai === b[j]! ? di1[j + 1]! + 1 : Math.max(di1[j]!, di[j + 1]!);
+      const at = i * m + j;
+      if (ai === b[j]!) {
+        row[j] = next[j + 1]! + 1;
+      } else if (next[j]! >= row[j + 1]!) {
+        row[j] = next[j]!;
+        directions[at] = 1;
+      } else {
+        row[j] = row[j + 1]!;
+        directions[at] = 2;
+      }
     }
+    [next, row] = [row, next];
   }
 
   const rows: DiffRow[] = [];
@@ -93,7 +108,7 @@ export function diffModels(original: string, modified: string): DiffRow[] | null
       rows.push({ kind: "ctx", text: a[i]! });
       i++;
       j++;
-    } else if (dp[i + 1]![j]! >= dp[i]![j + 1]!) {
+    } else if (directions[i * m + j] === 1) {
       rows.push({ kind: "del", text: a[i]! });
       i++;
     } else {
@@ -169,4 +184,3 @@ export function renderFileDiff(d: FileDiffLike): RenderedDiff {
   if (raw === null) return { rows: [], binary: false, tooLarge: true };
   return { rows: collapseContext(raw), binary: false, tooLarge: false };
 }
-

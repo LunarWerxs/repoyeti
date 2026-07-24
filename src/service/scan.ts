@@ -15,8 +15,7 @@ import { broadcast } from "../bus.ts";
 import { loadConfig } from "../config.ts";
 import { getRepo, getRepos, upsertRepo } from "../db.ts";
 import { discoverStream, machineScanRoots } from "../discovery.ts";
-import { refreshRepo } from "./core.ts";
-import { watchOne } from "./watch.ts";
+import { coalescedRefresh, watchOne } from "./watch.ts";
 
 // The in-flight scan's abort controller, or null when idle. Guards single-flight + cancel.
 let active: AbortController | null = null;
@@ -95,7 +94,7 @@ async function runScan(scope: string, roots: string[], limits: ScanLimits): Prom
         // the walk, so this should essentially never fire, but never watch/broadcast a null id.
         if (!id) return;
         watchOne(id, f.absPath);
-        void refreshRepo(id, f.absPath).catch(() => {});
+        coalescedRefresh(id, f.absPath);
         found++;
         if (!knownIds.has(id)) {
           const repo = getRepo(id);

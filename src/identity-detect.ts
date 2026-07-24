@@ -2,6 +2,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { createSemaphore } from "./gitgate.ts";
 
 export type DetectedIdentitySource =
   | "git-global"
@@ -40,30 +41,41 @@ interface RunResult {
   stdout: string;
 }
 
+const identityDetectionConcurrency = (() => {
+  const configured = Number(process.env.REPOYETI_IDENTITY_DETECTION_CONCURRENCY);
+  return Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 4;
+})();
+// Opening Settings used to launch two Git children for each of up to 200 repositories at once.
+// Bound every external identity probe so that a refresh cannot exhaust process handles or swamp
+// disk/antivirus, even when several probe kinds (GitHub CLI, ssh-agent, cmdkey) run together.
+const identityDetectionGate = createSemaphore(identityDetectionConcurrency);
+
 function idFor(...parts: string[]): string {
   return createHash("sha1").update(parts.join("\0")).digest("hex").slice(0, 16);
 }
 
 async function run(args: string[], timeoutMs = 1500): Promise<RunResult> {
-  try {
-    const proc = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
-    const timer = setTimeout(() => {
-      try {
-        proc.kill();
-      } catch {
-        /* process already exited */
-      }
-    }, timeoutMs);
-    const [stdout, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      proc.exited,
-      new Response(proc.stderr).text(),
-    ]);
-    clearTimeout(timer);
-    return { ok: code === 0, stdout: stdout.trim() };
-  } catch {
-    return { ok: false, stdout: "" };
-  }
+  return identityDetectionGate.run(async () => {
+    try {
+      const proc = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
+      const timer = setTimeout(() => {
+        try {
+          proc.kill();
+        } catch {
+          /* process already exited */
+        }
+      }, timeoutMs);
+      const [stdout, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        proc.exited,
+        new Response(proc.stderr).text(),
+      ]);
+      clearTimeout(timer);
+      return { ok: code === 0, stdout: stdout.trim() };
+    } catch {
+      return { ok: false, stdout: "" };
+    }
+  });
 }
 
 function missingFor(suggestion: DetectedIdentitySuggestion): Array<keyof DetectedIdentitySuggestion> {
@@ -327,14 +339,35 @@ async function detectRepoGitConfig(repos: RepoIdentityHint[]): Promise<DetectedI
   const limited = repos.slice(0, 200);
   const results = await Promise.all(
     limited.map(async (repo) => {
-      const [name, email] = await Promise.all([
-        run(["git", "-C", repo.absPath, "config", "--local", "--get", "user.name"]),
-        run(["git", "-C", repo.absPath, "config", "--local", "--get", "user.email"]),
+      // One process reads both author fields. `--get-regexp` is deliberately narrow: unlike
+      // `--list`, it cannot pull remote URLs or credential-related config into memory.
+      const config = await run([
+        "git",
+        "-C",
+        repo.absPath,
+        "config",
+        "--local",
+        "--get-regexp",
+        "^user\\.(name|email)$",
       ]);
-      return detectedFromRepoGitConfig(repo, name.stdout, email.stdout);
+      const { name, email } = parseRepoIdentityConfig(config.stdout);
+      return detectedFromRepoGitConfig(repo, name, email);
     }),
   );
   return results.filter((item): item is DetectedIdentity => !!item);
+}
+
+/** Parse `git config --get-regexp '^user\.(name|email)$'` without normalizing author whitespace. */
+export function parseRepoIdentityConfig(raw: string): { name: string; email: string } {
+  let name = "";
+  let email = "";
+  for (const line of raw.split(/\r?\n/)) {
+    const match = /^(user\.(?:name|email))\s+(.*)$/i.exec(line);
+    if (!match) continue;
+    if (match[1]!.toLowerCase() === "user.name") name = match[2]!.trim();
+    else email = match[2]!.trim();
+  }
+  return { name, email };
 }
 
 export async function detectIdentities(repos: RepoIdentityHint[] = []): Promise<DetectedIdentity[]> {

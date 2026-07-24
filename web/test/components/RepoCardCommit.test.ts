@@ -1,0 +1,162 @@
+import { GitCommitHorizontal, RefreshCw } from "@lucide/vue";
+import { flushPromises, mount } from "@vue/test-utils";
+import { createPinia, setActivePinia } from "pinia";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { computed, reactive } from "vue";
+import { api } from "@/api";
+import RepoCardCommit from "@/components/repo-card/RepoCardCommit.vue";
+import { i18n } from "@/i18n";
+import type { TreeSelectionApi } from "@/lib/changes-selection";
+import { defaultCommitAction } from "@/lib/commit-default";
+import { useStore } from "@/store";
+import type { Repo } from "@/types";
+
+vi.mock("vue-sonner", () => ({
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+}));
+
+function repo(remote: string | null): Repo {
+  return {
+    id: "repo-1",
+    name: "demo",
+    displayName: null,
+    absPath: "/demo",
+    source: "auto",
+    vcs: "git",
+    isSubmodule: false,
+    identityId: null,
+    syncAccountHost: null,
+    syncAccountLogin: null,
+    hidden: false,
+    pinned: false,
+    starred: false,
+    autoCommit: false,
+    status: {
+      branch: "main",
+      detached: false,
+      dirty: 1,
+      ahead: 0,
+      behind: 0,
+      remote,
+      error: null,
+      fetchedAt: null,
+      updatedAt: 1,
+    },
+    updatedAt: 1,
+  };
+}
+
+function selection(paths: string[] = []): TreeSelectionApi {
+  const selected = reactive(new Set(paths));
+  return {
+    selected,
+    isSelected: (path) => selected.has(path),
+    toggle: (path) => void (selected.has(path) ? selected.delete(path) : selected.add(path)),
+    setMany: (nextPaths, select) => {
+      for (const path of nextPaths) {
+        if (select) selected.add(path);
+        else selected.delete(path);
+      }
+    },
+    clear: () => selected.clear(),
+    prune: (validPaths) => {
+      const valid = new Set(validPaths);
+      for (const path of [...selected]) if (!valid.has(path)) selected.delete(path);
+    },
+    count: computed(() => selected.size),
+  };
+}
+
+function mountCommit(remote: string | null, paths: string[] = []) {
+  return mount(RepoCardCommit, {
+    props: {
+      repo: repo(remote),
+      treeSelection: selection(paths),
+      commitMsg: "feat: ship it",
+    },
+    global: { plugins: [i18n] },
+  });
+}
+
+describe("RepoCardCommit default primary action", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    localStorage.clear();
+    defaultCommitAction.value = "commit";
+    // Keep the fixture focused on the regular split button.
+    useStore().aiSettings.commitEnabled = false;
+    // Successful commits refresh the non-critical recent-message chips in the background.
+    // Keep that fire-and-forget refresh local to the test instead of leaving a real fetch for
+    // happy-dom to abort noisily while its window is being torn down.
+    vi.spyOn(api, "log").mockResolvedValue({
+      ok: true,
+      code: "OK",
+      commits: [],
+      hasMore: false,
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("defaults to a plain Commit button", () => {
+    const wrapper = mountCommit("origin");
+    const primary = wrapper.get('[data-testid="primary-commit-action"]');
+
+    expect(primary.attributes("data-commit-mode")).toBe("commit");
+    expect(primary.text()).toBe("Commit");
+    expect(primary.findComponent(GitCommitHorizontal).exists()).toBe(true);
+    expect(primary.findComponent(RefreshCw).exists()).toBe(false);
+  });
+
+  it("runs pull then push from a Commit & Sync primary button when an upstream exists", async () => {
+    defaultCommitAction.value = "sync";
+    const store = useStore();
+    const commit = vi.spyOn(store, "commit").mockResolvedValue({ ok: true, code: "OK" });
+    const action = vi.spyOn(store, "doAction").mockResolvedValue({ ok: true, code: "OK" });
+    const wrapper = mountCommit("origin");
+    const primary = wrapper.get('[data-testid="primary-commit-action"]');
+
+    expect(primary.attributes("data-commit-mode")).toBe("sync");
+    expect(primary.text()).toBe("Commit & Sync");
+    expect(primary.findComponent(RefreshCw).exists()).toBe(true);
+    expect(primary.findComponent(GitCommitHorizontal).exists()).toBe(false);
+
+    await primary.trigger("click");
+    await flushPromises();
+
+    expect(commit).toHaveBeenCalledOnce();
+    expect(action.mock.calls).toEqual([
+      ["repo-1", "pull"],
+      ["repo-1", "push"],
+    ]);
+  });
+
+  it("falls back to plain Commit when Commit & Sync is preferred but no upstream exists", async () => {
+    defaultCommitAction.value = "sync";
+    const store = useStore();
+    const commit = vi.spyOn(store, "commit").mockResolvedValue({ ok: true, code: "OK" });
+    const action = vi.spyOn(store, "doAction").mockResolvedValue({ ok: true, code: "OK" });
+    const wrapper = mountCommit(null);
+    const primary = wrapper.get('[data-testid="primary-commit-action"]');
+
+    expect(primary.attributes("data-commit-mode")).toBe("commit");
+    expect(primary.text()).toBe("Commit");
+    expect(primary.findComponent(GitCommitHorizontal).exists()).toBe(true);
+    expect(primary.findComponent(RefreshCw).exists()).toBe(false);
+
+    await primary.trigger("click");
+    await flushPromises();
+
+    expect(commit).toHaveBeenCalledOnce();
+    expect(action).not.toHaveBeenCalled();
+  });
+
+  it("makes the all-files scope explicit when files are selected", () => {
+    defaultCommitAction.value = "sync";
+    const wrapper = mountCommit("origin", ["src/a.ts"]);
+
+    expect(wrapper.get('[data-testid="primary-commit-action"]').text()).toBe("Commit all & Sync");
+  });
+});

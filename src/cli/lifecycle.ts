@@ -24,7 +24,13 @@ import { initDb, upsertRepo, getRepo, getRepos, getWatchableRepos, getLastIdenti
 import { discoverStream } from "../discovery.ts";
 import { createApp } from "../http/app.ts";
 import { initCloudSync, pullNow } from "../connections-sync.ts";
-import { refreshRepo, startWatching, watchOne, stopWatching } from "../service/index.ts";
+import {
+  coalescedRefresh,
+  refreshRepo,
+  startWatching,
+  watchOne,
+  stopWatching,
+} from "../service/index.ts";
 import { startRemoteSync, stopRemoteSync } from "../remote-sync.ts";
 import { startAutoCommit, stopAutoCommit } from "../auto-commit.ts";
 import { startAutoUpdate, stopAutoUpdate, setAutoUpdateHooks } from "../auto-update.ts";
@@ -323,9 +329,22 @@ export async function start(rest: string[]): Promise<void> {
 async function hydrateInitialStatuses(
   repos: Array<{ id: string; absPath: string }>,
 ): Promise<void> {
-  // Swallowed per-repo: readStatus already encodes failures into the status row, so a bad
-  // repo can't crash the batch or block its siblings from hydrating.
-  await Promise.all(repos.map((r) => refreshRepo(r.id, r.absPath).catch(() => {})));
+  // readGate bounds Git children, and this outer worker pool also bounds the promises/closures
+  // waiting to reach it. A 5,000-repo index should not enqueue 5,000 async call chains at boot.
+  let next = 0;
+  const workers = Math.min(16, repos.length);
+  await Promise.all(
+    Array.from({ length: workers }, async () => {
+      while (true) {
+        const index = next++;
+        if (index >= repos.length) return;
+        const repo = repos[index]!;
+        // Swallowed per-repo: readStatus already encodes failures into the status row, so a bad
+        // repo can't crash the batch or block its siblings from hydrating.
+        await refreshRepo(repo.id, repo.absPath).catch(() => {});
+      }
+    }),
+  );
 }
 
 /**
@@ -343,9 +362,11 @@ async function runDiscovery(cfg: RepoYetiConfig, knownIds: Set<string>): Promise
       // walk, so this should essentially never fire, but never watch/broadcast a null id.
       if (!id) return;
       watchOne(id, f.absPath);
-      // Fire-and-forget: a bad repo can't halt discovery; its status row just stays stale.
-      void refreshRepo(id, f.absPath).catch(() => {});
       if (!knownIds.has(id)) {
+        // Known repos are already in the bounded initial-hydration pool above. Refreshing them
+        // again as discovery rediscovers each path used to duplicate the entire startup Git load.
+        // Only genuinely new rows need a fire-and-forget first status here.
+        coalescedRefresh(id, f.absPath);
         const repo = getRepo(id);
         if (repo) {
           added++;

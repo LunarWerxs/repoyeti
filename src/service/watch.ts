@@ -24,18 +24,51 @@ const unhealthyWatch = new Set<string>();
 // user-facing paths (runAction, forceRefresh) still await refreshRepo directly, so their
 // returned result stays exact.
 const refreshBusy = new Set<string>();
-const refreshAgain = new Set<string>();
+const refreshAgain = new Map<string, string>();
+// readGate bounds Git children, but calling refreshRepo thousands of times still creates thousands
+// of promise/op-queue chains before those children reach the gate. Keep only a small active set and
+// represent the remainder as one cheap, coalesced path entry per repo.
+const REFRESH_CONCURRENCY = 16;
+const refreshPending = new Map<string, string>();
+let refreshActive = 0;
+
+function pumpRefreshes(): void {
+  while (refreshActive < REFRESH_CONCURRENCY && refreshPending.size > 0) {
+    const entry = refreshPending.entries().next().value as [string, string] | undefined;
+    if (!entry) return;
+    const [repoId, absPath] = entry;
+    refreshPending.delete(repoId);
+    refreshBusy.add(repoId);
+    refreshActive++;
+    // Watcher/discovery refreshes are best-effort. Consume a rare DB/backend rejection as well as
+    // releasing the scheduler slot, so it cannot become an unhandled rejection that kills Bun.
+    void refreshRepo(repoId, absPath)
+      .catch(() => {})
+      .finally(() => {
+        refreshActive--;
+        refreshBusy.delete(repoId);
+        const trailingPath = refreshAgain.get(repoId);
+        refreshAgain.delete(repoId);
+        if (trailingPath) refreshPending.set(repoId, trailingPath);
+        pumpRefreshes();
+      });
+  }
+}
 
 export function coalescedRefresh(repoId: string, absPath: string): void {
   if (refreshBusy.has(repoId)) {
-    refreshAgain.add(repoId); // a read is already running for this repo — fold into a trailing pass
+    // A read is already running for this repo — fold any number of events into one trailing pass.
+    refreshAgain.set(repoId, absPath);
     return;
   }
-  refreshBusy.add(repoId);
-  void refreshRepo(repoId, absPath).finally(() => {
-    refreshBusy.delete(repoId);
-    if (refreshAgain.delete(repoId)) coalescedRefresh(repoId, absPath);
-  });
+  // Setting an existing key updates its latest path without adding another queue entry.
+  refreshPending.set(repoId, absPath);
+  pumpRefreshes();
+}
+
+/** Side-effect-free scheduler diagnostics (primarily for regression tests). */
+export function refreshQueueHealth(): { active: number; queued: number } {
+  return { active: refreshActive, queued: refreshPending.size };
 }
 
 /**
@@ -88,8 +121,8 @@ export function unwatchOne(repoId: string): void {
     pollHandles.delete(repoId);
   }
   unhealthyWatch.delete(repoId);
-  refreshBusy.delete(repoId);
   refreshAgain.delete(repoId);
+  refreshPending.delete(repoId);
   lastStatusSig.delete(repoId);
   forgetQueue(repoId); // drop the op-queue chain too, so `chains` doesn't leak per removed repo
 }
@@ -102,8 +135,8 @@ export function stopWatching(): void {
   for (const t of pollHandles.values()) clearTimeout(t);
   pollHandles.clear();
   unhealthyWatch.clear();
-  refreshBusy.clear();
   refreshAgain.clear();
+  refreshPending.clear();
 }
 
 /** Watcher health snapshot for diagnostics/tests: how many repos are watched live vs

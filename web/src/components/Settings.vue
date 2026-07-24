@@ -1,27 +1,32 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, defineAsyncComponent, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Settings as SettingsIcon } from "@lucide/vue";
 import { useStore } from "../store";
 import type { PushPanelSide } from "@/shell/usePushPanel";
 import SettingsPanel from "@/shell/SettingsPanel.vue";
 import SettingsTabs from "@/shell/SettingsTabs.vue";
-import IdentitiesSection from "./settings/IdentitiesSection.vue";
-import AccessSection from "./settings/AccessSection.vue";
-import SharingSection from "./settings/SharingSection.vue";
-import DiscoverySection from "./settings/DiscoverySection.vue";
-import CloudSyncSection from "./settings/CloudSyncSection.vue";
-import AppearanceSection from "./settings/AppearanceSection.vue";
-import EditorSection from "./settings/EditorSection.vue";
-import UpdatesSection from "./settings/UpdatesSection.vue";
-import HotkeysSection from "./settings/HotkeysSection.vue";
-import DiffTuningSection from "./settings/DiffTuningSection.vue";
-import AutoCommitSection from "./settings/AutoCommitSection.vue";
-import BackgroundSyncSection from "./settings/BackgroundSyncSection.vue";
-import AgentSafetySection from "./settings/AgentSafetySection.vue";
-import IdentityFirewallSection from "./settings/IdentityFirewallSection.vue";
-import AiProvidersSection from "./settings/AiProvidersSection.vue";
-import LoreServersSection from "./settings/LoreServersSection.vue";
+
+// Settings is part of the always-loaded shell, but its sections are not. Keep each panel behind a
+// dynamic import so startup does not parse every account/AI/automation control, then mount only the
+// active tab below. Sections that refresh from `open` use immediate watchers, so a tab first
+// mounted after the sheet opens still loads current data.
+const IdentitiesSection = defineAsyncComponent(() => import("./settings/IdentitiesSection.vue"));
+const AccessSection = defineAsyncComponent(() => import("./settings/AccessSection.vue"));
+const SharingSection = defineAsyncComponent(() => import("./settings/SharingSection.vue"));
+const DiscoverySection = defineAsyncComponent(() => import("./settings/DiscoverySection.vue"));
+const CloudSyncSection = defineAsyncComponent(() => import("./settings/CloudSyncSection.vue"));
+const AppearanceSection = defineAsyncComponent(() => import("./settings/AppearanceSection.vue"));
+const EditorSection = defineAsyncComponent(() => import("./settings/EditorSection.vue"));
+const UpdatesSection = defineAsyncComponent(() => import("./settings/UpdatesSection.vue"));
+const HotkeysSection = defineAsyncComponent(() => import("./settings/HotkeysSection.vue"));
+const DiffTuningSection = defineAsyncComponent(() => import("./settings/DiffTuningSection.vue"));
+const AutoCommitSection = defineAsyncComponent(() => import("./settings/AutoCommitSection.vue"));
+const BackgroundSyncSection = defineAsyncComponent(() => import("./settings/BackgroundSyncSection.vue"));
+const AgentSafetySection = defineAsyncComponent(() => import("./settings/AgentSafetySection.vue"));
+const IdentityFirewallSection = defineAsyncComponent(() => import("./settings/IdentityFirewallSection.vue"));
+const AiProvidersSection = defineAsyncComponent(() => import("./settings/AiProvidersSection.vue"));
+const LoreServersSection = defineAsyncComponent(() => import("./settings/LoreServersSection.vue"));
 
 const open = defineModel<boolean>("open", { required: true });
 const props = withDefaults(
@@ -43,6 +48,10 @@ const store = useStore();
 // and who gets in", and splitting them made each half look incomplete.
 type TabId = "general" | "access" | "automation" | "advanced";
 const tab = ref<TabId>("general");
+// Preserve partially-filled controls while moving between tabs in one open session, but forget
+// visited tabs on the next open. That keeps the old v-show state-preservation without eagerly
+// mounting every section (or remounting every previously visited section on a later open).
+const visitedTabs = ref<TabId[]>(["general"]);
 const tabs = computed<{ id: TabId; label: string }[]>(() => [
   { id: "general", label: t("settings.tabs.general") },
   // Label kept to ONE short word — "Accounts & access" wrapped to two lines in the tab bar.
@@ -56,11 +65,26 @@ const asTab = (v: string | null | undefined): TabId | null => {
   if (v === "identities") return "access";
   return v && (TAB_IDS as readonly string[]).includes(v) ? (v as TabId) : null;
 };
+watch(
+  tab,
+  (active) => {
+    if (!visitedTabs.value.includes(active)) visitedTabs.value = [...visitedTabs.value, active];
+  },
+  { immediate: true },
+);
 // Each open lands on the deep-link target if one was requested (e.g. the AI-key notification →
 // Automation), else back on General — the tab most visits need.
-watch(open, (isOpen) => {
-  if (isOpen) tab.value = asTab(props.targetTab) ?? "general";
-});
+watch(
+  open,
+  (isOpen) => {
+    if (!isOpen) return;
+    const target = asTab(props.targetTab) ?? "general";
+    visitedTabs.value = [target];
+    tab.value = target;
+  },
+  // Also handles a Settings instance first mounted already open (component tests/embedders).
+  { immediate: true },
+);
 // Handle a deep-link that arrives while the panel is ALREADY open (open didn't transition).
 watch(
   () => props.targetTab,
@@ -86,12 +110,17 @@ watch(
     <div class="flex flex-col gap-4">
       <SettingsTabs v-model="tab" :tabs="tabs" />
 
-      <!-- All sections stay MOUNTED (v-show, not v-if): several refresh their data from an
-           `open` watcher that fires when the panel opens, which would never run for a section
-           first mounted by a later tab click. -->
+      <!-- Lazy per open: only the active tab mounts initially. Tabs visited during this open stay
+           mounted behind v-show so partially-filled forms survive tab switches; the visited set
+           resets on the next open. Data-loading sections use immediate open-watchers. -->
 
       <!-- General: appearance, folders to scan, updates ────── -->
-      <div v-show="tab === 'general'" class="flex flex-col gap-4">
+      <div
+        v-if="visitedTabs.includes('general')"
+        v-show="tab === 'general'"
+        data-settings-tab="general"
+        class="flex flex-col gap-4"
+      >
         <AppearanceSection />
         <DiscoverySection :open="open" />
         <UpdatesSection />
@@ -99,7 +128,12 @@ watch(
 
       <!-- Accounts & access: GitHub accounts, git identities, Connections account,
            remote access + tunnel, share links, cloud sync ──────────────────────── -->
-      <div v-show="tab === 'access'" class="flex flex-col gap-4">
+      <div
+        v-if="visitedTabs.includes('access')"
+        v-show="tab === 'access'"
+        data-settings-tab="access"
+        class="flex flex-col gap-4"
+      >
         <IdentitiesSection :open="open" />
         <AccessSection :open="open" />
         <SharingSection :open="open" />
@@ -107,7 +141,12 @@ watch(
       </div>
 
       <!-- Automation: auto-commit, background sync, AI providers ── -->
-      <div v-show="tab === 'automation'" class="flex flex-col gap-4">
+      <div
+        v-if="visitedTabs.includes('automation')"
+        v-show="tab === 'automation'"
+        data-settings-tab="automation"
+        class="flex flex-col gap-4"
+      >
         <AutoCommitSection />
         <BackgroundSyncSection />
         <AiProvidersSection :open="open" />
@@ -115,7 +154,12 @@ watch(
 
       <!-- Advanced: power tuning (editor, shortcuts, diff threshold) + the sharp,
            rarely-touched tools — ⭐ Agent Safety Rail, ⭐ Identity Firewall, Lore servers ── -->
-      <div v-show="tab === 'advanced'" class="flex flex-col gap-4">
+      <div
+        v-if="visitedTabs.includes('advanced')"
+        v-show="tab === 'advanced'"
+        data-settings-tab="advanced"
+        class="flex flex-col gap-4"
+      >
         <EditorSection />
         <HotkeysSection />
         <DiffTuningSection />

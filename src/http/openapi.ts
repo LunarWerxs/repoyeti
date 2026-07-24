@@ -131,7 +131,13 @@ export const META: Record<string, RouteMeta> = {
       { name: "limit", description: "Max commits to return (page size)." },
       { name: "skip", description: "Commits to skip (pagination offset)." },
       { name: "merges", description: "Filter merge commits.", enum: ["only", "exclude"] },
+      { name: "refs", description: "Refs to include.", enum: ["head", "local", "all"] },
     ],
+  },
+  "GET /api/repos/:id/activity": {
+    summary: "Bounded rolling 24-hour commit, contributor, file, and line activity.",
+    tags: ["history"],
+    query: [{ name: "refs", description: "Refs to include.", enum: ["head", "local", "all"] }],
   },
   "GET /api/repos/:id/commit/:hash": { summary: "One commit's detail (changed files with per-file line counts; capped list + filesTotal).", tags: ["history"] },
 

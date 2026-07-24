@@ -5,11 +5,14 @@ import { $ } from "bun";
 import { getRepo, setRepoStatus, type RepoStatus } from "../src/db.ts";
 import { enqueue } from "../src/opqueue.ts";
 import {
+  coalescedRefresh,
   getChanges,
+  refreshQueueHealth,
   refreshRepo,
   registerRepo,
   watchOne,
   stopWatching,
+  unwatchOne,
   watcherHealth,
   MAX_CHANGED_FILES,
 } from "../src/service/index.ts";
@@ -109,6 +112,28 @@ test("getChanges caps an oversized changed-file list and flags truncation", asyn
   expect(result.truncated).toBe(true);
   expect(result.total).toBe(MAX_CHANGED_FILES + extra);
   expect(result.files?.length).toBe(MAX_CHANGED_FILES);
+});
+
+test("background refresh scheduling bounds pending promise chains across repos", async () => {
+  const bare = tmp();
+  let release!: () => void;
+  const gate = new Promise<void>((resolveGate) => {
+    release = resolveGate;
+  });
+  const ids = Array.from({ length: 20 }, (_, index) => `refresh-bound-${index}`);
+  const blockers = ids.map((id) => enqueue(id, () => gate));
+
+  for (const id of ids) coalescedRefresh(id, bare);
+  await Bun.sleep(20);
+
+  expect(refreshQueueHealth()).toEqual({ active: 16, queued: 4 });
+  release();
+  await Promise.all(blockers);
+  for (let i = 0; i < 300 && refreshQueueHealth().active + refreshQueueHealth().queued > 0; i++) {
+    await Bun.sleep(10);
+  }
+  expect(refreshQueueHealth()).toEqual({ active: 0, queued: 0 });
+  for (const id of ids) unwatchOne(id);
 });
 
 // NOTE: stopWatching() here clears the global watch registry, so this must stay LAST.

@@ -17,6 +17,7 @@
  * crosses that path. `ghTokenFor` below is the deliberate, narrow exception — see its comment for
  * why per-repo sync could not be built without it, and what is done to keep the blast radius small.
  */
+import { createSemaphore } from "./gitgate.ts";
 
 interface RunResult {
   /** The binary was found and launched (false ⇒ e.g. `gh` not on PATH). */
@@ -26,35 +27,48 @@ interface RunResult {
   stderr: string;
 }
 
+/**
+ * Account discovery can sit in front of a bulk fetch across thousands of repositories. Bound every
+ * `gh`/global-git child launched by this module so a cold cache or several permission probes cannot
+ * exhaust the machine's process table before the network gate gets a chance to help.
+ */
+const accountCliConcurrency = (() => {
+  const configured = Number(process.env.REPOYETI_ACCOUNT_CLI_CONCURRENCY);
+  return Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 4;
+})();
+const accountCliGate = createSemaphore(accountCliConcurrency);
+
 async function run(
   cmd: string[],
   timeoutMs = 5000,
   extraEnv?: Record<string, string>,
 ): Promise<RunResult> {
-  try {
-    const proc = Bun.spawn(cmd, {
-      stdout: "pipe",
-      stderr: "pipe",
-      ...(extraEnv ? { env: { ...process.env, ...extraEnv } } : {}),
-    });
-    const timer = setTimeout(() => {
-      try {
-        proc.kill();
-      } catch {
-        /* already exited */
-      }
-    }, timeoutMs);
-    const [stdout, stderr, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    clearTimeout(timer);
-    return { spawned: true, ok: code === 0, stdout: stdout.trim(), stderr: stderr.trim() };
-  } catch {
-    // Bun.spawn throws synchronously when the executable can't be found.
-    return { spawned: false, ok: false, stdout: "", stderr: "" };
-  }
+  return accountCliGate.run(async () => {
+    try {
+      const proc = Bun.spawn(cmd, {
+        stdout: "pipe",
+        stderr: "pipe",
+        ...(extraEnv ? { env: { ...process.env, ...extraEnv } } : {}),
+      });
+      const timer = setTimeout(() => {
+        try {
+          proc.kill();
+        } catch {
+          /* already exited */
+        }
+      }, timeoutMs);
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      clearTimeout(timer);
+      return { spawned: true, ok: code === 0, stdout: stdout.trim(), stderr: stderr.trim() };
+    } catch {
+      // Bun.spawn throws synchronously when the executable can't be found.
+      return { spawned: false, ok: false, stdout: "", stderr: "" };
+    }
+  });
 }
 
 /** One authenticated GitHub account on the machine (a `gh` account for a host). */
@@ -141,25 +155,46 @@ export async function readGitCommitIdentity(): Promise<{ name: string; email: st
  */
 const SNAPSHOT_TTL_MS = 10_000;
 let snapshotMemo: { at: number; value: AccountsSnapshot } | null = null;
+let snapshotGeneration = 0;
+let snapshotInFlight: { generation: number; promise: Promise<AccountsSnapshot> } | null = null;
 
 /** Drop the memo — call after anything that changes gh's account state. */
 export function invalidateAccountsSnapshot(): void {
+  snapshotGeneration++;
   snapshotMemo = null;
+  // Do not let a caller after invalidation join a read that began against the old account state.
+  // The old promise is allowed to finish for its existing callers, but its generation guard below
+  // prevents it from repopulating the memo.
+  snapshotInFlight = null;
 }
 
 /** Read the current account snapshot (gh accounts + which is active + the global git author). */
 export async function accountsSnapshot(): Promise<AccountsSnapshot> {
   const memo = snapshotMemo;
   if (memo && Date.now() - memo.at < SNAPSHOT_TTL_MS) return memo.value;
-  const [status, commitIdentity] = await Promise.all([
-    run(["gh", "auth", "status", "--json", "hosts"], 6000),
-    readGitCommitIdentity(),
-  ]);
-  // gh prints the JSON to stdout on success; fall back to stderr defensively.
-  const accounts = parseGhAccounts(status.stdout || status.stderr);
-  const value = { ghAvailable: status.spawned, accounts, commitIdentity };
-  snapshotMemo = { at: Date.now(), value };
-  return value;
+  const existing = snapshotInFlight;
+  if (existing && existing.generation === snapshotGeneration) return existing.promise;
+
+  const generation = snapshotGeneration;
+  const promise = (async (): Promise<AccountsSnapshot> => {
+    const [status, commitIdentity] = await Promise.all([
+      run(["gh", "auth", "status", "--json", "hosts"], 6000),
+      readGitCommitIdentity(),
+    ]);
+    // gh prints the JSON to stdout on success; fall back to stderr defensively.
+    const accounts = parseGhAccounts(status.stdout || status.stderr);
+    const value = { ghAvailable: status.spawned, accounts, commitIdentity };
+    // An explicit invalidation may have happened while the subprocesses were running. Never let
+    // that now-stale result overwrite the fresh generation's state.
+    if (snapshotGeneration === generation) snapshotMemo = { at: Date.now(), value };
+    return value;
+  })();
+  snapshotInFlight = { generation, promise };
+  try {
+    return await promise;
+  } finally {
+    if (snapshotInFlight?.promise === promise) snapshotInFlight = null;
+  }
 }
 
 /**
@@ -216,6 +251,7 @@ export async function ghTokenFor(host: string, login: string): Promise<string | 
  */
 const REPO_PERMISSION_TTL_MS = 60_000;
 const repoPermissionMemo = new Map<string, { at: number; value: boolean }>();
+const repoPermissionInFlight = new Map<string, Promise<boolean | null>>();
 
 export async function ghRepoCanPush(
   host: string,
@@ -229,23 +265,36 @@ export async function ghRepoCanPush(
   if (memo && Date.now() - memo.at < REPO_PERMISSION_TTL_MS) return memo.value;
   if (memo) repoPermissionMemo.delete(key);
 
-  const token = await ghTokenFor(host, login);
-  if (!token) return null;
-  const endpoint = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
-  const res = await run(
-    ["gh", "api", "--hostname", host, endpoint, "--jq", ".permissions.push"],
-    8000,
-    { GH_TOKEN: token },
-  );
-  const output = res.stdout.trim().toLowerCase();
-  if (!res.ok || (output !== "true" && output !== "false")) return null;
+  // A pull and push (or two repos pointing at the same GitHub repository) can arrive together.
+  // Share the read-only probe while it is active; unlike a result cache, this promise lives only
+  // until the child exits and never stores token material after the operation.
+  const existing = repoPermissionInFlight.get(key);
+  if (existing) return existing;
+  const promise = (async (): Promise<boolean | null> => {
+    const token = await ghTokenFor(host, login);
+    if (!token) return null;
+    const endpoint = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const res = await run(
+      ["gh", "api", "--hostname", host, endpoint, "--jq", ".permissions.push"],
+      8000,
+      { GH_TOKEN: token },
+    );
+    const output = res.stdout.trim().toLowerCase();
+    if (!res.ok || (output !== "true" && output !== "false")) return null;
 
-  const value = output === "true";
-  // Bound an otherwise long-lived daemon's cache without retaining token material or repo data
-  // indefinitely. Clearing merely causes fresh read-only probes on the next operation.
-  if (repoPermissionMemo.size >= 512) repoPermissionMemo.clear();
-  repoPermissionMemo.set(key, { at: Date.now(), value });
-  return value;
+    const value = output === "true";
+    // Bound an otherwise long-lived daemon's cache without retaining token material or repo data
+    // indefinitely. Clearing merely causes fresh read-only probes on the next operation.
+    if (repoPermissionMemo.size >= 512) repoPermissionMemo.clear();
+    repoPermissionMemo.set(key, { at: Date.now(), value });
+    return value;
+  })();
+  repoPermissionInFlight.set(key, promise);
+  try {
+    return await promise;
+  } finally {
+    if (repoPermissionInFlight.get(key) === promise) repoPermissionInFlight.delete(key);
+  }
 }
 
 export type SwitchResult =

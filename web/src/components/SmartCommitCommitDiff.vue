@@ -4,10 +4,11 @@
  * proposed commit, stacked, so the owner can read the whole change the commit will contain in one
  * scroll (the "Files changed" tab of a PR, in miniature). Companion to SmartCommitFileDiff, which
  * zooms into a SINGLE file with the rich Monaco viewer — this one stays lightweight on purpose so
- * many files can render at once (see @/lib/unified-diff). Each file's diff is fetched in parallel
- * and renders as soon as it lands; new/deleted/large files all fall out of the same diff endpoint.
+ * many files can render at once (see @/lib/unified-diff). File requests use a small worker pool,
+ * render as soon as they land, and are cancelled when review closes; new/deleted/large files all
+ * fall out of the same diff endpoint.
  */
-import { reactive, onMounted } from "vue";
+import { reactive, onBeforeUnmount, onMounted } from "vue";
 import { Loader2, FileWarning } from "@lucide/vue";
 import { api, ApiError } from "@/api";
 import { t } from "@/i18n";
@@ -23,6 +24,10 @@ interface FileState {
   error?: string;
 }
 const states = reactive<Record<string, FileState>>({});
+const MAX_CONCURRENT_DIFFS = 4;
+const controller = new AbortController();
+let nextFile = 0;
+let disposed = false;
 
 function rowClass(kind: DiffRow["kind"]): string {
   if (kind === "add") return "bg-success/10";
@@ -38,20 +43,35 @@ function sign(kind: DiffRow["kind"]): string {
 async function load(path: string): Promise<void> {
   states[path] = { phase: "loading" };
   try {
-    const res = await api.fileDiff(props.repoId, path);
+    const res = await api.fileDiff(props.repoId, path, controller.signal);
+    if (disposed || controller.signal.aborted) return;
     if (!res.ok) {
       states[path] = { phase: "error", error: res.message ?? t("fileViewer.error") };
       return;
     }
     states[path] = { phase: "done", rendered: renderFileDiff(res) };
   } catch (e) {
+    if (disposed || controller.signal.aborted) return;
     states[path] = { phase: "error", error: e instanceof ApiError ? e.message : t("fileViewer.error") };
   }
 }
 
+async function worker(): Promise<void> {
+  while (!disposed) {
+    const index = nextFile++;
+    if (index >= props.files.length) return;
+    await load(props.files[index]!);
+  }
+}
+
 onMounted(() => {
-  // Fetch every file's diff in parallel; each block fills in as its request resolves.
-  for (const p of props.files) void load(p);
+  const workers = Math.min(MAX_CONCURRENT_DIFFS, props.files.length);
+  for (let i = 0; i < workers; i++) void worker();
+});
+
+onBeforeUnmount(() => {
+  disposed = true;
+  controller.abort();
 });
 </script>
 

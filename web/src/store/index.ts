@@ -5,7 +5,6 @@ import { api, ApiError, type AccessMode, type TunnelStatus, type RelayStatus } f
 import type {
   ActionName,
   ActionResult,
-  Identity,
   PendingApproval,
   Repo,
   CollaborationSnapshot,
@@ -178,19 +177,23 @@ export const useStore = defineStore("repoyeti", () => {
     needsAttentionRepos,
     visibleAttentionRepos,
     dismissAttention,
+    hasRepo,
     patchRepo,
+    upsertRepo,
     doAction,
     commit,
     commitSelected,
     assignIdentity,
     assignRepoAccount,
     renameRepo,
-    removeRepo,
+    removeRepo: removeRepoFromList,
     restoreRemovedRepo,
     setHidden,
     setPinned,
     setStarred,
     setAutoCommit: setRepoAutoCommit,
+    clearRepoCache: clearRepoViewCache,
+    pruneRepoCache: pruneRepoViewCache,
   } = useRepoActions(repos, busy, asResult);
 
   const {
@@ -243,7 +246,38 @@ export const useStore = defineStore("repoyeti", () => {
     stageFile,
     moveFile,
     addToGitignore,
-  } = useGitOps(loadChanges, asResult);
+    clearRepoCache: clearGitOpsCache,
+    pruneRepoCache: pruneGitOpsCache,
+  } = useGitOps(
+    loadChanges,
+    asResult,
+    hasRepo,
+  );
+
+  /** All large per-repo client caches share the lifecycle of the dashboard card. */
+  function clearRepoCaches(repoId: string): void {
+    clearRepoViewCache(repoId);
+    clearGitOpsCache(repoId);
+    delete busy[repoId];
+  }
+
+  function pruneRepoCaches(liveRepoIds: ReadonlySet<string>): void {
+    pruneRepoViewCache(liveRepoIds);
+    pruneGitOpsCache(liveRepoIds);
+    for (const repoId of Object.keys(busy)) {
+      if (!liveRepoIds.has(repoId)) delete busy[repoId];
+    }
+  }
+
+  /**
+   * Keep the optimistic removal owned by useRepoActions, then release every lazily-loaded view
+   * only after the daemon accepts it. A failed removal rolls the card back with its state intact.
+   */
+  async function removeRepo(repoId: string): Promise<Repo | null> {
+    const removed = await removeRepoFromList(repoId);
+    clearRepoCaches(repoId);
+    return removed;
+  }
 
   const {
     roots,
@@ -267,7 +301,15 @@ export const useStore = defineStore("repoyeti", () => {
     addRepo,
     cloneRepo,
     persistRepoOrder,
-  } = useSources(repos, scanning, scanFound, scanNew, scanDone, lastScanCancelled);
+  } = useSources(
+    repos,
+    scanning,
+    scanFound,
+    scanNew,
+    scanDone,
+    lastScanCancelled,
+    upsertRepo,
+  );
 
   const {
     identities,
@@ -469,23 +511,42 @@ export const useStore = defineStore("repoyeti", () => {
    * says "No repositories yet" while /api/repos sits there having returned 200 with their repo.
    * The owner's path below is byte-for-byte what it always was.
    */
-  async function loadAll(): Promise<void> {
+  let loadAllInFlight: Promise<void> | null = null;
+
+  async function loadAllOnce(): Promise<void> {
     loading.value = true;
+    const guest = isGuest.value;
     try {
-      const guest = isGuest.value;
-      const [r, i] = await Promise.all([
-        api.listRepos(),
-        guest ? Promise.resolve([] as Identity[]) : api.listIdentities(),
-        guest ? loadAiAvailability() : loadAiSettings(),
-        guest ? Promise.resolve() : loadAiCatalog(),
+      // The repository list is the only payload required to paint the dashboard. Previously it
+      // shared one Promise.all with every optional integration, so a slow GitHub CLI/cloud-sync
+      // probe held the entire app on skeleton rows. Paint as soon as this request succeeds.
+      const nextRepos = await api.listRepos();
+      repos.value = nextRepos;
+      pruneRepoCaches(new Set(nextRepos.map((repo) => repo.id)));
+      loading.value = false;
+
+      // Yield through Vue's queued render before starting the non-critical hydration burst. The
+      // loadAll promise still waits for these tasks (useful to callers/tests), but the UI does not.
+      await Promise.resolve();
+      const background: Promise<unknown>[] = [
         loadStatus(),
-        guest ? Promise.resolve() : loadAccounts(), // best-effort — populates the header account switcher on boot
-        guest ? Promise.resolve() : loadSyncStatus(), // best-effort — applies any synced appearance on boot
-        guest ? Promise.resolve() : loadApprovals(), // best-effort — hydrates any already-pending MCP approvals on boot
-        guest ? Promise.resolve() : loadIdentityRules(), // best-effort — hydrates the Identity Firewall rules on boot
-      ]);
-      repos.value = r;
-      identities.value = i;
+        guest ? loadAiAvailability() : loadAiSettings(),
+      ];
+      if (!guest) {
+        background.push(
+          api.listIdentities().then((next) => {
+            identities.value = next;
+          }),
+          loadAiCatalog(),
+          loadAccounts(), // header account switcher
+          loadSyncStatus(), // applies synced appearance
+          loadApprovals(), // already-pending MCP approvals
+          loadIdentityRules(), // Identity Firewall rules
+        );
+      } else {
+        identities.value = [];
+      }
+      await Promise.allSettled(background);
     } finally {
       loading.value = false;
       if (!appOpenedPulsed && !isGuest.value) {
@@ -494,6 +555,20 @@ export const useStore = defineStore("repoyeti", () => {
       }
       if (!isGuest.value) void checkForUpdate(); // owner-only: /api/updates
     }
+  }
+
+  /**
+   * Coalesce startup/header reloads. Double-clicking refresh while a slow optional integration is
+   * still hydrating must not launch a second copy of every account/configuration request.
+   */
+  function loadAll(): Promise<void> {
+    if (loadAllInFlight) return loadAllInFlight;
+    const request = loadAllOnce();
+    loadAllInFlight = request;
+    void request.finally(() => {
+      if (loadAllInFlight === request) loadAllInFlight = null;
+    }).catch(() => undefined);
+    return request;
   }
 
   async function recordPulse(event: string, properties?: Record<string, unknown>): Promise<void> {
@@ -609,11 +684,7 @@ export const useStore = defineStore("repoyeti", () => {
         } else if (event.value === "repo_added") {
           // Background discovery found a repo after boot — append it (or refresh in place).
           const repo = payload.repo as Repo | undefined;
-          if (repo?.id) {
-            const idx = repos.value.findIndex((r) => r.id === repo.id);
-            if (idx >= 0) repos.value[idx] = repo;
-            else repos.value.push(repo);
-          }
+          if (repo?.id) upsertRepo(repo);
         } else if (event.value === "repo_removed") {
           // A scan root was removed, the owner removed this repo, or — on an all-repos share link —
           // they hid it and it left this viewer's scope (src/share/events.ts translates the hide
@@ -622,6 +693,7 @@ export const useStore = defineStore("repoyeti", () => {
           // call it makes 404s against a repo this session can no longer reach.
           if (payload.id) {
             repos.value = repos.value.filter((r) => r.id !== payload.id);
+            clearRepoCaches(payload.id);
             reconcileBehindNotification(payload.id, 0);
             dismissViewerForRepo(payload.id);
           }

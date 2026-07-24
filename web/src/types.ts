@@ -270,6 +270,49 @@ export interface LogResult {
   hasMore: boolean;
 }
 
+/** One contributor's totals in the bounded History activity window. */
+export interface HistoryActivityAuthor {
+  name: string;
+  email: string;
+  commits: number;
+  addedLines: number;
+  removedLines: number;
+}
+
+/** One chronological time bucket in the History activity chart. */
+export interface HistoryActivityBucket {
+  /** Bucket start as epoch milliseconds. */
+  start: number;
+  commits: number;
+  filesChanged: number;
+  addedLines: number;
+  removedLines: number;
+}
+
+/** Compact repository-activity summary shown above the History table. */
+export interface HistoryActivity {
+  ok: boolean;
+  code: ApiCode;
+  message?: string;
+  /** Width of the aggregation window; currently 24 hours. */
+  windowHours: number;
+  /** Inclusive aggregation start as epoch milliseconds. */
+  since: number;
+  /** Aggregation end as epoch milliseconds. */
+  until: number;
+  commits: number;
+  commitsLastHour: number;
+  contributors: number;
+  filesChanged: number;
+  addedLines: number;
+  removedLines: number;
+  authors: HistoryActivityAuthor[];
+  /** Oldest-to-newest hourly buckets. */
+  buckets: HistoryActivityBucket[];
+  /** True when a safety cap made the returned activity totals partial. */
+  truncated: boolean;
+}
+
 /** One file a pull would change. Mirrors src/read/incoming.ts. */
 export interface IncomingFile {
   path: string;

@@ -309,6 +309,7 @@ test("a repo outside the share is 404 — indistinguishable from not existing", 
   for (const path of [
     `/api/repos/${secretRepoId}/changes`,
     `/api/repos/${secretRepoId}/log`,
+    `/api/repos/${secretRepoId}/activity`,
     `/api/repos/${secretRepoId}/diff?path=x`,
     `/api/repos/${secretRepoId}/file?path=x`,
   ]) {

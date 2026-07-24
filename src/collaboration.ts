@@ -915,7 +915,19 @@ async function publishAllCollaborationsOnce(): Promise<void> {
   for (const id of publishState.keys()) {
     if (!liveIds.has(id)) publishState.delete(id);
   }
-  await Promise.all(links.map((link) => publishCollaboration(link).catch(() => {})));
+  // A user can join many workspaces; bound both Git/diff preparation and outbound posts rather
+  // than creating one full snapshot pipeline per link on every heartbeat.
+  let next = 0;
+  const workers = Math.min(4, links.length);
+  await Promise.all(
+    Array.from({ length: workers }, async () => {
+      while (true) {
+        const index = next++;
+        if (index >= links.length) return;
+        await publishCollaboration(links[index]!).catch(() => {});
+      }
+    }),
+  );
 }
 
 // Timer ticks, repo-state events, and the manual publish route can arrive together. Collapse them

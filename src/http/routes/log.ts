@@ -1,7 +1,11 @@
 import type { Hono } from "hono";
 import type { Deps } from "../deps.ts";
-import { getLog, getCommit, getIncoming, fetchRepo } from "../../service/index.ts";
+import { getLog, getActivity, getCommit, getIncoming, fetchRepo } from "../../service/index.ts";
 import { withRepo } from "../respond.ts";
+
+function refScope(value: string | undefined): "head" | "local" | "all" | undefined {
+  return value === "all" || value === "local" || value === "head" ? value : undefined;
+}
 
 export function register(app: Hono, _deps: Deps): void {
   // ── commit history (read-only, paginated) ────────────────────────────────────
@@ -14,18 +18,22 @@ export function register(app: Hono, _deps: Deps): void {
       const merges = m === "only" || m === "exclude" ? m : undefined;
       // ?refs=head (default, current branch) · local (all local branches+tags) · all (+remotes).
       // The graph view's branch-scope toggle drives this; anything else falls back to head-only.
-      const r = c.req.query("refs");
-      const refs = r === "all" || r === "local" || r === "head" ? r : undefined;
       return c.json(
         await getLog(
           id,
           Number.isFinite(limit) ? limit : undefined,
           Number.isFinite(skip) ? skip : undefined,
           merges,
-          refs,
+          refScope(c.req.query("refs")),
         ),
       );
     }),
+  );
+
+  // One server-side snapshot for the History activity strip. This is deliberately separate from
+  // the paginated log: a busy repo can have far more than the first 50 rows in the last 24 hours.
+  app.get("/api/repos/:id/activity", (c) =>
+    withRepo(c, async (id) => c.json(await getActivity(id, refScope(c.req.query("refs"))))),
   );
 
   // One commit's detail (changed files + bounded diff) — the History "tap a commit" view.

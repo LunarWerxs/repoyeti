@@ -18,6 +18,7 @@ import type {
   Identity,
   IdentityRule,
   DetectedIdentity,
+  HistoryActivity,
   LogResult,
   CommitDetail,
   IncomingResult,
@@ -641,6 +642,12 @@ export const api = {
       "GET",
       `/api/repos/${id}/log?limit=${limit}&skip=${skip}${refs ? `&refs=${refs}` : ""}`,
     ),
+  /** Accurate bounded 24-hour activity aggregate for the History overview. */
+  historyActivity: (id: string, refs?: "head" | "local" | "all") =>
+    req<HistoryActivity>(
+      "GET",
+      `/api/repos/${id}/activity${refs ? `?refs=${refs}` : ""}`,
+    ),
   commitDetail: (id: string, hash: string) =>
     req<CommitDetail>("GET", `/api/repos/${id}/commit/${encodeURIComponent(hash)}`),
   /** What a pull would bring in, without pulling. `fetch` refreshes the remote-tracking ref
@@ -649,10 +656,12 @@ export const api = {
     req<IncomingResult>("GET", `/api/repos/${id}/incoming${fetch ? "?fetch=1" : ""}`),
   /** Both sides of a file's change AT a commit (first-parent ↔ commit) — powers opening a
    *  history file in the Monaco diff viewer. Same FileDiff shape as `fileDiff`. */
-  commitFile: (id: string, hash: string, path: string) =>
+  commitFile: (id: string, hash: string, path: string, signal?: AbortSignal) =>
     req<FileDiff>(
       "GET",
       `/api/repos/${id}/commit/${encodeURIComponent(hash)}/file?path=${encodeURIComponent(path)}`,
+      undefined,
+      signal,
     ),
   stashes: (id: string) => req<StashList>("GET", `/api/repos/${id}/stashes`),
   stashSave: (id: string, message?: string) =>
@@ -701,10 +710,12 @@ export const api = {
       "GET",
       `/api/repos/${id}/changes`,
     ),
-  fileContent: (id: string, path: string, ref?: "work" | "head") =>
+  fileContent: (id: string, path: string, ref?: "work" | "head", signal?: AbortSignal) =>
     req<FileContent>(
       "GET",
       `/api/repos/${id}/file?path=${encodeURIComponent(path)}${ref ? `&ref=${ref}` : ""}`,
+      undefined,
+      signal,
     ),
   /** Repo-relative paths of CHANGED files whose content matches `q`. Pass an AbortSignal
    *  so a superseded keystroke's request can be cancelled (the search box debounces). */
@@ -715,8 +726,13 @@ export const api = {
       undefined,
       signal,
     ).then((r) => r.paths),
-  fileDiff: (id: string, path: string) =>
-    req<FileDiff>("GET", `/api/repos/${id}/diff?path=${encodeURIComponent(path)}`),
+  fileDiff: (id: string, path: string, signal?: AbortSignal) =>
+    req<FileDiff>(
+      "GET",
+      `/api/repos/${id}/diff?path=${encodeURIComponent(path)}`,
+      undefined,
+      signal,
+    ),
 
   /** Save edited text back to a working-tree file (viewer Edit mode). Throws on 4xx/5xx. */
   saveFile: (id: string, path: string, content: string) =>

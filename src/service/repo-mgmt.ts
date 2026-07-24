@@ -26,7 +26,7 @@ import { gitClone } from "../git-actions.ts";
 import { authForCloneUrl } from "../gh-account.ts";
 import type { RepoView } from "../db.ts";
 import { refreshRepo } from "./core.ts";
-import { watchOne, unwatchOne } from "./watch.ts";
+import { coalescedRefresh, watchOne, unwatchOne } from "./watch.ts";
 
 // ── scan-root discovery / removal ─────────────────────────────────────────────────
 /**
@@ -44,7 +44,7 @@ export async function discoverRoot(absPath: string, maxDepth: number, maxRepos: 
     if (!id) return;
     watchOne(id, f.absPath);
     // Fire-and-forget: a bad repo can't halt discovery of the rest; its status row stays stale.
-    void refreshRepo(id, f.absPath).catch(() => {});
+    coalescedRefresh(id, f.absPath);
     const repo = getRepo(id);
     if (repo) {
       count++;

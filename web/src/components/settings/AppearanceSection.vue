@@ -3,6 +3,12 @@ import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { useStore } from "../../store";
 import { changesViewSize } from "@/lib/changes-view";
+import { defaultCommitAction } from "@/lib/commit-default";
+import {
+  historyActivityEnabled,
+  historyChangesDisplay,
+  historyGraphEnabled,
+} from "@/lib/history-appearance";
 import { historyFilesView } from "@/lib/history-view";
 import { useTheme } from "@/lib/theme";
 import { useTooltipConfig } from "@/lib/tooltip-config";
@@ -97,10 +103,48 @@ async function onHideTrayIcon(enabled: boolean): Promise<void> {
         </Select>
       </template>
     </SettingsRow>
+    <SettingsRow :label="$t('settings.defaultCommitAction')">
+      <template #info><InfoHint :text="$t('settings.defaultCommitActionHint')" /></template>
+      <template #control>
+        <Select v-model="defaultCommitAction">
+          <SelectTrigger class="w-full max-w-44" :aria-label="$t('settings.defaultCommitAction')"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="commit">{{ $t("repo.commit.commit") }}</SelectItem>
+            <SelectItem value="sync">{{ $t("repo.commit.commitSync") }}</SelectItem>
+          </SelectContent>
+        </Select>
+      </template>
+    </SettingsRow>
     <SettingsRow :label="$t('settings.showTooltips')">
       <template #info><InfoHint :text="$t('settings.showTooltipsHint')" /></template>
       <template #control>
         <Switch v-model="tooltipsEnabled" :aria-label="$t('settings.showTooltips')" />
+      </template>
+    </SettingsRow>
+    <SettingsRow :label="$t('settings.historyActivity')">
+      <template #info><InfoHint :text="$t('settings.historyActivityHint')" /></template>
+      <template #control>
+        <Switch v-model="historyActivityEnabled" :aria-label="$t('settings.historyActivity')" />
+      </template>
+    </SettingsRow>
+    <SettingsRow :label="$t('settings.historyGraph')">
+      <template #info><InfoHint :text="$t('settings.historyGraphHint')" /></template>
+      <template #control>
+        <Switch v-model="historyGraphEnabled" :aria-label="$t('settings.historyGraph')" />
+      </template>
+    </SettingsRow>
+    <SettingsRow :label="$t('settings.historyChangesDisplay')">
+      <template #info><InfoHint :text="$t('settings.historyChangesDisplayHint')" /></template>
+      <template #control>
+        <Select v-model="historyChangesDisplay">
+          <SelectTrigger class="w-full max-w-36" :aria-label="$t('settings.historyChangesDisplay')">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="numbers">{{ $t("settings.historyChangesNumbers") }}</SelectItem>
+            <SelectItem value="bars">{{ $t("settings.historyChangesBars") }}</SelectItem>
+          </SelectContent>
+        </Select>
       </template>
     </SettingsRow>
     <!-- History detail: changed files as a nested folder tree (default) or a flat path list.
@@ -172,4 +216,3 @@ async function onHideTrayIcon(enabled: boolean): Promise<void> {
     </SettingsRow>
   </SettingsGroup>
 </template>
-

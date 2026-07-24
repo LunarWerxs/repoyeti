@@ -141,14 +141,33 @@ async function tick(): Promise<void> {
   if (keepInSync) {
     const pullable = post.filter((r) => canAutoPull(r.status));
     if (pullable.length > 0) {
-      const results = await Promise.allSettled(pullable.map((r) => pullRepo(r.id)));
-      const synced: SyncedRepo[] = [];
-      results.forEach((res, i) => {
-        const r = pullable[i]!;
-        if (res.status === "fulfilled" && res.value.ok) {
-          synced.push({ id: r.id, name: r.name, pulled: r.status?.behind ?? 0 });
-        }
-      });
+      // Workers finish in network/disk order. Retain the repository-list order in the SSE payload
+      // so the same sync round does not make UI notifications shuffle nondeterministically.
+      const syncedByIndex = new Array<SyncedRepo | undefined>(pullable.length);
+      let next = 0;
+      const workers = Math.min(8, pullable.length);
+      await Promise.all(
+        Array.from({ length: workers }, async () => {
+          while (true) {
+            const index = next++;
+            if (index >= pullable.length) return;
+            const repo = pullable[index]!;
+            try {
+              const result = await pullRepo(repo.id);
+              if (result.ok) {
+                syncedByIndex[index] = {
+                  id: repo.id,
+                  name: repo.name,
+                  pulled: repo.status?.behind ?? 0,
+                };
+              }
+            } catch {
+              /* one failed pull does not block other safe fast-forwards */
+            }
+          }
+        }),
+      );
+      const synced = syncedByIndex.filter((repo): repo is SyncedRepo => repo !== undefined);
       if (synced.length > 0) broadcast("repo_synced", { repos: synced });
       post = getWatchableRepos(); // reflect the fast-forwards before deciding what to warn about
     }

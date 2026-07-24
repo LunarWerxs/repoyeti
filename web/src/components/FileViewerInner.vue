@@ -140,9 +140,15 @@ const fromHead = ref(false);
 
 // ── edit mode (Content tab, and Diff tab when it's showing the full working-tree text) ──
 const editing = ref(false);
-const draft = ref(""); // latest editor text while editing
+const draft = ref(""); // seeded on edit; refreshed from Monaco exactly once when Save is requested
 const dirty = ref(false);
 const saving = ref(false);
+interface MonacoViewerHandle {
+  getValue: () => string;
+  getSnapshot: () => { value: string; alternativeVersionId: number };
+  markClean: (alternativeVersionId?: number) => boolean;
+}
+const editorViewer = ref<MonacoViewerHandle | null>(null);
 
 // Mirror dirty into the shared store so close / switch-file guards (file-viewer.ts) can prompt.
 watch(dirty, (v) => (editorDirty.value = v));
@@ -180,10 +186,18 @@ const fetchKey = (): string | null =>
     ? `${props.target.repoId}::${props.target.path}::${props.target.commit ?? ""}::${viewerMode.value}`
     : null;
 
+let contentController: AbortController | null = null;
 watch(
   fetchKey,
   async (key) => {
-    if (!key || !props.target) return;
+    contentController?.abort();
+    contentController = null;
+    if (!key || !props.target) {
+      loading.value = false;
+      return;
+    }
+    const controller = new AbortController();
+    contentController = controller;
     const { repoId, path, commit } = props.target;
     loading.value = true;
     errorMsg.value = null;
@@ -197,7 +211,8 @@ watch(
       if (commit) {
         // History file: the first-parent↔commit models diff (read-only). Both tabs come from one
         // fetch — the Content tab shows the file as it was AT the commit (its `modified` side).
-        const res = await api.commitFile(repoId, commit, path);
+        const res = await api.commitFile(repoId, commit, path, controller.signal);
+        if (controller.signal.aborted) return;
         if (fetchKey() !== key) return; // superseded mid-flight
         original.value = res.original ?? "";
         modified.value = res.modified ?? "";
@@ -207,7 +222,8 @@ watch(
         binary.value = !!res.binary;
         truncated.value = !!res.truncated;
       } else if (viewerMode.value === "diff") {
-        const res = await api.fileDiff(repoId, path);
+        const res = await api.fileDiff(repoId, path, controller.signal);
+        if (controller.signal.aborted) return;
         if (fetchKey() !== key) return; // superseded mid-flight
         original.value = res.original ?? "";
         modified.value = res.modified ?? "";
@@ -216,7 +232,8 @@ watch(
         binary.value = !!res.binary;
         truncated.value = !!res.truncated;
       } else {
-        const res = await api.fileContent(repoId, path);
+        const res = await api.fileContent(repoId, path, undefined, controller.signal);
+        if (controller.signal.aborted) return;
         if (fetchKey() !== key) return;
         content.value = res.content ?? "";
         binary.value = !!res.binary;
@@ -224,9 +241,15 @@ watch(
         fromHead.value = res.ref === "head";
       }
     } catch (e) {
+      if (controller.signal.aborted) return;
       if (fetchKey() === key) errorMsg.value = e instanceof ApiError ? e.message : t("fileViewer.error");
     } finally {
-      if (fetchKey() === key) loading.value = false;
+      // Controller identity closes the A→B→A race: the aborted first A must not clear the
+      // spinner for the newer A merely because their string keys happen to match again.
+      if (contentController === controller) {
+        contentController = null;
+        loading.value = false;
+      }
     }
   },
   { immediate: true },
@@ -239,6 +262,7 @@ watch(
 // ranges client-side. A large-file compact patch is skipped (no whole-file text to line up).
 const changedLines = ref<LineChange[]>([]);
 let gutterToken = 0;
+let gutterController: AbortController | null = null;
 watch(
   () =>
     [
@@ -254,6 +278,9 @@ watch(
       truncated.value,
     ] as const,
   async () => {
+    const token = ++gutterToken;
+    gutterController?.abort();
+    gutterController = null;
     const tgt = props.target;
     const eligible =
       !!tgt &&
@@ -270,13 +297,16 @@ watch(
       changedLines.value = [];
       return;
     }
-    const token = ++gutterToken;
+    const controller = new AbortController();
+    gutterController = controller;
     try {
-      const res = await api.fileDiff(tgt.repoId, tgt.path);
+      const res = await api.fileDiff(tgt.repoId, tgt.path, controller.signal);
+      if (controller.signal.aborted) return;
       if (token !== gutterToken) return; // superseded by a newer open/toggle
       // Compact-patch (large file) has no whole-file original to diff against the shown text.
       changedLines.value = res.mode === "patch" ? [] : diffLineChanges(res.original ?? "", content.value);
     } catch {
+      if (controller.signal.aborted) return;
       if (token === gutterToken) changedLines.value = [];
     }
   },
@@ -301,22 +331,42 @@ function cancelEdit(): void {
   editing.value = false;
   dirty.value = false;
 }
-function onEditorChange(value: string): void {
-  draft.value = value;
-  dirty.value = value !== editableSource.value;
+function onEditorChange(isDirty: boolean): void {
+  dirty.value = isDirty;
 }
 async function save(): Promise<void> {
   if (!props.target || !editing.value || !canEdit.value || !dirty.value || saving.value) return;
   const { repoId, path } = props.target;
+  const modeAtSave = viewerMode.value;
+  // Monaco keeps its own mutable text model. Pulling it here (rather than on each keystroke)
+  // makes a multi-megabyte edit cheap while still sending the exact latest buffer.
+  const snapshot = editorViewer.value?.getSnapshot();
+  const nextValue = snapshot?.value ?? draft.value;
   saving.value = true;
   try {
-    await api.saveFile(repoId, path, draft.value);
-    // Editor value catches up so MonacoViewer skips the reset; update whichever tab's source
-    // was actually edited (the Diff tab's working-tree side also feeds MonacoDiffViewer once
-    // editing ends, so it reflects the save without needing a re-fetch).
-    if (viewerMode.value === "content") content.value = draft.value;
-    else modified.value = draft.value;
-    dirty.value = false;
+    await api.saveFile(repoId, path, nextValue);
+    // The viewer may have switched files/tabs (after its discard guard) while the request was in
+    // flight. The old file was saved, but its response must not overwrite the newly-loaded view.
+    const stillSameView =
+      props.target?.repoId === repoId &&
+      props.target.path === path &&
+      viewerMode.value === modeAtSave;
+    if (!stillSameView) {
+      toast.success(t("fileViewer.saved"));
+      return;
+    }
+    draft.value = nextValue;
+    // Update the source that actually reached disk. With no later edits Monaco keeps its cursor
+    // and undo history; with later edits it preserves that newer buffer against this new baseline.
+    // The Diff tab's working-tree side also feeds MonacoDiffViewer once editing ends.
+    if (modeAtSave === "content") content.value = nextValue;
+    else modified.value = nextValue;
+    // If typing continued during the network request, only the version actually written becomes
+    // the clean baseline. Later keystrokes stay in Monaco and Save remains enabled.
+    dirty.value =
+      editing.value && snapshot
+        ? (editorViewer.value?.markClean(snapshot.alternativeVersionId) ?? false)
+        : false;
     toast.success(t("fileViewer.saved"));
   } catch (e) {
     toast.error(e instanceof ApiError ? e.message : t("fileViewer.saveFailed"));
@@ -348,6 +398,8 @@ onMounted(() => {
   if (store.canContinueLocal) void store.loadEditors();
 });
 onBeforeUnmount(() => {
+  contentController?.abort();
+  gutterController?.abort();
   window.removeEventListener("keydown", onKeydown);
   window.removeEventListener("beforeunload", onBeforeUnload);
   editorDirty.value = false; // viewer torn down → nothing to guard
@@ -563,6 +615,7 @@ onBeforeUnmount(() => {
           />
           <MonacoViewer
             v-else
+            ref="editorViewer"
             :value="viewerMode === 'content' ? content : modified"
             :filename="target?.path ?? ''"
             :theme="editorTheme"

@@ -6,7 +6,7 @@
  * a hung child (e.g. an SSH key prompt). `behind` reflects the last fetch only —
  * we never fetch here, so a watch event never touches the network.
  */
-import { statSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { SimpleGit } from "simple-git";
 import { gitFor, currentGitOperation } from "../git.ts";
@@ -21,12 +21,30 @@ import type { RepoStatus } from "../db.ts";
  * post-action refresh) then skips a whole `git remote -v` subprocess. Worktrees/submodules
  * (`.git` is a file, no readable `config` here) simply don't cache and re-resolve each time.
  */
+const REMOTE_CACHE_MAX = 10_000;
 const remoteCache = new Map<string, { sig: string; remote: string | null }>();
 
+function cachedRemote(absPath: string, sig: string): string | null | undefined {
+  const hit = remoteCache.get(absPath);
+  if (!hit || hit.sig !== sig) return undefined;
+  remoteCache.delete(absPath);
+  remoteCache.set(absPath, hit);
+  return hit.remote;
+}
+
+function rememberRemote(absPath: string, entry: { sig: string; remote: string | null }): void {
+  remoteCache.delete(absPath);
+  if (remoteCache.size >= REMOTE_CACHE_MAX) {
+    const oldest = remoteCache.keys().next().value as string | undefined;
+    if (oldest !== undefined) remoteCache.delete(oldest);
+  }
+  remoteCache.set(absPath, entry);
+}
+
 /** A cheap, change-sensitive signature for `.git/config`, or null when it can't be read. */
-function configSig(absPath: string): string | null {
+async function configSig(absPath: string): Promise<string | null> {
   try {
-    const s = statSync(join(absPath, ".git", "config"));
+    const s = await stat(join(absPath, ".git", "config"));
     return `${s.mtimeMs}:${s.size}`;
   } catch {
     return null; // `.git` is a file (worktree/submodule) or config missing — don't cache
@@ -34,10 +52,10 @@ function configSig(absPath: string): string | null {
 }
 
 async function resolveRemote(git: SimpleGit, absPath: string): Promise<string | null> {
-  const sig = configSig(absPath);
+  const sig = await configSig(absPath);
   if (sig !== null) {
-    const hit = remoteCache.get(absPath);
-    if (hit && hit.sig === sig) return hit.remote;
+    const hit = cachedRemote(absPath, sig);
+    if (hit !== undefined) return hit;
   }
   let remote: string | null = null;
   try {
@@ -47,7 +65,7 @@ async function resolveRemote(git: SimpleGit, absPath: string): Promise<string | 
   } catch {
     /* no remotes configured */
   }
-  if (sig !== null) remoteCache.set(absPath, { sig, remote });
+  if (sig !== null) rememberRemote(absPath, { sig, remote });
   return remote;
 }
 
@@ -137,8 +155,8 @@ export async function readStatus(absPath: string, withDiff = false): Promise<Rep
         diff = (await computeDiffStats(absPath, untracked)).total;
       }
       // Conflict Concierge inputs: cheap to compute alongside the status we already have (no
-      // extra git subprocess for `conflicted` — `gitOperation` is one existsSync-only check,
-      // shared with the auto-commit safety gate via src/git.ts currentGitOperation).
+      // extra git subprocess for `conflicted` — `gitOperation` is a filesystem-only marker check
+      // on normal checkouts/worktrees, shared with the auto-commit gate via currentGitOperation).
       const conflicted = status.files.some((f) => isConflictPair(f.index ?? " ", f.working_dir ?? " "));
       const gitOperation = await currentGitOperation(absPath);
       return {

@@ -3,9 +3,11 @@
  * Moved verbatim out of daemon.ts; mountWeb() must be registered LAST so it only catches
  * non-API routes.
  */
-import { join, normalize, dirname } from "node:path";
+
 import { existsSync } from "node:fs";
+import { dirname, join, normalize } from "node:path";
 import type { Hono } from "hono";
+import { compress } from "hono/compress";
 
 /** Path to the built PWA (`web/dist`). Works in dev (relative to this source) and
  * when compiled (a `web/dist` shipped next to the binary). */
@@ -24,6 +26,8 @@ const EXTRA_MIME: Record<string, string> = {
 };
 // Vite emits content-addressed (hash-in-name) files under /assets — cache them forever.
 const IMMUTABLE_CACHE = "public, max-age=31536000, immutable";
+// Skip tiny files where the compression envelope and CPU cost outweigh the bytes saved.
+const COMPRESSION_THRESHOLD_BYTES = 1024;
 // Extensions we serve as static files. A miss on one of these 404s instead of falling back
 // to index.html (see mountWeb). Matching a known extension — rather than "any dot in the
 // last segment" — keeps a future deep-link route like /repos/my.repo from wrongly 404ing.
@@ -43,9 +47,18 @@ const STATIC_EXT =
  *
  * Caching: hashed /assets/* are immutable; everything else (index.html, sw.js, registerSW.js,
  * the manifest, icon) is no-cache so a rebuild — most importantly the entry point and the
- * service worker — is always revalidated and picked up.
+ * service worker — is always revalidated and picked up. Compressible responses stream through
+ * gzip/deflate when the client accepts them; Vary keeps encoded and identity cache variants apart.
  */
 export function mountWeb(app: Hono): void {
+  // Registered immediately before the static catch-all, so API/SSE responses retain their own
+  // policies. Hono's middleware streams rather than buffering multi-megabyte application chunks.
+  app.use("/*", compress({ threshold: COMPRESSION_THRESHOLD_BYTES }));
+  app.use("/*", async (c, next) => {
+    await next();
+    c.header("Vary", "Accept-Encoding", { append: true });
+  });
+
   app.get("/*", async (c) => {
     let pathname = decodeURIComponent(new URL(c.req.url).pathname);
     if (pathname === "/" || pathname === "") pathname = "/index.html";
@@ -61,6 +74,9 @@ export function mountWeb(app: Hono): void {
       const ext = filePath.slice(filePath.lastIndexOf("."));
       const headers: Record<string, string> = {
         "cache-control": pathname.startsWith("/assets/") ? IMMUTABLE_CACHE : "no-cache",
+        // Hono's streaming compressor uses Content-Length to enforce its size threshold. Bun.file
+        // responses do not expose it early enough to middleware unless we set the known stat here.
+        "content-length": String(file.size),
       };
       if (EXTRA_MIME[ext]) headers["content-type"] = EXTRA_MIME[ext];
       return new Response(file, { headers });
@@ -74,6 +90,8 @@ export function mountWeb(app: Hono): void {
     if (!(await index.exists())) {
       return c.text("web app not built — run: bun run --cwd web build:fast", 503);
     }
-    return new Response(index, { headers: { "cache-control": "no-cache" } });
+    return new Response(index, {
+      headers: { "cache-control": "no-cache", "content-length": String(index.size) },
+    });
   });
 }

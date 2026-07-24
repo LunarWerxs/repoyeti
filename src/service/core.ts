@@ -90,10 +90,13 @@ export async function runAction(
   // token to be read for it at all.
   const violation = enforceIdentityPolicy(repo);
   if (violation) return { ...violation, repoId };
-  const auth = syncAccount ? await accountAuthFor(repo) : null;
   const identity = resolveRepoIdentity(repo);
   const backend = backendFor(repo.vcs);
   const result = await enqueue(repoId, async () => {
+    // Credential resolution belongs in the same per-repo queue slot as the operation. Otherwise
+    // two rapid actions for one repo both walk branch/config/remotes and read a token in parallel
+    // before either reaches the queue.
+    const auth = syncAccount ? await accountAuthFor(repo) : null;
     const blocked = await precondition?.(backend, repo.absPath, identity, auth);
     return blocked ?? action(backend, repo.absPath, identity, auth);
   });

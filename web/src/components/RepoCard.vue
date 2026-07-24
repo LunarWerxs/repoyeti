@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from "vue";
 import { useStore } from "../store";
 import { cn } from "@/lib/utils";
 import { cardKeepAlive } from "@/lib/card-keepalive";
@@ -7,12 +7,15 @@ import { provideTreeSelection } from "@/lib/changes-selection";
 import { VCS_CAPABILITIES } from "../types";
 import type { Repo } from "../types";
 import RepoCardHeader from "./repo-card/RepoCardHeader.vue";
-import RepoCardChanges from "./repo-card/RepoCardChanges.vue";
-import RepoCardCommit from "./repo-card/RepoCardCommit.vue";
-import RepoCardActions from "./repo-card/RepoCardActions.vue";
-import RepoCollaboration from "./repo-card/RepoCollaboration.vue";
-import LogPanel from "./LogPanel.vue";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
+
+// A collapsed dashboard card only needs its header. Defer the entire working-tree/history stack
+// (including the large file-icon table and Smart Commit code) until a card is first expanded.
+const RepoCardChanges = defineAsyncComponent(() => import("./repo-card/RepoCardChanges.vue"));
+const RepoCardCommit = defineAsyncComponent(() => import("./repo-card/RepoCardCommit.vue"));
+const RepoCardActions = defineAsyncComponent(() => import("./repo-card/RepoCardActions.vue"));
+const RepoCollaboration = defineAsyncComponent(() => import("./repo-card/RepoCollaboration.vue"));
+const LogPanel = defineAsyncComponent(() => import("./LogPanel.vue"));
 
 const props = withDefaults(
   defineProps<{
@@ -81,7 +84,16 @@ watch(
 // RepoCardCommit exposes loadRecentMsgs() (+ its recentMsgs state) so the "recent commit
 // message" chips can be refreshed right when a dirty repo is expanded, without hoisting that
 // state back up here.
-const commitRef = ref<InstanceType<typeof RepoCardCommit> | null>(null);
+interface RepoCardCommitHandle {
+  loadRecentMsgs: () => Promise<void>;
+  recentMsgs: string[];
+}
+const commitRef = ref<RepoCardCommitHandle | null>(null);
+// The commit panel itself is async now, so the first expand can precede its template ref. Finish
+// the same lazy recent-message refresh as soon as that instance arrives.
+watch(commitRef, (instance) => {
+  if (instance && expanded.value && (st.value?.dirty ?? 0) > 0) void instance.loadRecentMsgs();
+});
 
 function toggle(): void {
   expanded.value = !expanded.value;
@@ -113,7 +125,7 @@ watch(
     :unmount-on-hide="!keepMounted"
     :class="
       cn(
-        'overflow-hidden rounded-md border border-border bg-card transition-colors',
+        'repo-card-visibility overflow-hidden rounded-md border border-border bg-card transition-colors',
         expanded && 'border-border/80 bg-card/90 ring-1 ring-white/5',
         repo.hidden && 'opacity-60',
       )
@@ -162,3 +174,16 @@ watch(
     </CollapsibleContent>
   </Collapsible>
 </template>
+
+<style scoped>
+/*
+ * A dashboard can contain thousands of discovered repositories. Collapsed cards still need to
+ * remain real drag items, but cards outside the viewport do not need layout/paint work. The
+ * remembered `auto` size keeps an expanded card's scrollbar geometry stable after it has rendered;
+ * 58px is the accurate cold estimate for the normal collapsed row.
+ */
+.repo-card-visibility {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 58px;
+}
+</style>

@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
 import { useStore } from "@/store";
 import { api } from "@/api";
-import type { LogEntry, LogResult } from "@/types";
+import { MAX_RETAINED_LOG_COMMITS } from "@/store/git-ops";
+import type { ChangedFile, LogEntry, LogResult } from "@/types";
 
 // Minimal Response-like for the api.ts `req()` helper (it reads .ok/.status and awaits .text()).
 function jsonResponse(body: unknown, ok = true, status = 200) {
@@ -39,17 +40,19 @@ describe("store (smoke)", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const store = useStore();
+    store.repos.push({ id: "repo-1" } as never);
     await store.loadChanges("repo-1");
 
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(fetchMock.mock.calls[0][0]).toContain("/api/repos/repo-1/changes");
     expect(store.changesByRepo["repo-1"]).toEqual(files);
-    expect(store.changesLoading["repo-1"]).toBe(false);
+    expect(store.changesLoading["repo-1"]).toBeUndefined();
   });
 
   it("loadChanges degrades to an empty list when the API errors", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ code: "ERROR", message: "boom" }, false, 500)));
     const store = useStore();
+    store.repos.push({ id: "repo-2" } as never);
     await store.loadChanges("repo-2");
     expect(store.changesByRepo["repo-2"]).toEqual([]);
   });
@@ -58,7 +61,10 @@ describe("store (smoke)", () => {
 // #9 — loadLog pagination (append on skip>0) and, critically, its error branch: a failed "load more"
 // must NOT wipe the commits already on screen (a flaky network would otherwise blank the history).
 describe("store.loadLog pagination", () => {
-  beforeEach(() => setActivePinia(createPinia()));
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    useStore().repos.push({ id: "r" } as never);
+  });
   afterEach(() => vi.restoreAllMocks());
 
   it("appends commits on a paginated load (skip>0) instead of replacing", async () => {
@@ -88,6 +94,86 @@ describe("store.loadLog pagination", () => {
     await store.loadLog("r");
     expect(store.logByRepo.r.commits).toEqual([]);
     expect(store.logByRepo.r.ok).toBe(false);
+  });
+
+  it("bounds retained history and retires the infinite-scroll sentinel at the cap", async () => {
+    const first = Array.from({ length: MAX_RETAINED_LOG_COMMITS - 5 }, (_, i) =>
+      entry(`first-${i}`),
+    );
+    const next = Array.from({ length: 20 }, (_, i) => entry(`next-${i}`));
+    vi.spyOn(api, "log")
+      .mockResolvedValueOnce(logRes(first, true))
+      .mockResolvedValueOnce(logRes(next, true));
+
+    const store = useStore();
+    await store.loadLog("r", first.length);
+    await store.loadLog("r", next.length, first.length);
+
+    expect(store.logByRepo.r.commits).toHaveLength(MAX_RETAINED_LOG_COMMITS);
+    expect(store.logByRepo.r.commits.at(-1)?.hash).toBe("next-4");
+    expect(store.logByRepo.r.hasMore).toBe(false);
+  });
+
+  it("releases per-repo view caches after a successful removal", async () => {
+    vi.spyOn(api, "removeRepo").mockResolvedValue({ ok: true, code: "OK" });
+    const store = useStore();
+    store.changesByRepo.r = [{ path: "large.bin", status: "M", staged: false }];
+    store.logByRepo.r = logRes([entry("aaa")]);
+    store.branchesByRepo.r = {
+      ok: true,
+      code: "OK",
+      current: "main",
+      detached: false,
+      branches: [],
+    };
+
+    await store.removeRepo("r");
+
+    expect(store.changesByRepo.r).toBeUndefined();
+    expect(store.logByRepo.r).toBeUndefined();
+    expect(store.branchesByRepo.r).toBeUndefined();
+  });
+
+  it("ignores a changed-file response that lands after its repo was removed", async () => {
+    let resolveChanges!: (value: { files: ChangedFile[] }) => void;
+    vi.spyOn(api, "changes").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveChanges = resolve;
+        }),
+    );
+    vi.spyOn(api, "removeRepo").mockResolvedValue({ ok: true, code: "OK" });
+    const store = useStore();
+
+    const pending = store.loadChanges("r");
+    await Promise.resolve();
+    await store.removeRepo("r");
+    resolveChanges({ files: [{ path: "late.txt", status: "M", staged: false }] });
+    await pending;
+
+    expect(store.changesByRepo.r).toBeUndefined();
+    expect(store.changesLoading.r).toBeUndefined();
+  });
+
+  it("keeps the newest history scope when an older request resolves last", async () => {
+    let resolveAll!: (value: LogResult) => void;
+    let resolveHead!: (value: LogResult) => void;
+    vi.spyOn(api, "log").mockImplementation((_id, _limit, _skip, refs) => {
+      return new Promise((resolve) => {
+        if (refs === "all") resolveAll = resolve;
+        else resolveHead = resolve;
+      });
+    });
+    const store = useStore();
+
+    const all = store.loadLog("r", 50, 0, "all");
+    const head = store.loadLog("r", 50, 0, "head");
+    resolveHead(logRes([entry("head")]));
+    await head;
+    resolveAll(logRes([entry("all")]));
+    await all;
+
+    expect(store.logByRepo.r.commits.map((commit) => commit.hash)).toEqual(["head"]);
   });
 });
 

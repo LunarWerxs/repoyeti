@@ -1,15 +1,11 @@
 // Controls how tall the per-repo changed-files tree is.
 //
-// ONE rule, applied at two scopes: a height here is always a CAP, never a fixed size. The list
-// grows with its content and starts scrolling once it hits the cap.
-//   1. A global default (small / medium / tall) chosen in Settings.
-//   2. An optional per-repo cap set by dragging the resize grip on a card, which wins for
-//      that repo until it's reset.
-//
-// The per-repo value used to be a fixed `height`, and that was a trap: nudging the grip on a
-// repo with one changed file left a mostly-empty tall box forever, and silently made the
-// Settings preset look broken for that card (the fixed height simply won). Capping instead
-// means a stray drag can never produce dead space — the worst it does is cap you lower.
+// Two layers, both persisted to localStorage (client-side preferences, like the theme):
+//   1. A global default size (small / medium / tall) chosen in Settings. This is a max-height,
+//      so an untouched list stays content-sized and only scrolls once it reaches the preset.
+//   2. An optional per-repo height set by dragging the resize grip. This is an exact height:
+//      someone who deliberately makes a short list taller should see the grip follow the pointer
+//      and the chosen workspace stay that size until they double-click to reset it.
 import { useLocalStorage } from "@vueuse/core";
 
 export type ChangesViewSize = "small" | "medium" | "tall";
@@ -21,36 +17,32 @@ export const CHANGES_SIZE_PX: Record<ChangesViewSize, number> = {
   tall: 560,
 };
 
-/** Clamp range for the drag-to-resize override. */
+/** Minimum usable height for a drag-to-resize override. There is deliberately no upper ceiling. */
 export const MIN_CHANGES_PX = 96;
-export const MAX_CHANGES_PX = 1400;
 
 /** Global default, shared by every card that has no manual override. */
 export const changesViewSize = useLocalStorage<ChangesViewSize>("repoyeti:changesViewSize", "medium");
 
-/** repoId → manually-dragged height CAP (px). Absent = use the global preset. */
+/** repoId → manually-dragged fixed height (px). Absent = use the global preset. */
 const overrides = useLocalStorage<Record<string, number>>("repoyeti:changesViewHeights", {});
 
 export function hasChangesOverride(repoId: string): boolean {
   return typeof overrides.value[repoId] === "number";
 }
 
-/** The effective cap in px for a repo: its own if it has one, else the global preset. */
-export function changesCapPx(repoId: string): number {
-  const o = overrides.value[repoId];
-  return typeof o === "number" ? o : CHANGES_SIZE_PX[changesViewSize.value];
-}
-
 /**
- * The inline style for a card's scroll container. Always a cap: the list is as tall as its
- * content until it reaches this, then scrolls.
+ * The inline style for a card's scroll container. The Settings preset remains a content-fitting
+ * cap; a deliberate per-repo resize pins the exact height, including above the content height.
  */
 export function changesTreeStyle(repoId: string): Record<string, string> {
-  return { maxHeight: `${changesCapPx(repoId)}px` };
+  const o = overrides.value[repoId];
+  return typeof o === "number"
+    ? { height: `${o}px` }
+    : { maxHeight: `${CHANGES_SIZE_PX[changesViewSize.value]}px` };
 }
 
 export function setChangesOverride(repoId: string, px: number): void {
-  overrides.value[repoId] = Math.min(MAX_CHANGES_PX, Math.max(MIN_CHANGES_PX, Math.round(px)));
+  overrides.value[repoId] = Math.max(MIN_CHANGES_PX, Math.round(px));
 }
 
 export function clearChangesOverride(repoId: string): void {

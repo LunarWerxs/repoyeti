@@ -8,6 +8,7 @@ import {
   detectedFromSshKeyPaths,
   detectedFromWindowsCredentialTargets,
   mergeDetectedIdentityHints,
+  parseRepoIdentityConfig,
 } from "../src/identity-detect.ts";
 import { createApp } from "../src/http/app.ts";
 import type { RepoYetiConfig } from "../src/config.ts";
@@ -34,6 +35,17 @@ test("detectedFromRepoGitConfig creates a repo-scoped author candidate", () => {
   expect(candidate?.title).toContain("client-site");
   expect(candidate?.suggestion.gitUsername).toBe("Client Bot");
   expect(candidate?.suggestion.gitEmail).toBe("client@example.com");
+});
+
+test("repo-local identity config reads name and email from one narrow Git result", () => {
+  expect(
+    parseRepoIdentityConfig(
+      "user.email client@example.com\nuser.name Client  Build Bot\ncore.ignorecase true",
+    ),
+  ).toEqual({
+    name: "Client  Build Bot",
+    email: "client@example.com",
+  });
 });
 
 test("detectedFromGitCredentialConfig extracts GitHub usernames from git credential config", () => {

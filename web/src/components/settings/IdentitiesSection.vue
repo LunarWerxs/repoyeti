@@ -11,13 +11,17 @@ import { Button } from "@/components/ui/button";
 const props = defineProps<{ open: boolean }>();
 const store = useStore();
 
-// Load the current identities/accounts whenever the sheet opens. Split from the old
-// combined IdentityAccessSection; its access half now lives in AccessSection.vue.
+// Refresh accounts whenever the sheet opens and detect identities once per browser session.
+// Split from the old combined IdentityAccessSection; its access half now lives in
+// AccessSection.vue.
 watch(
   () => props.open,
   (isOpen) => {
     if (isOpen) {
-      void store.loadDetectedIdentities();
+      // Machine-wide detection can inspect up to 200 repos. Keep the session's first snapshot and
+      // let IdentityManager's explicit refresh button request another scan, rather than repeating
+      // hundreds of bounded Git probes every time the Settings sheet is reopened.
+      if (!store.detectedIdentitiesReady) void store.loadDetectedIdentities();
       void store.loadAccounts();
     }
   },

@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { diffLineChanges } from "@/lib/line-diff";
+import { describe, expect, it } from "vitest";
+import { diffLineChanges, MAX_LCS_CELLS } from "@/lib/line-diff";
 
 describe("diffLineChanges", () => {
   it("returns nothing for identical text", () => {
@@ -38,5 +38,15 @@ describe("diffLineChanges", () => {
 
   it("treats a whole-new file as add", () => {
     expect(diffLineChanges("", "a\nb\nc")).toEqual([{ startLine: 1, endLine: 3, kind: "add" }]);
+  });
+
+  it("falls back before an individually-valid pair can exceed the matrix work budget", () => {
+    const side = Math.floor(Math.sqrt(MAX_LCS_CELLS)) + 1;
+    const original = Array.from({ length: side }, (_, i) => `old-${i}`).join("\n");
+    const modified = Array.from({ length: side }, (_, i) => `new-${i}`).join("\n");
+
+    expect(diffLineChanges(original, modified)).toEqual([
+      { startLine: 1, endLine: side, kind: "modify" },
+    ]);
   });
 });

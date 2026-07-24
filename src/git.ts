@@ -15,8 +15,9 @@
  */
 import { simpleGit, type SimpleGit } from "simple-git";
 import { existsSync, statSync } from "node:fs";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { Identity } from "./db.ts";
 
 export function safeGitEnv(): Record<string, string> {
@@ -175,14 +176,99 @@ export function identityConfigArgs(identity: Identity | null): string[] {
  */
 export const GIT_OP_MARKERS = ["MERGE_HEAD", "rebase-merge", "rebase-apply", "CHERRY_PICK_HEAD", "REVERT_HEAD"];
 
+interface GitDirCacheEntry {
+  /** Signature of the `.git` pointer (or bare-repository root) that produced `base`. */
+  sig: string;
+  base: string;
+}
+
+// Repo paths can churn in a long-lived daemon, so this is an LRU rather than an unbounded map.
+// 10k entries comfortably covers the application's supported large-repository-list use case while
+// keeping the retained path strings to a few megabytes at most.
+const GIT_DIR_CACHE_MAX = 10_000;
+const gitDirCache = new Map<string, GitDirCacheEntry>();
+
+function cachedGitDir(absPath: string, sig: string): string | null {
+  const hit = gitDirCache.get(absPath);
+  if (!hit || hit.sig !== sig) return null;
+  // Refresh insertion order for simple Map-backed LRU eviction.
+  gitDirCache.delete(absPath);
+  gitDirCache.set(absPath, hit);
+  return hit.base;
+}
+
+function rememberGitDir(absPath: string, entry: GitDirCacheEntry): string {
+  gitDirCache.delete(absPath);
+  if (gitDirCache.size >= GIT_DIR_CACHE_MAX) {
+    const oldest = gitDirCache.keys().next().value as string | undefined;
+    if (oldest !== undefined) gitDirCache.delete(oldest);
+  }
+  gitDirCache.set(absPath, entry);
+  return entry.base;
+}
+
+/**
+ * Resolve the repository metadata directory without spawning Git on the ordinary hot path:
+ * - a normal checkout has a `.git/` directory;
+ * - a linked worktree/submodule has a small `.git` file containing `gitdir: <path>`;
+ * - a bare/unusual repository falls back to `rev-parse`, with that result cached.
+ */
+async function gitDirFor(absPath: string): Promise<string | null> {
+  const marker = join(absPath, ".git");
+  try {
+    const markerStat = await stat(marker);
+    // The path itself is already the answer for an ordinary checkout. Avoid retaining one cache
+    // entry per normal repo; the cache only pays for pointer parsing and the unusual Git fallback.
+    if (markerStat.isDirectory()) return marker;
+    if (!markerStat.isFile()) return null;
+    const sig = `file:${markerStat.dev}:${markerStat.ino}:${markerStat.mtimeMs}:${markerStat.size}`;
+    const hit = cachedGitDir(absPath, sig);
+    if (hit) return hit;
+
+    // Git's pointer format is one line. Cap the accepted content so a malformed metadata file
+    // cannot turn a status refresh into an unexpectedly large retained string.
+    if (markerStat.size > 16_384) return null;
+    const content = await readFile(marker, "utf8");
+    const target = /^gitdir:\s*(.+?)\s*$/im.exec(content)?.[1]?.trim();
+    if (!target) return null;
+    const base = isAbsolute(target) ? target : resolve(dirname(marker), target);
+    return rememberGitDir(absPath, { sig, base });
+  } catch {
+    // No ordinary marker. Bare repositories and callers rooted below a checkout are rare but were
+    // supported by the old implementation, so preserve that behavior without charging every
+    // normal status refresh for it.
+  }
+
+  let rootSig: string | null = null;
+  try {
+    const root = await stat(absPath);
+    rootSig = `root:${root.dev}:${root.ino}`;
+    const hit = cachedGitDir(absPath, rootSig);
+    if (hit) return hit;
+  } catch {
+    return null;
+  }
+  try {
+    const gitDir = (await gitFor(absPath).raw(["rev-parse", "--git-dir"])).trim();
+    if (!gitDir) return null;
+    const base = isAbsolute(gitDir) ? gitDir : resolve(absPath, gitDir);
+    return rootSig ? rememberGitDir(absPath, { sig: rootSig, base }) : base;
+  } catch {
+    return null;
+  }
+}
+
 /** Which mid-operation marker is present (first match), or null when the repo is in a normal
  *  state. Best-effort: on any error we can't tell, so callers that need "safe by default"
  *  (auto-commit) should treat a throw/unknown as mid-operation themselves. */
 export async function currentGitOperation(absPath: string): Promise<string | null> {
   try {
-    const gitDir = (await gitFor(absPath).raw(["rev-parse", "--git-dir"])).trim();
-    const base = isAbsolute(gitDir) ? gitDir : join(absPath, gitDir);
-    return GIT_OP_MARKERS.find((m) => existsSync(join(base, m))) ?? null;
+    const base = await gitDirFor(absPath);
+    if (!base) return null;
+    // This can run for repositories on slow or temporarily disconnected volumes. Keep filesystem
+    // reads asynchronous so one bad mount cannot freeze every API/SSE client on the daemon loop.
+    const entries = await readdir(base);
+    return GIT_OP_MARKERS.find((marker) => entries.includes(marker)) ?? null;
   } catch {
     return null; // can't tell here; auto-commit's inGitOperation() treats a throw as "yes" itself
   }

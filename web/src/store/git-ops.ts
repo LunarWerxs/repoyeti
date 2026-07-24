@@ -2,6 +2,14 @@ import { reactive } from "vue";
 import { api } from "../api";
 import type { ActionResult, BranchList, IncomingResult, LogResult, StashList, TagList } from "../types";
 
+/**
+ * History rows are deliberately retained in memory because the graph needs the preceding rows to
+ * lay out lanes. Keep that useful window bounded: an all-day History tab should not accumulate an
+ * unbounded reactive array (and tens of thousands of DOM nodes) just because its sentinel stayed
+ * visible. Five hundred commits is ten normal pages and still a generous interactive window.
+ */
+export const MAX_RETAINED_LOG_COMMITS = 500;
+
 /** Branches / history / stash / tags / remotes / discard — lazily loaded per repo when the
  *  relevant card section opens. `loadChanges` and `asResult` are shared with the rest of the
  *  store (passed in) so a stash/discard refreshes the same changed-file tree and errors are
@@ -9,6 +17,7 @@ import type { ActionResult, BranchList, IncomingResult, LogResult, StashList, Ta
 export function useGitOps(
   loadChanges: (repoId: string) => Promise<void>,
   asResult: (e: unknown) => ActionResult,
+  isRepoLive: (repoId: string) => boolean,
 ) {
   // ── branches / history / stash (lazily loaded per repo when a section opens) ──
   const branchesByRepo = reactive<Record<string, BranchList>>({});
@@ -22,11 +31,40 @@ export function useGitOps(
    *  and to disable the relevant control. Distinct from `busy` (the primary fetch/pull/push). */
   const gitOpBusy = reactive<Record<string, string | undefined>>({});
 
+  // Latest-request tokens make late responses harmless (repo removed, scope changed, refresh
+  // superseded) without keeping one generation counter forever for every removed repo. Entries
+  // exist only while a read is active and disappear on settle/clear.
+  type ReadKind = "branches" | "log" | "incoming" | "stashes" | "tags";
+  const activeReads = new Map<string, Map<ReadKind, symbol>>();
+  function beginRead(repoId: string, kind: ReadKind): symbol {
+    const token = Symbol(`${kind}:${repoId}`);
+    const reads = activeReads.get(repoId) ?? new Map<ReadKind, symbol>();
+    reads.set(kind, token);
+    activeReads.set(repoId, reads);
+    return token;
+  }
+  function isCurrentRead(repoId: string, kind: ReadKind, token: symbol): boolean {
+    return isRepoLive(repoId) && activeReads.get(repoId)?.get(kind) === token;
+  }
+  function finishRead(repoId: string, kind: ReadKind, token: symbol): void {
+    const reads = activeReads.get(repoId);
+    if (reads?.get(kind) !== token) return;
+    reads.delete(kind);
+    if (reads.size === 0) activeReads.delete(repoId);
+  }
+
   async function loadBranches(repoId: string): Promise<void> {
+    if (!isRepoLive(repoId)) return;
+    const request = beginRead(repoId, "branches");
     try {
-      branchesByRepo[repoId] = await api.branches(repoId);
+      const result = await api.branches(repoId);
+      if (isCurrentRead(repoId, "branches", request)) branchesByRepo[repoId] = result;
     } catch (e) {
-      branchesByRepo[repoId] = { ...asResult(e), current: null, detached: false, branches: [] };
+      if (isCurrentRead(repoId, "branches", request)) {
+        branchesByRepo[repoId] = { ...asResult(e), current: null, detached: false, branches: [] };
+      }
+    } finally {
+      finishRead(repoId, "branches", request);
     }
   }
 
@@ -39,7 +77,7 @@ export function useGitOps(
     } catch (e) {
       return asResult(e);
     } finally {
-      gitOpBusy[repoId] = undefined;
+      delete gitOpBusy[repoId];
     }
   }
 
@@ -52,7 +90,7 @@ export function useGitOps(
     } catch (e) {
       return asResult(e);
     } finally {
-      gitOpBusy[repoId] = undefined;
+      delete gitOpBusy[repoId];
     }
   }
 
@@ -65,7 +103,7 @@ export function useGitOps(
     } catch (e) {
       return asResult(e);
     } finally {
-      gitOpBusy[repoId] = undefined;
+      delete gitOpBusy[repoId];
     }
   }
 
@@ -77,22 +115,38 @@ export function useGitOps(
     skip = 0,
     refs?: "head" | "local" | "all",
   ): Promise<void> {
+    if (!isRepoLive(repoId)) return;
+    const request = beginRead(repoId, "log");
     try {
       const res = await api.log(repoId, limit, skip, refs);
+      if (!isCurrentRead(repoId, "log", request)) return;
       if (skip > 0 && logByRepo[repoId]) {
+        const commits = [...logByRepo[repoId]!.commits, ...res.commits];
+        const retained = commits.slice(0, MAX_RETAINED_LOG_COMMITS);
         logByRepo[repoId] = {
           ...res,
-          commits: [...logByRepo[repoId]!.commits, ...res.commits],
+          commits: retained,
+          // Once the retained window is full, stop the intersection sentinel. Continuing with
+          // skip=retained.length would request the same page forever after the slice above.
+          hasMore: res.hasMore && retained.length < MAX_RETAINED_LOG_COMMITS,
         };
       } else {
-        logByRepo[repoId] = res;
+        const commits = res.commits.slice(0, MAX_RETAINED_LOG_COMMITS);
+        logByRepo[repoId] = {
+          ...res,
+          commits,
+          hasMore: res.hasMore && commits.length < MAX_RETAINED_LOG_COMMITS,
+        };
       }
     } catch (e) {
+      if (!isCurrentRead(repoId, "log", request)) return;
       // A paginated "load more" (skip>0) failure must NOT wipe the commits already on screen — a
       // flaky network request would otherwise blank the whole history. Keep what's shown; the user
       // can retry. Only surface the error/empty state on a first-page load.
       if (skip > 0 && logByRepo[repoId]?.commits.length) return;
       logByRepo[repoId] = { ...asResult(e), commits: [], hasMore: false };
+    } finally {
+      finishRead(repoId, "log", request);
     }
   }
 
@@ -103,33 +157,46 @@ export function useGitOps(
    * Deliberately not cached: a preview you opened five minutes ago is not a preview.
    */
   async function loadIncoming(repoId: string, fetchFirst = true): Promise<void> {
+    if (!isRepoLive(repoId)) return;
+    const request = beginRead(repoId, "incoming");
     incomingLoading[repoId] = true;
     try {
-      incomingByRepo[repoId] = await api.incoming(repoId, fetchFirst);
+      const result = await api.incoming(repoId, fetchFirst);
+      if (isCurrentRead(repoId, "incoming", request)) incomingByRepo[repoId] = result;
     } catch (e) {
-      incomingByRepo[repoId] = {
-        ...asResult(e),
-        upstream: "",
-        noUpstream: false,
-        commits: [],
-        commitsTruncated: false,
-        files: [],
-        filesTruncated: false,
-        stat: { filesChanged: 0, addedLines: 0, removedLines: 0 },
-        conflicts: [],
-        conflictCheck: false,
-        fastForward: false,
-      };
+      if (isCurrentRead(repoId, "incoming", request)) {
+        incomingByRepo[repoId] = {
+          ...asResult(e),
+          upstream: "",
+          noUpstream: false,
+          commits: [],
+          commitsTruncated: false,
+          files: [],
+          filesTruncated: false,
+          stat: { filesChanged: 0, addedLines: 0, removedLines: 0 },
+          conflicts: [],
+          conflictCheck: false,
+          fastForward: false,
+        };
+      }
     } finally {
-      incomingLoading[repoId] = false;
+      if (isCurrentRead(repoId, "incoming", request)) delete incomingLoading[repoId];
+      finishRead(repoId, "incoming", request);
     }
   }
 
   async function loadStashes(repoId: string): Promise<void> {
+    if (!isRepoLive(repoId)) return;
+    const request = beginRead(repoId, "stashes");
     try {
-      stashesByRepo[repoId] = await api.stashes(repoId);
+      const result = await api.stashes(repoId);
+      if (isCurrentRead(repoId, "stashes", request)) stashesByRepo[repoId] = result;
     } catch (e) {
-      stashesByRepo[repoId] = { ...asResult(e), stashes: [] };
+      if (isCurrentRead(repoId, "stashes", request)) {
+        stashesByRepo[repoId] = { ...asResult(e), stashes: [] };
+      }
+    } finally {
+      finishRead(repoId, "stashes", request);
     }
   }
 
@@ -142,7 +209,7 @@ export function useGitOps(
     } catch (e) {
       return asResult(e);
     } finally {
-      gitOpBusy[repoId] = undefined;
+      delete gitOpBusy[repoId];
     }
   }
 
@@ -155,7 +222,7 @@ export function useGitOps(
     } catch (e) {
       return asResult(e);
     } finally {
-      gitOpBusy[repoId] = undefined;
+      delete gitOpBusy[repoId];
     }
   }
 
@@ -168,7 +235,7 @@ export function useGitOps(
     } catch (e) {
       return asResult(e);
     } finally {
-      gitOpBusy[repoId] = undefined;
+      delete gitOpBusy[repoId];
     }
   }
 
@@ -182,7 +249,7 @@ export function useGitOps(
     } catch (e) {
       return asResult(e);
     } finally {
-      gitOpBusy[repoId] = undefined;
+      delete gitOpBusy[repoId];
     }
   }
 
@@ -197,7 +264,7 @@ export function useGitOps(
     } catch (e) {
       return asResult(e);
     } finally {
-      gitOpBusy[repoId] = undefined;
+      delete gitOpBusy[repoId];
     }
   }
 
@@ -211,7 +278,7 @@ export function useGitOps(
     } catch (e) {
       return asResult(e);
     } finally {
-      gitOpBusy[repoId] = undefined;
+      delete gitOpBusy[repoId];
     }
   }
 
@@ -226,16 +293,23 @@ export function useGitOps(
     } catch (e) {
       return asResult(e);
     } finally {
-      gitOpBusy[repoId] = undefined;
+      delete gitOpBusy[repoId];
     }
   }
 
   // ── remotes / tags ───────────────────────────────────────────────────────────
   async function loadTags(repoId: string): Promise<void> {
+    if (!isRepoLive(repoId)) return;
+    const request = beginRead(repoId, "tags");
     try {
-      tagsByRepo[repoId] = await api.tags(repoId);
+      const result = await api.tags(repoId);
+      if (isCurrentRead(repoId, "tags", request)) tagsByRepo[repoId] = result;
     } catch (e) {
-      tagsByRepo[repoId] = { ...asResult(e), tags: [] };
+      if (isCurrentRead(repoId, "tags", request)) {
+        tagsByRepo[repoId] = { ...asResult(e), tags: [] };
+      }
+    } finally {
+      finishRead(repoId, "tags", request);
     }
   }
   async function createTag(
@@ -250,7 +324,7 @@ export function useGitOps(
     } catch (e) {
       return asResult(e);
     } finally {
-      gitOpBusy[repoId] = undefined;
+      delete gitOpBusy[repoId];
     }
   }
   async function setRemote(repoId: string, url: string, name?: string): Promise<ActionResult> {
@@ -260,7 +334,7 @@ export function useGitOps(
     } catch (e) {
       return asResult(e);
     } finally {
-      gitOpBusy[repoId] = undefined;
+      delete gitOpBusy[repoId];
     }
   }
   async function removeRemote(repoId: string, name?: string): Promise<ActionResult> {
@@ -270,7 +344,36 @@ export function useGitOps(
     } catch (e) {
       return asResult(e);
     } finally {
-      gitOpBusy[repoId] = undefined;
+      delete gitOpBusy[repoId];
+    }
+  }
+
+  /** Release every lazily-loaded Git view for a repo that left the dashboard. */
+  function clearRepoCache(repoId: string): void {
+    activeReads.delete(repoId);
+    delete branchesByRepo[repoId];
+    delete logByRepo[repoId];
+    delete stashesByRepo[repoId];
+    delete tagsByRepo[repoId];
+    delete incomingByRepo[repoId];
+    delete incomingLoading[repoId];
+    delete gitOpBusy[repoId];
+  }
+
+  /** Drop stale cache keys after a full list refresh (covers removals missed while SSE was down). */
+  function pruneRepoCache(liveRepoIds: ReadonlySet<string>): void {
+    const cachedIds = new Set([
+      ...Object.keys(branchesByRepo),
+      ...Object.keys(logByRepo),
+      ...Object.keys(stashesByRepo),
+      ...Object.keys(tagsByRepo),
+      ...Object.keys(incomingByRepo),
+      ...Object.keys(incomingLoading),
+      ...Object.keys(gitOpBusy),
+      ...activeReads.keys(),
+    ]);
+    for (const repoId of cachedIds) {
+      if (!liveRepoIds.has(repoId)) clearRepoCache(repoId);
     }
   }
 
@@ -300,5 +403,7 @@ export function useGitOps(
     stageFile,
     moveFile,
     addToGitignore,
+    clearRepoCache,
+    pruneRepoCache,
   };
 }

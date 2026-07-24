@@ -31,6 +31,7 @@ import {
   type GhAccount,
 } from "./gh-cli.ts";
 import { gitHubAuth, type GitHubAuth } from "./git.ts";
+import { createSemaphore } from "./gitgate.ts";
 import type { RepoView } from "./db.ts";
 
 /** Where a repo's effective account came from — surfaced so the UI can explain itself. */
@@ -43,6 +44,16 @@ export interface ResolvedAccount {
 }
 
 const DEFAULT_HOST = "github.com";
+const accountResolutionConcurrency = (() => {
+  const configured = Number(process.env.REPOYETI_ACCOUNT_RESOLUTION_CONCURRENCY);
+  return Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 4;
+})();
+/**
+ * Bulk sync enters credential resolution before the network subprocess takes `netGate`. Give that
+ * preflight its own bound so resolving branch/remotes for a large repository list cannot launch an
+ * unbounded wave of local Git children.
+ */
+const accountResolutionGate = createSemaphore(accountResolutionConcurrency);
 
 export interface GitHubRepository {
   host: string;
@@ -124,6 +135,8 @@ export async function resolveRepoAccount(
   accounts: GhAccount[],
   canPush: RepoPushAccessResolver = (account, repository) =>
     ghRepoCanPush(account.host, account.login, repository.owner, repository.repo),
+  /** Already-resolved operative remote. `null` means "known absent"; omitted means read it here. */
+  operativeUrl?: string | null,
 ): Promise<ResolvedAccount | null> {
   // 1. Explicit pin. Trusted as-is: the owner chose it, and honouring it even when gh has since
   //    been logged out is better than silently syncing as somebody else.
@@ -146,7 +159,7 @@ export async function resolveRepoAccount(
   }
 
   // 3. The remote's owner, when it names an account we hold.
-  const url = await operativeRemoteUrl(repo.absPath);
+  const url = operativeUrl === undefined ? await operativeRemoteUrl(repo.absPath) : operativeUrl;
   const repository = url ? githubRepository(url) : null;
   if (repository?.owner && isValidLogin(repository.owner)) {
     const match = known(repository.host, repository.owner);
@@ -220,6 +233,10 @@ export async function authForCloneUrl(url: string): Promise<GitHubAuth | null> {
  * ambient credential helper must keep syncing fine.
  */
 export async function authForRepo(repo: RepoView): Promise<GitHubAuth | null> {
+  return accountResolutionGate.run(() => resolveAuthForRepo(repo));
+}
+
+async function resolveAuthForRepo(repo: RepoView): Promise<GitHubAuth | null> {
   // Establish the target FIRST, from local git config alone. Everything below can disqualify the
   // repo without spawning `gh`, which matters: this runs before every fetch/pull/push, and a repo
   // that can never take an injected credential should not pay for a subprocess to find that out.
@@ -254,7 +271,9 @@ export async function authForRepo(repo: RepoView): Promise<GitHubAuth | null> {
     return null;
   }
   if (accounts.length === 0) return null;
-  const resolved = await resolveRepoAccount(repo, accounts);
+  // Reuse the operative URL already read above. Re-reading it inside resolveRepoAccount used to add
+  // another branch/config/remote subprocess chain to every authenticated fetch, pull, and push.
+  const resolved = await resolveRepoAccount(repo, accounts, undefined, url);
   if (!resolved || resolved.host.toLowerCase() !== host) return null;
 
   const token = await ghTokenFor(resolved.host, resolved.login);
